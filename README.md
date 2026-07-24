@@ -54,4 +54,3 @@ compiler is under active development. Nothing is stable yet.
 - [ ] Escape checker
 - [ ] C backend
 - [ ] Self hosted formatter
-```
