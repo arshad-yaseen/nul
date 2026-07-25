@@ -2,7 +2,7 @@
 
 A systems programming language with compile time memory safety and no runtime.
 
-```zig
+```nul
 use std.io
 use std.fs
 
