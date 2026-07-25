@@ -4,19 +4,29 @@ A systems programming language with compile time memory safety and no runtime.
 
 ```nul
 use std.io
+use std.mem
 use std.fs
 
-fn main() !void {
-    let a = arena()
+pub fn main() ! {
+    var arena = mem.Arena.init()
+    defer arena.deinit()
 
-    let text = try fs.read_text(a, "notes.txt")
-
-    var lines = 0
-    for _ in text.lines() {
-        lines += 1
+    let path = io.args().next() else {
+        io.print("usage: count <file>\n")
+        return
     }
 
-    io.print("{lines} lines\n")
+    let text = fs.read(arena, path) else e {
+        io.print("cannot read {path}: {e}\n")
+        return
+    }
+
+    var lines: usize = 0
+    for c in text.bytes() {
+        if c == '\n' { lines += 1 }
+    }
+
+    io.print("{path}: {lines} lines, {text.len} bytes\n")
 }
 ```
 
