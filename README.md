@@ -3,25 +3,85 @@
 A systems programming language with compile time memory safety and no runtime.
 
 ```nul
-use std.io
-use std.fs
-use std.mem
+use std/io
+use std/mem { Arena }
+use std/str
 
-fn readLines(arena: mem.Arena, path: string) [string]!Error {
-    let text = try fs.read(arena, path)
-    return text.lines().collect(arena)
+let Token = enum {
+    number: i64
+    word:   str
+    symbol: u8
 }
 
-pub fn main() ! {
-    var arena = mem.Arena.init()
+let LexError = enum {
+    bad_byte: struct { byte: u8, at: usize }
+}
 
-    let path = io.args().next() orelse {
-        io.print("usage: lines <file>\n")
+fn lex(a: Arena, src: str) LexError![]Token {
+    var out = List(Token).init(a, { cap: src.len / 4 + 8 })
+    var i: usize = 0
+
+    for i < src.len {
+        let c = src[i]
+
+        if c == ' ' or c == '\n' {
+            i = i + 1
+        } else if c.is_digit() {
+            var n: i64 = 0
+            for i < src.len and src[i].is_digit() {
+                n = n * 10 + (src[i] - '0').cast(i64)
+                i = i + 1
+            }
+            out.push(Token.number(n))
+        } else if c.is_alpha() {
+            let start = i
+            for i < src.len and src[i].is_alnum() { i = i + 1 }
+            out.push(Token.word(a.dup(src[start..i])))
+        } else if c.is_punct() {
+            out.push(Token.symbol(c))
+            i = i + 1
+        } else {
+            return LexError.bad_byte({ byte: c, at: i })
+        }
+    }
+
+    return out.slice()
+}
+
+fn describe(t: Token, a: Arena) str {
+    return match t {
+        number n: str.fmt(a, "number {n}")
+        word w:   str.fmt(a, "word {w}")
+        symbol s: str.fmt(a, "symbol {s:c}")
+    }
+}
+
+pub fn main() !void {
+    var a = Arena.init()
+    var scratch = a.child()
+
+    let src = try io.read_file(scratch, "input.txt")
+
+    let tokens = lex(a, src) catch e {
+        match e {
+            bad_byte b: io.print("lex failed: byte 0x{b.byte:x} at {b.at}\n")
+        }
         return
     }
 
-    let lines = try readLines(arena, path)
-    io.print("{path}: {lines.len} lines\n")
+    for t, i in tokens {
+        io.print("{i:3}  {t.describe(scratch)}\n")
+        scratch.reset()
+    }
+
+    io.print("{tokens.len} tokens\n")
+}
+
+test "lexes a small expression" {
+    var a = Arena.init()
+    let ts = try lex(a, "x1 + 42")
+    assert(ts.len == 3)
+    assert(ts[2] == Token.number(42))
 }
 ```
 
