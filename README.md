@@ -15,7 +15,7 @@ and the compiler proves it safe.
 
 ## A taste
 
-```go
+```zig
 import fs
 
 fn main() !Error {
