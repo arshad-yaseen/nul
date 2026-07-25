@@ -3,13 +3,20 @@
 A systems programming language with compile time memory safety and no runtime.
 
 ```zig
-fn main() {
-    var mem = arena()
-    let text = try fs.read(mem, "data.csv")
+use std.io
+use std.fs
 
-    for line in text.lines() {
-        print(line)
+fn main() !void {
+    let a = arena()
+
+    let text = try fs.read_text(a, "notes.txt")
+
+    var lines = 0
+    for _ in text.lines() {
+        lines += 1
     }
+
+    io.print("{lines} lines\n")
 }
 ```
 
