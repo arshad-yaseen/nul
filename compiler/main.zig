@@ -32,6 +32,22 @@ pub fn main(init: std.process.Init) !u8 {
     var tree = try Ast.parse(gpa, src.bytes);
     defer tree.deinit(gpa);
 
+    try w.writeAll("tokens\n");
+    for (tree.tokens.items(.tag), tree.tokens.items(.start)) |tag, start| {
+        const lc = try src.lineCol(gpa, start);
+        try w.print("{d:>4}:{d:<3} {s}", .{ lc.line, lc.col, @tagName(tag) });
+        const end = Tokenizer.tokenEnd(src.bytes, tag, start);
+        if (tag == .semi and src.bytes[start] != ';') {
+            try w.writeAll(" (inserted)");
+        } else if (end > start) {
+            try w.print(" '{f}'", .{std.zig.fmtString(src.bytes[start..end])});
+        }
+        try w.writeByte('\n');
+    }
+
+    try w.writeAll("\nnodes\n");
+    try dumpNode(tree, w, .root, 0);
+
     if (tree.errors.len == 0) return 0;
 
     try w.writeByte('\n');
@@ -43,4 +59,52 @@ pub fn main(init: std.process.Init) !u8 {
         try w.writeByte('\n');
     }
     return 1;
+}
+
+fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.Error!void {
+    const node = tree.full(n);
+    const d = depth + 1;
+
+    try w.splatByteAll(' ', depth * 2);
+    try w.writeAll(@tagName(tree.nodeTag(n)));
+    switch (node) {
+        .ident, .int_literal, .str_literal => |tok| try w.print(" '{s}'", .{tree.tokenSlice(tok)}),
+        .field_access => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
+        .param => |p| try w.print(" '{s}'", .{tree.tokenSlice(p.name_token)}),
+        .fn_decl => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
+        .var_decl => |v| try w.print(" '{s}'", .{tree.tokenSlice(v.name_token)}),
+        else => {},
+    }
+    try w.writeByte('\n');
+
+    switch (node) {
+        .root, .block => |stmts| for (stmts) |c| try dumpNode(tree, w, c, d),
+        .use_decl, .grouped => |child| try dumpNode(tree, w, child, d),
+        .param => |p| try dumpNode(tree, w, p.type_expr, d),
+        .field_access => |f| try dumpNode(tree, w, f.lhs, d),
+        .unary => |u| try dumpNode(tree, w, u.operand, d),
+        .return_stmt => |e| if (e.unwrap()) |x| try dumpNode(tree, w, x, d),
+        .assign => |a| {
+            try dumpNode(tree, w, a.lhs, d);
+            try dumpNode(tree, w, a.rhs, d);
+        },
+        .binary => |b| {
+            try dumpNode(tree, w, b.lhs, d);
+            try dumpNode(tree, w, b.rhs, d);
+        },
+        .call => |c| {
+            try dumpNode(tree, w, c.callee, d);
+            for (c.args) |a| try dumpNode(tree, w, a, d);
+        },
+        .fn_decl => |f| {
+            for (f.params) |p| try dumpNode(tree, w, p, d);
+            if (f.return_type.unwrap()) |rt| try dumpNode(tree, w, rt, d);
+            try dumpNode(tree, w, f.body, d);
+        },
+        .var_decl => |v| {
+            if (v.type_expr.unwrap()) |t| try dumpNode(tree, w, t, d);
+            try dumpNode(tree, w, v.init_expr, d);
+        },
+        .ident, .int_literal, .str_literal, .bool_literal, .err => {},
+    }
 }
