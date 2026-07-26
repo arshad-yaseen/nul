@@ -1,46 +1,19 @@
 # Nul Memory Model
 
+How memory works in Nul, and what the compiler guarantees about it.
+
 ## The contract
 
-**Every Nul program is memory safe at compile time.** No program can read or write
-memory after that memory has died, and the compiler proves it before the program runs.
+**Every Nul program is memory safe at compile time.** Memory dies when its arena dies,
+all at once, and no program can read or write it afterward. The compiler proves that
+before the program runs.
 
-There is no garbage collector, no runtime, and no compiler inserted cleanup code. The
-programmer never writes lifetime annotations, never learns ownership or borrowing
-vocabulary, and never fights an analysis they cannot see. What the programmer writes
-is what executes.
+There is no garbage collector, no runtime, and no compiler inserted cleanup code, and
+the programmer never writes a lifetime annotation, never learns ownership or borrowing
+vocabulary, and never fights an analysis they cannot see.
 
 The whole model is one sentence: **inside an arena there are no rules, between arenas
-there is one.**
-
-Inside, you may write anything C lets you write. Cycles, back pointers, graphs,
-intrusive lists, a dozen pointers to one object all writing through it. None of it
-needs proving, because none of it can dangle. Everything in an arena dies at the same
-instant, so a pointer and its target cannot outlive each other:
-
-```nul
-let Node = struct {
-    name: str
-    prev: *Node
-    next: *Node
-}
-
-fn append(arena: Arena, tail: *Node, name: str) *Node {
-    var n = arena.create(Node)
-
-    n.name = name
-    n.prev = tail                 // they point at each other
-    tail.next = n                 // and there is nothing to declare
-
-    return n
-}
-```
-
-Between arenas, one rule: a pointer may not outlive what it points at. That is the
-only thing the compiler checks, and checking it needs nothing you were not already
-writing down.
-
-The rest of this document explains why the model needs nothing more.
+there is one.** The rest of this document is that sentence, explained.
 
 ## Rule one, everything is a value
 
@@ -288,12 +261,33 @@ fn stash(arena: Arena) {
 }
 ```
 
+### What the rule maintains
+
+That table is not four cases. It is one invariant:
+
+> **Every pointer reachable from a value in some arena points into an arena that
+> outlives it.**
+
+Storing preserves it. Putting a value from `A` into memory in `B` requires `A` to
+outlive `B`, so `B` now holds a pointer into something that outlives it, and anything
+reachable through that value already outlived `A`. Allocation preserves it trivially,
+because new memory holds no pointers yet, and returning is storing into the caller.
+
+That is why a value carries one arena rather than one per field: its tag is a lower
+bound on everything inside it. No region ever appears in a type, `*Node` is `*Node`
+wherever it lives, and nothing in the language has to be generic over arenas.
+
 ### Copying between arenas
 
-`copy` is how a value moves from one arena to another. It copies the bytes a value
-directly owns, for a number that is the number, for a `str` it is the characters.
+`copy` is the one operation that can break the invariant, because it relabels a value
+as living somewhere new without touching what its pointers reach. It copies the bytes
+a value directly owns, for a number that is the number, for a `str` it is the
+characters, and a pointer does not own what it points at.
 
-A type that holds a pointer cannot be copied at all:
+Copying downward, into a shorter lived arena, is harmless: the inner pointers already
+outlived the source, so they outlive the destination too. Copying upward is the useful
+direction and the dangerous one. So the rule that keeps the invariant true is a rule
+about types, and a type that holds a pointer cannot be copied at all:
 
 ```nul
 let Pair = struct {
@@ -306,10 +300,9 @@ fn keep(arena: Arena, p: Pair) Pair {
 }
 ```
 
-Copying `Pair` would move the struct into the new arena and leave `left` pointing into
-the old one. That is exactly what rule three forbids, except hidden inside a value
-that looks fine from outside, so the compiler refuses at the copy rather than let a
-laundered pointer escape.
+Copying `Pair` would put a value in `arena` whose `left` points into `scratch`, which
+is the invariant failing. Every later check would then be reading a tag that lies, so
+the compiler refuses at the copy rather than let a laundered pointer exist at all.
 
 Nothing about this is special cased in the language. `Arena.copy` is an ordinary
 library function whose signature says its argument must be pointer free, and the
