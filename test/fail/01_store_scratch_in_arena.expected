@@ -1,0 +1,24 @@
+error: 'temp' does not live long enough
+
+   ┌─ test/fail/01_store_scratch_in_arena.nul:14:16
+   │
+ 9 │     var scratch = arena.child()
+   │         ───────  'scratch' is created here, as a child of 'arena'
+   ·
+11 │     var box = arena.create(Box)
+   │         ───  'box' lives in 'arena'
+12 │     var temp = scratch.create(i64)
+   │         ────  'temp' lives in 'scratch'
+   ·
+14 │     box.item = temp
+   │     ────────   ^^^^  this points into 'scratch'
+   │     │
+   │     this memory lives in 'arena'
+   ·
+16 │     return box
+   │            ───  'box' escapes here, so it outlives 'scratch'
+   │
+   = note: 'scratch' is a child of 'arena', and a child dies before its parent.
+           'box.item' would still point into it after line 17.
+   = help: copy the value into the arena that outlives it
+             box.item = arena.copy(temp)

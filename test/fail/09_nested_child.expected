@@ -1,0 +1,23 @@
+error: 'value' does not live long enough
+
+   ┌─ test/fail/09_nested_child.nul:15:18
+   │
+ 9 │     var mid = arena.child()
+   │         ───  'mid' is a child of 'arena'
+10 │     var deep = mid.child()
+   │         ────  'deep' is a child of 'mid'
+   ·
+12 │     var cell = mid.create(Cell)
+   │         ────  'cell' lives in 'mid'
+13 │     var value = deep.create(i64)
+   │         ─────  'value' lives in 'deep'
+   ·
+15 │     cell.inner = value
+   │     ──────────   ^^^^^  this points into 'deep'
+   │     │
+   │     this memory lives in 'mid'
+   │
+   = note: 'deep' is a child of 'mid', and a child dies before its parent.
+           Depth changes nothing. The rule compares two names in one function.
+   = help: allocate the value in 'mid', the arena that has to outlive it
+             var value = mid.create(i64)

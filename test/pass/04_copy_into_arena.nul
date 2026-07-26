@@ -1,0 +1,17 @@
+use std.mem.Arena
+
+let Entry = struct {
+    name: str
+}
+
+/// The scratch text does not outlive this call, so the name is copied into the
+/// arena that does. This is the fix the checker suggests for 01_store_scratch.
+fn record(arena: Arena, raw: str) *Entry {
+    var scratch = arena.child()
+    let trimmed = scratch.copy(raw)
+
+    var e = arena.create(Entry)
+    e.name = arena.copy(trimmed)
+
+    return e
+}

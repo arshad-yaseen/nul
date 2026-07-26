@@ -1,0 +1,12 @@
+use std.mem.Arena
+
+let Point = struct {
+    x: i64
+    y: i64
+}
+
+/// A type with no pointers inside it moves between arenas freely, because a copy
+/// leaves nothing behind to get wrong.
+fn keep(arena: Arena, p: Point) Point {
+    return arena.copy(p)
+}

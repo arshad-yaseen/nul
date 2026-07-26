@@ -1,0 +1,16 @@
+use std.mem.Arena
+
+let Cell = struct {
+    inner: *i64
+}
+
+/// Nesting depth changes nothing. A child dies before its parent at any depth.
+fn nest(arena: Arena) {
+    var mid = arena.child()
+    var deep = mid.child()
+
+    var cell = mid.create(Cell)
+    var value = deep.create(i64)
+
+    cell.inner = value
+}

@@ -1,0 +1,15 @@
+use std.mem.Arena
+
+let Slot = struct {
+    held: *i64
+}
+
+/// The destination belongs to the caller, so nothing inside this function can
+/// prove it dies before the value being stored into it.
+fn fill(arena: Arena, slot: *Slot) {
+    var scratch = arena.child()
+
+    var temp = scratch.create(i64)
+
+    slot.held = temp
+}

@@ -1,0 +1,16 @@
+use std.mem.Arena
+
+let Acc = struct {
+    total: i64
+}
+
+/// The child is used only inside the body and nothing reaches out of it, so the
+/// arena parameter is never touched.
+fn checksum(arena: Arena, seed: i64) i64 {
+    var scratch = arena.child()
+
+    var acc = scratch.create(Acc)
+    acc.total = seed * 31
+
+    return acc.total
+}

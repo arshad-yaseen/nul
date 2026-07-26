@@ -1,0 +1,23 @@
+error: 'payload' does not live long enough
+
+   ┌─ test/fail/07_sibling_arenas.nul:20:15
+   │
+14 │     var first = arena.child()
+   │         ─────  'first' is a child of 'arena'
+15 │     var second = arena.child()
+   │         ──────  'second' is a child of 'arena' too
+   ·
+17 │     var link = first.create(Link)
+   │         ────  'link' lives in 'first'
+18 │     var payload = second.create(Payload)
+   │         ───────  'payload' lives in 'second'
+   ·
+20 │     link.to = payload
+   │     ───────   ^^^^^^^  this points into 'second'
+   │     │
+   │     this memory lives in 'first'
+   │
+   = note: 'first' and 'second' are siblings, so neither is guaranteed to
+           outlive the other. A pointer in either direction can dangle.
+   = help: allocate both from the same arena, or keep an index instead of a
+           pointer if they have to stay separate

@@ -1,0 +1,18 @@
+error: 'Pair' cannot be copied between arenas
+
+   ┌─ test/fail/10_copy_type_with_pointer.nul:15:12
+   │
+ 8 │     left:  *Inner
+   │            ──────  'Pair' holds a pointer here
+   ·
+15 │     return arena.copy(p)
+   │            ^^^^^^^^^^^^^  this moves the struct, not what 'left' points at
+   │
+   = note: a copy moves the bytes a value owns directly. A pointer inside would
+           keep pointing into the old arena, so the copy would live in 'arena'
+           while 'left' did not.
+   = help: copy what the pointer reaches, and rebuild the struct around it
+             var q = arena.create(Pair)
+             q.left = arena.create(Inner)
+             q.left.value = p.left.value
+             q.count = p.count

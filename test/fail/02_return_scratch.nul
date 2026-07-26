@@ -1,0 +1,15 @@
+use std.mem.Arena
+
+let Buffer = struct {
+    size: i64
+}
+
+/// The result is allocated in the child instead of the arena it is returned to.
+fn build(arena: Arena) *Buffer {
+    var scratch = arena.child()
+
+    var buf = scratch.create(Buffer)
+    buf.size = 128
+
+    return buf
+}

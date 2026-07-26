@@ -1,0 +1,18 @@
+use std.mem.Arena
+
+let Sink = struct {
+    count: i64
+}
+
+fn tally(s: *Sink, amount: i64) {
+    s.count = s.count + amount
+}
+
+/// Passing scratch memory to a function is always fine. Whether that function
+/// keeps it is decided inside that function, never at the call site.
+fn run(arena: Arena) {
+    var scratch = arena.child()
+
+    var s = scratch.create(Sink)
+    tally(s, 3)
+}

@@ -1,0 +1,16 @@
+use std.mem.Arena
+
+let Ref = struct {
+    target: *i64
+}
+
+/// Storing long lived memory inside short lived memory is always safe, because
+/// the child dies first. Only the reverse direction can dangle.
+fn stash(arena: Arena) {
+    var scratch = arena.child()
+
+    var long = arena.create(i64)
+    var holder = scratch.create(Ref)
+
+    holder.target = long
+}

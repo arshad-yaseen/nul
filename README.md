@@ -5,28 +5,39 @@ A systems programming language with compile time memory safety and no runtime.
 ```zig
 use std.io
 use std.mem.Arena
-use std.list.List
 
-fn words(arena: Arena, path: str) !List(str) {
+let Node = struct {
+    name: str
+    prev: *Node
+    next: *Node
+}
+
+fn load(arena: Arena, path: str) !*Node {
     var scratch = arena.child()      // dies when this function returns
 
     let text = try io.read_file(scratch, path)
 
-    var out = List(str).init(arena, .{ cap: 64 })
+    var head = arena.create(Node)
+    var tail = head
 
-    for word in text.split(scratch, " ") {
-        out.push(arena.copy(word))   // word lives in scratch, out must not
+    for line in text.lines() {
+        var n = arena.create(Node)
+
+        n.name = arena.copy(line)    // line lives in scratch, n must not
+        n.prev = tail                // they point at each other, and nothing to declare
+        tail.next = n
+        tail = n
     }
 
-    return out                       // text is gone, out is not, and the compiler checked
+    return head                      // text is gone, the list is not, and the compiler checked
 }
 
 pub fn main() !void {
     var arena = Arena.init()
 
-    let found = try words(arena, "input.txt")
+    let list = try load(arena, "input.txt")
 
-    io.print("{found.len} words\n")
+    io.print("{list.next.name}\n")
 }
 ```
 

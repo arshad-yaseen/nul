@@ -1,0 +1,22 @@
+error: 'temp' does not live long enough
+
+   ┌─ test/fail/08_store_through_param.nul:14:17
+   │
+ 9 │ fn fill(arena: Arena, slot: *Slot) {
+   │                       ───────────  'slot' is borrowed for this call only
+10 │     var scratch = arena.child()
+   │         ───────  'scratch' is created here, as a child of 'arena'
+   ·
+12 │     var temp = scratch.create(i64)
+   │         ────  'temp' lives in 'scratch'
+   ·
+14 │     slot.held = temp
+   │     ─────────   ^^^^  this points into 'scratch'
+   │     │
+   │     this memory belongs to the caller
+   │
+   = note: 'slot' belongs to the caller, and nothing inside 'fill' can prove it
+           dies before 'scratch'. For all this function knows, the destination
+           outlives the call.
+   = help: copy the value into an arena the caller can see
+             slot.held = arena.copy(temp)

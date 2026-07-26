@@ -1,0 +1,16 @@
+use std.mem.Arena
+
+let Inner = struct {
+    value: i64
+}
+
+let Pair = struct {
+    left:  *Inner
+    count: i64
+}
+
+/// Copying moves the struct, not what its pointers reach, so a type holding a
+/// pointer cannot be copied into another arena at all.
+fn keep(arena: Arena, p: Pair) Pair {
+    return arena.copy(p)
+}
