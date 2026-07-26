@@ -7,23 +7,23 @@ use std.io
 use std.mem.Arena
 use std.list.List
 
-/// Words live in `arena`. The file text dies with `scratch`.
-fn words(arena: Arena, scratch: Arena, path: str) !List(str) {
+fn words(arena: Arena, path: str) !List(str) {
+    var scratch = arena.child()      // dies when this function returns
+
     let text = try io.read_file(scratch, path)
     var out = List(str).init(arena, .{ cap: 64 })
 
     for word in text.split(scratch, " ") {
-        out.push(arena.dup(word))   // word points into text, so copy it
+        out.push(arena.copy(word))   // word lives in scratch, out must not
     }
-    return out
+
+    return out                       // text is gone, out is not, and the compiler checked
 }
 
 pub fn main() !void {
     var arena = Arena.init()
-    var scratch = arena.child()
 
-    let found = try words(arena, scratch, "input.txt")
-    scratch.reset()   // text is gone. found is not, and the compiler checked.
+    let found = try words(arena, "input.txt")
 
     io.print("{found.len} words\n")
 }
