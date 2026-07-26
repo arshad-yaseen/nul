@@ -1,0 +1,11 @@
+use std.io
+
+/// Adds two numbers.
+fn add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+pub fn main() {
+    let x = add(1, 2) * 3
+    io.print("hello, world\n")
+}
