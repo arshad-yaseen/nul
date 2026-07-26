@@ -44,9 +44,10 @@ pub fn deinit(src: *Source, gpa: Allocator) void {
 
 pub const LineCol = struct { line: u32, col: u32 };
 
-/// Resolves a byte offset to a 1-based line and column.
-pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCol {
-    const starts = src.line_starts orelse blk: {
+/// The byte offset of the first character of each line, so `line_starts[n]` begins
+/// line `n + 1`. Built once, on the first diagnostic.
+fn lineStarts(src: *Source, gpa: Allocator) Allocator.Error![]u32 {
+    return src.line_starts orelse blk: {
         var list: std.ArrayList(u32) = .empty;
         errdefer list.deinit(gpa);
         try list.append(gpa, 0);
@@ -57,11 +58,26 @@ pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCo
         src.line_starts = try list.toOwnedSlice(gpa);
         break :blk src.line_starts.?;
     };
+}
 
+/// Resolves a byte offset to a 1-based line and column.
+pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCol {
+    const starts = try src.lineStarts(gpa);
     const line = std.sort.upperBound(u32, starts, offset, struct {
         fn order(ctx: u32, item: u32) std.math.Order {
             return std.math.order(ctx, item);
         }
     }.order) - 1;
     return .{ .line = @intCast(line + 1), .col = offset - starts[line] + 1 };
+}
+
+/// The text of a 1-based line, without its terminator. Out of range yields empty,
+/// so a diagnostic pointing past the end still renders.
+pub fn lineText(src: *Source, gpa: Allocator, line: u32) Allocator.Error![]const u8 {
+    const starts = try src.lineStarts(gpa);
+    if (line == 0 or line > starts.len) return "";
+    const start = starts[line - 1];
+    const end = if (line < starts.len) starts[line] - 1 else @as(u32, @intCast(src.bytes.len));
+    const text = src.bytes[start..end];
+    return if (std.mem.endsWith(u8, text, "\r")) text[0 .. text.len - 1] else text;
 }
