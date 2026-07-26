@@ -7,24 +7,14 @@ use std.io
 use std.mem.Arena
 use std.list.List
 
-let Entry = struct {
-    key:   str
-    value: i64
-}
-
-/// Entries live in `arena`. Everything the parse allocates dies with `scratch`.
-fn parse(arena: Arena, scratch: Arena, path: str) !List(Entry) {
+/// Words live in `arena`. The file text dies with `scratch`.
+fn words(arena: Arena, scratch: Arena, path: str) !List(str) {
     let text = try io.read_file(scratch, path)
-    var out = List(Entry).init(arena, .{ cap: 16 })
+    var out = List(str).init(arena, .{ cap: 64 })
 
-    for line in text.lines() {
-        if line.is_empty() { continue }
-
-        let parts = try line.split(scratch, "=")
-        // parts points into text, which dies with scratch, so the key is copied
-        out.push(.{ key: arena.dup(parts[0]), value: try parts[1].to_int() })
+    for word in text.split(scratch, " ") {
+        out.push(arena.dup(word))   // word points into text, so copy it
     }
-
     return out
 }
 
@@ -32,28 +22,16 @@ pub fn main() !void {
     var arena = Arena.init()
     var scratch = arena.child()
 
-    let entries = parse(arena, scratch, "app.conf") catch e {
-        io.print("parse failed: {e}\n")
-        return
-    }
+    let found = try words(arena, scratch, "input.txt")
+    scratch.reset()   // text is gone. found is not, and the compiler checked.
 
-    scratch.reset()   // text and parts are gone. entries are not, and the compiler checked.
-
-    io.print("{entries.len} entries\n")
+    io.print("{found.len} words\n")
 }
 ```
 
-Memory comes from arenas you create and pass down. An arena parameter does two jobs at
-once, it is where the function allocates, and it is the name of a lifetime. You were
-already writing it for the first reason, so the second is free.
+No garbage collector. No hidden allocations. No lifetime annotations. Nothing new to learn.
 
-Inside an arena, pointers work exactly as they do in C, because everything there dies
-at the same instant. The one pointer the compiler rejects is the one that crosses
-arenas, because that is the only way memory can die while a pointer to it survives.
-You place the cleanup, and the compiler proves nothing reads the memory after it.
-
-No garbage collector. No hidden allocations. No lifetime annotations, because the
-allocator you already pass is the annotation.
+The full model is in [memory_model.md](memory_model.md).
 
 ## Tooling
 
