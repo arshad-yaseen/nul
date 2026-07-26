@@ -152,7 +152,8 @@ fn errNodeAdvance(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index 
 const TokenSet = std.EnumSet(Token.Tag);
 
 const expr_first = TokenSet.initMany(&.{
-    .ident, .int, .str, .kw_true, .kw_false, .l_paren, .minus, .bang,
+    .ident,   .int,   .str,  .kw_true, .kw_false,
+    .l_paren, .minus, .bang, .star,    .kw_struct,
 });
 
 const stmt_first = expr_first.unionWith(TokenSet.initMany(&.{ .kw_let, .kw_var, .kw_return }));
@@ -179,6 +180,8 @@ fn parseRoot(p: *Parse) Allocator.Error!void {
             .semi, .doc_comment => p.tok_i += 1,
             .kw_use => try p.scratch.append(p.gpa, try p.parseUseDecl()),
             .kw_pub, .kw_fn => try p.scratch.append(p.gpa, try p.parseFnDecl()),
+            // Types are values, so a type declaration is an ordinary binding.
+            .kw_let, .kw_var => try p.scratch.append(p.gpa, try p.parseVarDecl()),
             .invalid => try p.scratch.append(p.gpa, try p.errNodeAdvance(.invalid_bytes)),
             else => try p.scratch.append(p.gpa, try p.errNodeAdvance(.expected_top_level_decl)),
         }
@@ -235,6 +238,45 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
         .main_token = fn_token,
         .data = .{ .extra_range = try p.listToSpan(p.scratch.items[top..]) },
     });
+}
+
+/// `struct { name: T ... }`. Fields are separated the way statements are, so a
+/// newline ends one and the tokenizer has already turned that into a `;`.
+fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
+    const struct_token = p.nextToken();
+
+    const top = p.scratch.items.len;
+    defer p.scratch.shrinkRetainingCapacity(top);
+
+    try p.expectToken(.l_brace);
+    while (!p.at(.r_brace) and !p.eof()) {
+        const before = p.tok_i;
+        if (p.at(.semi)) {
+            p.tok_i += 1;
+        } else if (p.at(.ident)) {
+            try p.scratch.append(p.gpa, try p.parseField());
+        } else if (block_recovery.contains(p.tag())) {
+            break;
+        } else {
+            try p.scratch.append(p.gpa, try p.errNodeAdvance(.expected_field));
+        }
+        p.ensureProgress(before);
+    }
+    try p.expectToken(.r_brace);
+
+    return p.addNode(.{
+        .tag = .struct_type,
+        .main_token = struct_token,
+        .data = .{ .extra_range = try p.listToSpan(p.scratch.items[top..]) },
+    });
+}
+
+fn parseField(p: *Parse) Allocator.Error!Node.Index {
+    const name_token = p.nextToken();
+    try p.expectToken(.colon);
+    const type_expr = try p.parseExpr();
+    try p.expectSemi();
+    return p.addNode(.{ .tag = .field, .main_token = name_token, .data = .{ .node = type_expr } });
 }
 
 fn parseParam(p: *Parse) Allocator.Error!Node.Index {
@@ -411,6 +453,7 @@ fn parsePrefixExpr(p: *Parse) Allocator.Error!Node.Index {
     const node_tag: Node.Tag = switch (p.tag()) {
         .minus => .negate,
         .bang => .bool_not,
+        .star => .pointer_type,
         else => return p.parseSuffixExpr(),
     };
     if (p.depth >= max_depth) return p.errNode(.nesting_too_deep);
@@ -483,6 +526,7 @@ fn parsePrimaryExpr(p: *Parse) Allocator.Error!Node.Index {
         .ident => return p.addLeaf(.ident),
         .int => return p.addLeaf(.int_literal),
         .str => return p.addLeaf(.str_literal),
+        .kw_struct => return p.parseStructType(),
         .kw_true => return p.addLeaf(.true_literal),
         .kw_false => return p.addLeaf(.false_literal),
         .l_paren => {

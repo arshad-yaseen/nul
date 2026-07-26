@@ -84,6 +84,12 @@ pub const Node = struct {
         call,
         field_access,
         grouped,
+        /// `struct { name: T ... }`, `data` is `extra_range`: the fields.
+        struct_type,
+        /// `name: T` inside a struct. `main_token` is the name.
+        field,
+        /// `*T`. `main_token` is `*`, `data` is `node`: the pointee type.
+        pointer_type,
 
         add,
         sub,
@@ -167,8 +173,10 @@ pub const UnaryOp = enum { negate, bool_not };
 pub const Full = union(enum) {
     root: []const Node.Index,
     block: []const Node.Index,
+    struct_type: []const Node.Index,
     use_decl: Node.Index,
     grouped: Node.Index,
+    pointer_type: Node.Index,
     return_stmt: Node.OptionalIndex,
 
     fn_decl: FnDecl,
@@ -177,7 +185,9 @@ pub const Full = union(enum) {
     call: Call,
     binary: Binary,
     unary: Unary,
-    param: struct { name_token: TokenIndex, type_expr: Node.Index },
+    /// A name bound to a type. Same shape in both places.
+    param: Binding,
+    field: Binding,
     field_access: struct { lhs: Node.Index, name_token: TokenIndex },
     assign: struct { lhs: Node.Index, rhs: Node.Index },
 
@@ -201,6 +211,7 @@ pub const Full = union(enum) {
         type_expr: Node.OptionalIndex,
         init_expr: Node.Index,
     };
+    pub const Binding = struct { name_token: TokenIndex, type_expr: Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     pub const Binary = struct { op: BinaryOp, op_token: TokenIndex, lhs: Node.Index, rhs: Node.Index };
     pub const Unary = struct { op: UnaryOp, op_token: TokenIndex, operand: Node.Index };
@@ -212,12 +223,15 @@ pub fn full(tree: Ast, n: Node.Index) Full {
     return switch (tree.nodeTag(n)) {
         .root => .{ .root = tree.list(data.extra_range) },
         .block => .{ .block = tree.list(data.extra_range) },
+        .struct_type => .{ .struct_type = tree.list(data.extra_range) },
         .use_decl => .{ .use_decl = data.node },
         .grouped => .{ .grouped = data.node },
+        .pointer_type => .{ .pointer_type = data.node },
         .return_stmt => .{ .return_stmt = data.opt_node },
         .err => .err,
 
         .param => .{ .param = .{ .name_token = main, .type_expr = data.node } },
+        .field => .{ .field = .{ .name_token = main, .type_expr = data.node } },
         .field_access => .{ .field_access = .{ .lhs = data.node, .name_token = main + 1 } },
         .assign => .{ .assign = .{
             .lhs = data.node_and_node[0],
@@ -332,6 +346,7 @@ pub const Error = struct {
         expected_statement,
         expected_top_level_decl,
         expected_param,
+        expected_field,
         chained_comparison,
         invalid_assign_target,
         nesting_too_deep,
@@ -347,8 +362,9 @@ pub const Error = struct {
             }),
             .expected_expr => try w.print("expected an expression, found {s}", .{found}),
             .expected_statement => try w.print("expected a statement, found {s}", .{found}),
-            .expected_top_level_decl => try w.print("expected 'use' or 'fn', found {s}", .{found}),
+            .expected_top_level_decl => try w.print("expected a declaration, found {s}", .{found}),
             .expected_param => try w.print("expected a parameter, found {s}", .{found}),
+            .expected_field => try w.print("expected a field, found {s}", .{found}),
             .chained_comparison => try w.writeAll("comparison operators cannot be chained"),
             .invalid_assign_target => try w.writeAll("cannot assign to this expression"),
             .nesting_too_deep => try w.writeAll("expression nests too deeply"),

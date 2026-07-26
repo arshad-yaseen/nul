@@ -70,7 +70,7 @@ fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.E
     switch (node) {
         .ident, .int_literal, .str_literal => |tok| try w.print(" '{s}'", .{tree.tokenSlice(tok)}),
         .field_access => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
-        .param => |p| try w.print(" '{s}'", .{tree.tokenSlice(p.name_token)}),
+        .param, .field => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
         .fn_decl => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
         .var_decl => |v| try w.print(" '{s}'", .{tree.tokenSlice(v.name_token)}),
         else => {},
@@ -78,9 +78,9 @@ fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.E
     try w.writeByte('\n');
 
     switch (node) {
-        .root, .block => |stmts| for (stmts) |c| try dumpNode(tree, w, c, d),
-        .use_decl, .grouped => |child| try dumpNode(tree, w, child, d),
-        .param => |p| try dumpNode(tree, w, p.type_expr, d),
+        .root, .block, .struct_type => |stmts| for (stmts) |c| try dumpNode(tree, w, c, d),
+        .use_decl, .grouped, .pointer_type => |child| try dumpNode(tree, w, child, d),
+        .param, .field => |f| try dumpNode(tree, w, f.type_expr, d),
         .field_access => |f| try dumpNode(tree, w, f.lhs, d),
         .unary => |u| try dumpNode(tree, w, u.operand, d),
         .return_stmt => |e| if (e.unwrap()) |x| try dumpNode(tree, w, x, d),
