@@ -128,6 +128,67 @@ region tag it needs for checking.
 This is why the model costs zero annotations. The information the compiler needs is
 information you were already writing for your own reasons.
 
+### One arena per function
+
+The sentence above only works if "the arena" names something. With two arena
+parameters it would not, and a caller would have no way to know which one a result
+lives in. So a function allocates its results into exactly one arena, and taking a
+second is rejected:
+
+```nul
+fn analyze(long: Arena, short: Arena, input: str) *Report {
+    var r = long.create(Report)
+    r.lines = 0
+    return r
+}
+```
+
+```
+error: 'analyze' takes more than one arena, so its result has no single home
+
+  ┌─ analyze.nul:9:25
+  │
+9 │ fn analyze(long: Arena, short: Arena, input: str) *Report {
+  │            ───────────  ^^^^^^^^^^^^              ───────  which arena is this in?
+  │            │            │
+  │            │            a second arena parameter
+  │            the first arena parameter
+  │
+  = note: a function allocates its results into exactly one arena. That rule is
+          what lets a caller know where a result lives without anyone writing a
+          lifetime down.
+  = help: drop 'short', and create a child inside the body for temporaries
+            fn analyze(long: Arena, input: str) *Report {
+                var short = long.child()
+```
+
+A function that needs scratch space does not take a second arena. It makes a child,
+which dies when the function returns:
+
+```nul
+fn analyze(long: Arena, input: str) *Report {
+    var short = long.child()
+    // ...
+}
+```
+
+That is the natural shape anyway, and it is worth stating as the rule behind the rule:
+**what you take from outside is for what outlives the call, and what you make inside is
+for what does not.** Scratch space is an implementation detail. A caller forced to
+supply one is being told about memory it will never see, and being asked to decide
+something it cannot know.
+
+The rule is about arenas, not about pointers. Take as many pointer parameters as you
+like, because a pointer already carries the region it came from:
+
+```nul
+fn record(out: *List(Entry), arena: Arena, e: Entry)
+```
+
+Only allocation needs an arena, and results come from exactly one of them. That single
+restriction is what buys every signature in the language the property of saying where
+its result lives, while saying nothing at all.
+
 ## Rule three, pointers are free inside an arena, checked across arenas
 
 Inside one arena, pointers behave exactly as they do in C. Store them in structs,
