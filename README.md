@@ -3,34 +3,26 @@
 A systems programming language with compile time memory safety and no runtime.
 
 ```nul
-use std/io
-use std/mem { Arena }
-use std/list { List }
+use std.io
+use std.mem.Arena
+use std.list.List
 
-let Token = enum {
-    number: i64
-    word:   str
+let Entry = struct {
+    key:   str
+    value: i64
 }
 
-fn lex(arena: Arena, src: str) !List(Token) {
-    var out = List(Token).init(arena, { cap: src.len / 4 })
-    var i: usize = 0
+/// Entries live in `arena`. Everything the parse allocates dies with `scratch`.
+fn parse(arena: Arena, scratch: Arena, path: str) !List(Entry) {
+    let text = try io.read_file(scratch, path)
+    var out = List(Entry).init(arena, .{ cap: 16 })
 
-    for i < src.len {
-        let c = src[i]
-        let start = i
+    for line in text.lines() {
+        if line.is_empty() { continue }
 
-        if c.is_space() {
-            i = i + 1
-        } else if c.is_digit() {
-            for i < src.len and src[i].is_digit() { i = i + 1 }
-            out.push(Token.number(try src[start..i].to_int()))
-        } else if c.is_alpha() {
-            for i < src.len and src[i].is_alnum() { i = i + 1 }
-            out.push(Token.word(arena.dup(src[start..i])))
-        } else {
-            return error.bad_byte
-        }
+        let parts = try line.split(scratch, "=")
+        // parts points into text, which dies with scratch, so the key is copied
+        out.push(.{ key: arena.dup(parts[0]), value: try parts[1].to_int() })
     }
 
     return out
@@ -40,32 +32,28 @@ pub fn main() !void {
     var arena = Arena.init()
     var scratch = arena.child()
 
-    let src = try io.read_file(scratch, "input.nul")
-
-    let tokens = lex(arena, src) catch e {
-        io.print("lex failed: {e}\n")
+    let entries = parse(arena, scratch, "app.conf") catch e {
+        io.print("parse failed: {e}\n")
         return
     }
 
-    scratch.reset()        // src is gone. tokens live in arena, and the compiler checked that.
+    scratch.reset()   // text and parts are gone. entries are not, and the compiler checked.
 
-    io.print("{tokens.len} tokens\n")
-}
-
-test "numbers and words" {
-    var arena = Arena.init()
-    let ts = try lex(arena, "x1 42")
-
-    assert(ts.len == 2)
-    assert(ts[1] == Token.number(42))
+    io.print("{entries.len} entries\n")
 }
 ```
 
-Memory lives in arenas you create and pass. Pointers inside an arena work like C.
-Pointers that cross arenas are a compile error. You choose where cleanup happens and
-the compiler proves nothing uses the memory afterwards.
+Memory comes from arenas you create and pass down. An arena parameter does two jobs at
+once, it is where the function allocates, and it is the name of a lifetime. You were
+already writing it for the first reason, so the second is free.
 
-No garbage collector. No hidden allocations. No lifetime annotations.
+Inside an arena, pointers work exactly as they do in C, because everything there dies
+at the same instant. The one pointer the compiler rejects is the one that crosses
+arenas, because that is the only way memory can die while a pointer to it survives.
+You place the cleanup, and the compiler proves nothing reads the memory after it.
+
+No garbage collector. No hidden allocations. No lifetime annotations, because the
+allocator you already pass is the annotation.
 
 ## Tooling
 
@@ -100,14 +88,14 @@ myproject/
   build.nul          the build, written in Nul
   src/
     main.nul         entry point
-    lexer.nul        a file is a struct, `use ./lexer` imports it
+    lexer.nul        a file is a struct, `use .lexer` imports it
   deps/              vendored, checked in, versioned by you
 ```
 
 `build.nul` is a program, not a configuration format.
 
 ```nul
-use std/build
+use std.build
 
 pub fn configure(b: *var build.Builder) {
     let exe = b.executable("myproject", "src/main.nul")
