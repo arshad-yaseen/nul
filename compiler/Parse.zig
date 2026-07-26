@@ -240,8 +240,7 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// `struct { name: T ... }`. Fields are separated the way statements are, so a
-/// newline ends one and the tokenizer has already turned that into a `;`.
+/// `struct { name: T ... }`
 fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
     const struct_token = p.nextToken();
 
