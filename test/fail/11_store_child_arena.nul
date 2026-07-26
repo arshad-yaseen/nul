@@ -1,0 +1,18 @@
+use std.mem.Arena
+
+let Box = struct {
+    arena: Arena
+    item:  *i64
+}
+
+/// An arena is a value, and storing one obeys the same rule as storing a pointer.
+/// A child cannot be kept in memory that outlives it.
+fn build(arena: Arena) *Box {
+    var scratch = arena.child()
+
+    var b = arena.create(Box)
+
+    b.arena = scratch
+
+    return b
+}

@@ -73,13 +73,15 @@ fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.E
         .param, .field => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
         .fn_decl => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
         .var_decl => |v| try w.print(" '{s}'", .{tree.tokenSlice(v.name_token)}),
+        .pointer_type => |ptr| if (ptr.is_mutable) try w.writeAll(" var"),
         else => {},
     }
     try w.writeByte('\n');
 
     switch (node) {
         .root, .block, .struct_type => |stmts| for (stmts) |c| try dumpNode(tree, w, c, d),
-        .use_decl, .grouped, .pointer_type => |child| try dumpNode(tree, w, child, d),
+        .use_decl, .grouped => |child| try dumpNode(tree, w, child, d),
+        .pointer_type => |ptr| try dumpNode(tree, w, ptr.child, d),
         .param, .field => |f| try dumpNode(tree, w, f.type_expr, d),
         .field_access => |f| try dumpNode(tree, w, f.lhs, d),
         .unary => |u| try dumpNode(tree, w, u.operand, d),

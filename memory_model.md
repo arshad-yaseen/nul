@@ -152,10 +152,11 @@ supply one is being told about memory it will never see, and being asked to deci
 something it cannot know.
 
 The rule is about arenas, not about pointers. Take as many pointer parameters as you
-like, because a pointer already carries the region it came from:
+like, because a pointer carries the region it came from and a `*var` one says so in
+the signature:
 
 ```nul
-fn record(out: *List(Entry), arena: Arena, e: Entry)
+fn record(out: *var List(Entry), arena: Arena, e: Entry)
 ```
 
 Only allocation needs an arena, and results come from exactly one of them. That single
@@ -248,6 +249,8 @@ Only one of the two directions can dangle, and only that one is rejected:
 | `arena` memory | `scratch` memory | free, the parent outlives the child |
 | `scratch` memory | `arena` memory | **rejected**, the child dies first |
 | sibling child | sibling child | **rejected**, neither outlives the other |
+| `arena` memory | a `*var` parameter | free, the caller proved the parameter outlives `arena` |
+| `scratch` memory | a `*var` parameter | **rejected**, that parameter outlives `arena`, and `scratch` does not |
 
 The second row is worth noticing. Long lived memory may be stored inside short lived
 memory, always:
@@ -276,6 +279,49 @@ because new memory holds no pointers yet, and returning is storing into the call
 That is why a value carries one arena rather than one per field: its tag is a lower
 bound on everything inside it. No region ever appears in a type, `*Node` is `*Node`
 wherever it lives, and nothing in the language has to be generic over arenas.
+
+### An arena can be stored, and then it is already the right one
+
+An `Arena` is a value, so it can be put in a struct like anything else, and the store
+rule applies to it unchanged. Putting arena `A` into memory that lives in `B`
+requires `A` to outlive `B`, exactly as it would for a pointer, and for the same
+reason: an arena you can still name is memory you can still reach.
+
+That one line has a consequence worth stating on its own, because it removes what
+would otherwise be this model's most common annoyance. A container that keeps the
+arena it was built from does not have to be handed one again:
+
+```nul
+var list = List(Node).init(arena, .{ cap: 8 })
+```
+
+```nul
+fn push(self: *var List(Node), value: i64) *Node {
+    var n = self.arena.create(Node)
+    n.value = value
+    // ... put n in the buffer ...
+    return n
+}
+```
+
+`push` takes no arena and asks nothing of its caller. Read the invariant again to see
+why it is safe anyway:
+
+> Every pointer reachable from a value in some arena points into an arena that
+> outlives it.
+
+`self.arena` is reachable from `self`, so `self.arena` outlives `self`. Allocating
+from it and storing the result back into `self` is therefore a store into memory the
+source already outlives, which is the direction that is always allowed. **Nothing is
+checked here because nothing can go wrong here.**
+
+The obligation did not disappear. It moved to `init`, where the arena is stored into
+the list, and that is one ordinary store in a function that has both names in scope.
+
+The result of `push` lives in `self.arena`, which its caller may have no name for. It
+does not need one. `self.arena` outlives `self`, so the caller may treat the result
+as living at least as long as `self` itself, and that lower bound is enough for every
+check the caller will make.
 
 ### Copying between arenas
 
@@ -328,20 +374,51 @@ in scope, so the check compares two names that both appear in the same function.
 never requires whole program analysis, never crosses module boundaries, and never
 depends on what code elsewhere happens to do.
 
-### Parameters may always borrow
+### Reading a parameter is free, writing to one says so
 
-Function parameters are exempt from all of this, for reading and for mutation. A
-borrowed parameter cannot outlive the call that created it, so there is nothing to
-track:
+A pointer is `*T` to read through and `*var T` to write through. That is ordinary
+mutability, not ownership and not exclusivity, and it is the only bit of a signature
+this model reads besides the arena.
+
+Reading needs no thought and no arena. A borrowed parameter cannot outlive the call
+that created it, so there is nothing to track:
 
 ```nul
-fn bump(c: *Counter, by: i64) {
-    c.hits = c.hits + by          // no arena, nothing to check
+fn total(c: *Counter) i64 {
+    return c.hits                 // no arena, nothing to check
 }
 ```
 
-The common case of passing data into a function to read or modify it needs no thought
-at all.
+Writing is where a lifetime question can appear, because the destination belongs to
+the caller and this function has no name for the arena it lives in:
+
+```nul
+fn bump(c: *var Counter, by: i64) {
+    c.hits = c.hits + by          // a number, so still nothing to check
+}
+```
+
+`bump` stores a number, and a number cannot dangle. The question only bites when a
+function allocates and then stores what it allocated:
+
+```nul
+fn collect(out: *var List(Entry), arena: Arena, src: *Tree)
+```
+
+`out` is written through, and `arena` is where this function allocates, so anything
+`collect` puts into `out` may live in `arena`. One rule makes that safe:
+
+> **A function that takes an arena and a `*var` parameter requires its arena to
+> outlive that parameter.**
+
+Nobody writes that down. It follows from `*var` and from the single arena parameter,
+and both of those are already in the signature for reasons that have nothing to do
+with lifetimes. The caller has both names in scope and checks them the way it checks
+every other store. The callee, having stated the requirement by taking the two
+parameters, may store its own arena's memory into `out` without asking again.
+
+A `*T` parameter carries no obligation at all, because a function that cannot write
+through a pointer cannot make one dangle.
 
 ## Aliasing is unrestricted
 
@@ -480,6 +557,26 @@ names the arena, names the line where the arena died, and names the last line wh
 the value was legitimately used.
 
 You keep the control you would have in C, and gain a proof you could not have in C.
+
+### Cleanup happens where the arena is named
+
+`reset` and `destroy` are the two moments memory actually goes away, and proving
+nothing survives them is a matter of comparing names inside one function. So those
+two operations require a name: an arena parameter, or a local you made with
+`Arena.init` or `child`.
+
+An arena reached through a pointer can be allocated from, the way `push` does above,
+but it cannot be released:
+
+```nul
+self.arena.reset()                // rejected, 'self.arena' is not a name here
+```
+
+Allocating without knowing which region `self.arena` is stays safe because the
+invariant already settles the direction. Releasing does not, because every value in
+that region, anywhere in the program, dies at that instant, and this function can see
+almost none of them. Whoever created the arena can name it, and that is where the
+reset belongs.
 
 ## Relationships that outlive an arena
 

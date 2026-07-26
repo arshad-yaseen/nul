@@ -5,7 +5,7 @@ let Counter = struct {
 }
 
 /// A borrowed parameter cannot outlive the call that created it, so reading and
-/// mutating one needs no thought and no arena.
-fn bump(c: *Counter, by: i64) {
+/// mutating one needs no thought and no arena. '*var' says it is written to.
+fn bump(c: *var Counter, by: i64) {
     c.hits = c.hits + by
 }

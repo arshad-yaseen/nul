@@ -4,9 +4,9 @@ let Slot = struct {
     held: *i64
 }
 
-/// The destination belongs to the caller, so nothing inside this function can
-/// prove it dies before the value being stored into it.
-fn fill(arena: Arena, slot: *Slot) {
+/// Writing through 'slot' means the caller guarantees it outlives 'arena'. A
+/// child of 'arena' dies first, so it cannot be stored there.
+fn fill(arena: Arena, slot: *var Slot) {
     var scratch = arena.child()
 
     var temp = scratch.create(i64)

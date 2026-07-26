@@ -4,7 +4,7 @@ let Sink = struct {
     count: i64
 }
 
-fn tally(s: *Sink, amount: i64) {
+fn tally(s: *var Sink, amount: i64) {
     s.count = s.count + amount
 }
 

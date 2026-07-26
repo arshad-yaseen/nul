@@ -1,0 +1,15 @@
+error: an arena can only be reset where it is named
+
+   ┌─ test/fail/12_reset_through_field.nul:11:5
+   │
+10 │ fn clear(b: *var Box) {
+   │          ───────────  'b' is borrowed, so the arena inside it has no name here
+11 │     b.arena.reset()
+   │     ^^^^^^^^^^^^^^^  this releases an arena this function cannot name
+   │
+   = note: 'reset' proves that nothing in the arena is used afterward, and that
+           proof compares names inside one function. Values in 'b.arena' live
+           wherever the arena has been passed, and 'clear' can see almost none
+           of them.
+   = help: reset the arena where it was created, and leave 'clear' to do the work
+           that does not release memory

@@ -1,0 +1,23 @@
+error: 'scratch' does not live long enough
+
+   ┌─ test/fail/11_store_child_arena.nul:15:15
+   │
+11 │     var scratch = arena.child()
+   │         ───────  'scratch' is created here, as a child of 'arena'
+   ·
+13 │     var b = arena.create(Box)
+   │         ─  'b' lives in 'arena'
+   ·
+15 │     b.arena = scratch
+   │     ───────   ^^^^^^^  this names an arena that dies first
+   │     │
+   │     this memory lives in 'arena'
+   ·
+17 │     return b
+   │            ─  'b' escapes here, so it outlives 'scratch'
+   │
+   = note: an arena stored in a struct is reachable from it, so it has to outlive
+           it. 'scratch' is a child of 'arena' and dies first, which would leave
+           'b' holding a name for memory that is gone.
+   = help: store an arena that outlives 'b'
+             b.arena = arena

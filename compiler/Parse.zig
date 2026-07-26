@@ -460,6 +460,11 @@ fn parsePrefixExpr(p: *Parse) Allocator.Error!Node.Index {
     defer p.depth -= 1;
 
     const op_token = p.nextToken();
+
+    // `*var T` is a pointer that can be written through. `Ast.full` reads it back off
+    // the token after `*`, so there is nothing to store here.
+    if (node_tag == .pointer_type) _ = p.eatToken(.kw_var);
+
     return p.addNode(.{
         .tag = node_tag,
         .main_token = op_token,

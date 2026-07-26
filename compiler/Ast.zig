@@ -176,7 +176,7 @@ pub const Full = union(enum) {
     struct_type: []const Node.Index,
     use_decl: Node.Index,
     grouped: Node.Index,
-    pointer_type: Node.Index,
+    pointer_type: Pointer,
     return_stmt: Node.OptionalIndex,
 
     fn_decl: FnDecl,
@@ -211,6 +211,8 @@ pub const Full = union(enum) {
         type_expr: Node.OptionalIndex,
         init_expr: Node.Index,
     };
+    /// `*T` reads, `*var T` writes. Mutability is a token, never a stored bit.
+    pub const Pointer = struct { is_mutable: bool, child: Node.Index };
     pub const Binding = struct { name_token: TokenIndex, type_expr: Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     pub const Binary = struct { op: BinaryOp, op_token: TokenIndex, lhs: Node.Index, rhs: Node.Index };
@@ -226,7 +228,10 @@ pub fn full(tree: Ast, n: Node.Index) Full {
         .struct_type => .{ .struct_type = tree.list(data.extra_range) },
         .use_decl => .{ .use_decl = data.node },
         .grouped => .{ .grouped = data.node },
-        .pointer_type => .{ .pointer_type = data.node },
+        .pointer_type => .{ .pointer_type = .{
+            .is_mutable = tree.tokenTag(main + 1) == .kw_var,
+            .child = data.node,
+        } },
         .return_stmt => .{ .return_stmt = data.opt_node },
         .err => .err,
 
