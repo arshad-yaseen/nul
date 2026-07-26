@@ -11,6 +11,7 @@ fn words(arena: Arena, path: str) !List(str) {
     var scratch = arena.child()      // dies when this function returns
 
     let text = try io.read_file(scratch, path)
+
     var out = List(str).init(arena, .{ cap: 64 })
 
     for word in text.split(scratch, " ") {
