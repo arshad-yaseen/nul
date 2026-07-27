@@ -13,12 +13,9 @@ path: []const u8,
 bytes: [:0]const u8,
 line_starts: ?[]u32 = null,
 
-pub fn load(
-    gpa: Allocator,
-    io: std.Io,
-    dir: std.Io.Dir,
-    path: []const u8,
-) error{ SourceTooLarge, OutOfMemory, ReadFailed }!Source {
+pub const LoadError = error{ SourceTooLarge, OutOfMemory, ReadFailed };
+
+pub fn load(gpa: Allocator, io: std.Io, dir: std.Io.Dir, path: []const u8) LoadError!Source {
     var file = dir.openFile(io, path, .{}) catch return error.ReadFailed;
     defer file.close(io);
 
