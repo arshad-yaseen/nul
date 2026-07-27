@@ -1,0 +1,88 @@
+use std.mem.Arena
+
+let Word = struct {
+    text:  str
+    count: i64
+}
+
+let Line = struct {
+    head: *Word
+    next: *Line
+    span: i64
+}
+
+let Doc = struct {
+    title: str
+    first: *Line
+    lines: i64
+    words: i64
+}
+
+fn makeWord(a: Arena, text: str, count: i64) *Word {
+    var w = a.create(Word)
+
+    w.text = a.copy(text)
+    w.count = count
+
+    return w
+}
+
+fn makeLine(a: Arena, text: str, count: i64, span: i64) *Line {
+    var l = a.create(Line)
+
+    l.head = makeWord(a, text, count)
+    l.span = span
+
+    return l
+}
+
+fn widthOf(l: *Line) i64 {
+    return l.span * l.head.count
+}
+
+/// Measures in a scratch child and a grandchild below it, releases both, then builds
+/// what is kept in the arena it was given.
+fn build(arena: Arena, title: str) *Doc {
+    var scratch = arena.child()
+    var inner = scratch.child()
+
+    var probe = makeLine(scratch, "probe", 2, 3)
+    var deep = makeLine(inner, "deep", 4, 5)
+
+    var base = widthOf(probe) + widthOf(deep)
+
+    inner.destroy()
+    scratch.reset()
+
+    var doc = arena.create(Doc)
+
+    doc.title = arena.copy(title)
+    doc.lines = 0
+    doc.words = 0
+
+    var first = makeLine(arena, "alpha", 3, 7)
+    var second = makeLine(arena, "beta", 5, 2)
+
+    first.next = second
+    doc.first = first
+    doc.lines = 2
+    doc.words = widthOf(first) + widthOf(second) + base
+
+    return doc
+}
+
+/// A second arena tree beside the one `build` uses, to prove they do not interfere.
+fn main(arena: Arena) i64 {
+    var work = arena.child()
+
+    var doc = build(arena, "report")
+
+    var extra = work.child()
+    var note = makeWord(extra, "note", 1)
+
+    var total = doc.words + note.count
+
+    work.destroy()
+
+    return total
+}

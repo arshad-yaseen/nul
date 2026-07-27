@@ -9,6 +9,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
+const Namespace = @import("Namespace.zig");
 const Type = @import("Type.zig");
 
 const Nir = @This();
@@ -21,6 +22,12 @@ extra: []const u32,
 names: []const Ast.TokenIndex,
 
 pub const no_name = std.math.maxInt(Ast.TokenIndex);
+
+/// A lowered body and the declaration it came from, which is what a backend walks.
+pub const Function = struct {
+    decl: Namespace.Decl,
+    body: Nir,
+};
 
 pub const Index = enum(u32) { _ };
 
@@ -75,6 +82,9 @@ pub const Inst = struct {
         arena_copy,
         arena_reset,
         arena_destroy,
+        /// The scope that made this arena ended. Not a release, nothing can name the
+        /// arena past here, so a checker has nothing to prove and a backend frees.
+        arena_end,
         /// `lhs` is the returned value, or `none`.
         ret,
         /// Reported already, or not lowered yet. Nothing downstream should trust it.

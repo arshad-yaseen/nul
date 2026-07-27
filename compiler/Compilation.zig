@@ -1,8 +1,4 @@
 //! Runs one file through the whole pipeline and keeps what a reader needs afterwards.
-//!
-//! Everything a diagnostic points at is either a token index into `tree` or a string in
-//! the diagnostics arena, so the pool and the namespace are gone by the time this
-//! returns. Only the three things `render` needs survive.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -10,9 +6,11 @@ const Io = std.Io;
 
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
+const codegen_c = @import("codegen/c.zig");
 const InternPool = @import("InternPool.zig");
 const Lower = @import("Lower.zig");
 const Namespace = @import("Namespace.zig");
+const Nir = @import("Nir.zig");
 const Region = @import("Region.zig");
 const Sema = @import("Sema.zig");
 const Source = @import("Source.zig");
@@ -23,10 +21,21 @@ src: Source,
 tree: Ast,
 diagnostics: Diagnostic.List,
 
-pub const Error = Allocator.Error || Source.LoadError;
+pub const Error = Allocator.Error || Source.LoadError || Io.Writer.Error;
 
-/// Checks `path`, stopping after parsing if the file does not parse at all.
 pub fn check(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8) Error!Compilation {
+    return build(gpa, io, dir, path, null);
+}
+
+/// Checks `path`, and writes C to `emit` when nothing is wrong with it. Emission happens
+/// here because the pool and the bodies are alive only for the length of this call.
+pub fn build(
+    gpa: Allocator,
+    io: Io,
+    dir: Io.Dir,
+    path: []const u8,
+    emit: ?*Io.Writer,
+) Error!Compilation {
     var src = try Source.load(gpa, io, dir, path);
     errdefer src.deinit(gpa);
 
@@ -37,13 +46,18 @@ pub fn check(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8) Error!Compil
     errdefer diagnostics.deinit();
 
     // A tree with holes in it would only produce errors about the holes.
-    if (tree.errors.len == 0) try analyze(gpa, &tree, &diagnostics);
+    if (tree.errors.len == 0) try analyze(gpa, &tree, &diagnostics, emit);
     diagnostics.sortBySource();
 
     return .{ .src = src, .tree = tree, .diagnostics = diagnostics };
 }
 
-fn analyze(gpa: Allocator, tree: *Ast, diagnostics: *Diagnostic.List) Allocator.Error!void {
+fn analyze(
+    gpa: Allocator,
+    tree: *Ast,
+    diagnostics: *Diagnostic.List,
+    emit: ?*Io.Writer,
+) Error!void {
     var pool = try InternPool.init(gpa);
     defer pool.deinit(gpa);
 
@@ -60,11 +74,24 @@ fn analyze(gpa: Allocator, tree: *Ast, diagnostics: *Diagnostic.List) Allocator.
     defer sema.deinit();
     try sema.resolveDeclarations();
 
+    var functions: std.ArrayList(Nir.Function) = .empty;
+    defer {
+        for (functions.items) |*f| f.body.deinit(gpa);
+        functions.deinit(gpa);
+    }
+
     for (namespace.all()) |decl| {
         if (tree.nodeTag(decl.node) != .fn_decl) continue;
-        var body = try Lower.run(&sema, decl);
-        defer body.deinit(gpa);
+        const body = try Lower.run(&sema, decl);
+        try functions.append(gpa, .{ .decl = decl, .body = body });
         try Region.run(gpa, &pool, tree, diagnostics, body);
+    }
+
+    // Emitting a program the checker rejected would only produce C that lies.
+    if (emit) |w| {
+        if (diagnostics.all().len == 0) {
+            try codegen_c.emit(&pool, tree, &namespace, functions.items, w);
+        }
     }
 }
 

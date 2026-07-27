@@ -128,6 +128,8 @@ fn visit(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
         .store_field => try region.checkStore(inst),
         .ret => try region.checkReturn(inst),
         .arena_reset, .arena_destroy => try region.release(at, inst),
+        // Scope end is not a release, nothing can name the arena past here.
+        .arena_end => {},
         else => {},
     }
 }

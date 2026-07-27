@@ -156,6 +156,38 @@ fn block(lower: *Lower, node: Ast.Node.Index) Allocator.Error!void {
     defer lower.locals.shrinkRetainingCapacity(depth);
 
     for (stmts) |stmt| try lower.statement(stmt);
+    try lower.endScope(depth);
+}
+
+/// An arena dies at the end of the scope that made it. Already released is already gone,
+/// which is what keeps a `destroy` the source wrote from happening twice.
+fn endScope(lower: *Lower, depth: usize) Allocator.Error!void {
+    var at = lower.locals.items.len;
+    while (at > depth) {
+        at -= 1;
+        const local = lower.locals.items[at];
+        switch (lower.insts.items[local.inst].tag) {
+            .arena_init, .arena_child => {},
+            else => continue,
+        }
+        if (lower.isReleased(local.inst)) continue;
+        _ = try lower.add(.{
+            .tag = .arena_end,
+            .token = local.token,
+            .ty = .void,
+            .lhs = local.inst,
+        });
+    }
+}
+
+fn isReleased(lower: *const Lower, inst: u32) bool {
+    for (lower.insts.items) |it| {
+        switch (it.tag) {
+            .arena_destroy, .arena_end => if (it.lhs == inst) return true,
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn statement(lower: *Lower, node: Ast.Node.Index) Allocator.Error!void {
@@ -222,6 +254,8 @@ fn returnStmt(lower: *Lower, node: Ast.Node.Index, value: Ast.Node.OptionalIndex
             .marks = try lower.returnTypeMark(),
         });
     }
+
+    try lower.endScope(0);
 
     _ = try lower.add(.{
         .tag = .ret,

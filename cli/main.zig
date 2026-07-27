@@ -15,10 +15,12 @@ const usage =
     \\nul <command> [options]
     \\
     \\  check <file>   Check a file, reporting anything the compiler can prove wrong
+    \\  build <file>   Check a file, then write the C it compiles to
     \\  version        Print the version
     \\  help           Print this message
     \\
-    \\Options for check:
+    \\Options:
+    \\  -o <file>      Where build writes its C, or '-' for standard output
     \\  --color        Colour the output even when it is not a terminal
     \\  --no-color     Never colour the output
     \\
@@ -41,7 +43,8 @@ fn run(init: std.process.Init, args: []const []const u8, w: *Io.Writer) !Exit {
     }
     const command = args[0];
 
-    if (is(command, "check")) return check(init, args[1..], w);
+    if (is(command, "check")) return compile(init, args[1..], w, .check);
+    if (is(command, "build")) return compile(init, args[1..], w, .build);
     if (is(command, "version")) {
         try w.print("nul {s}\n", .{version});
         return .ok;
@@ -61,20 +64,33 @@ fn run(init: std.process.Init, args: []const []const u8, w: *Io.Writer) !Exit {
     return .misused;
 }
 
-fn check(init: std.process.Init, args: []const []const u8, w: *Io.Writer) !Exit {
+const Mode = enum { check, build };
+
+fn compile(init: std.process.Init, args: []const []const u8, w: *Io.Writer, mode: Mode) !Exit {
+    const name = @tagName(mode);
     var color: ?bool = null;
+    var out: ?[]const u8 = null;
     var path: ?[]const u8 = null;
 
-    for (args) |arg| {
+    var at: usize = 0;
+    while (at < args.len) : (at += 1) {
+        const arg = args[at];
         if (is(arg, "--color")) {
             color = true;
         } else if (is(arg, "--no-color")) {
             color = false;
+        } else if (is(arg, "-o")) {
+            at += 1;
+            if (at == args.len) {
+                try w.print("nul {s}: -o wants a file after it\n", .{name});
+                return .misused;
+            }
+            out = args[at];
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            try w.print("nul check: there is no '{s}' option\n", .{arg});
+            try w.print("nul {s}: there is no '{s}' option\n", .{ name, arg });
             return .misused;
         } else if (path != null) {
-            try w.writeAll("nul check: one file at a time, for now\n");
+            try w.writeAll("nul: one file at a time, for now\n");
             return .misused;
         } else {
             path = arg;
@@ -82,24 +98,63 @@ fn check(init: std.process.Init, args: []const []const u8, w: *Io.Writer) !Exit 
     }
 
     const file = path orelse {
-        try w.writeAll("nul check: expected a file to check\n");
+        try w.print("nul {s}: expected a file\n", .{name});
         return .misused;
     };
+    if (mode == .check and out != null) {
+        try w.writeAll("nul check: -o belongs to build, which is the one that writes C\n");
+        return .misused;
+    }
 
     const gpa = init.gpa;
-    var result = Compilation.check(gpa, init.io, Io.Dir.cwd(), file) catch |e| {
+    const cwd = Io.Dir.cwd();
+
+    // C accumulates in memory so a rejected program never reaches the disk.
+    var c: Io.Writer.Allocating = .init(gpa);
+    defer c.deinit();
+    const emit: ?*Io.Writer = if (mode == .build) &c.writer else null;
+
+    var result = Compilation.build(gpa, init.io, cwd, file, emit) catch |e| {
         try w.print("nul: cannot read '{s}': {s}\n", .{ file, @errorName(e) });
         return .misused;
     };
     defer result.deinit(gpa);
 
     const count = result.errorCount();
-    if (count == 0) return .ok;
+    if (count > 0) {
+        const tty = Io.File.stdout().isTty(init.io) catch false;
+        try result.render(gpa, w, if (color orelse tty) .ansi else .plain);
+        try w.print("\n{d} error{s} found\n", .{ count, if (count == 1) "" else "s" });
+        return .failed;
+    }
+    if (mode == .check) return .ok;
 
-    const tty = Io.File.stdout().isTty(init.io) catch false;
-    try result.render(gpa, w, if (color orelse tty) .ansi else .plain);
-    try w.print("\n{d} error{s} found\n", .{ count, if (count == 1) "" else "s" });
-    return .failed;
+    const target = out orelse try cPath(init.arena.allocator(), file);
+    if (is(target, "-")) {
+        try w.writeAll(c.written());
+        return .ok;
+    }
+    writeFile(init.io, cwd, target, c.written()) catch |e| {
+        try w.print("nul: cannot write '{s}': {s}\n", .{ target, @errorName(e) });
+        return .misused;
+    };
+    try w.print("{s}\n", .{target});
+    return .ok;
+}
+
+/// `hello.nul` becomes `hello.c`, next to where it came from.
+fn cPath(arena: std.mem.Allocator, file: []const u8) ![]const u8 {
+    const stem = if (std.mem.lastIndexOfScalar(u8, file, '.')) |dot| file[0..dot] else file;
+    return std.fmt.allocPrint(arena, "{s}.c", .{stem});
+}
+
+fn writeFile(io: Io, dir: Io.Dir, path: []const u8, bytes: []const u8) !void {
+    var file = try dir.createFile(io, path, .{});
+    defer file.close(io);
+    var buf: [4096]u8 = undefined;
+    var writer = file.writer(io, &buf);
+    try writer.interface.writeAll(bytes);
+    try writer.interface.flush();
 }
 
 fn is(arg: []const u8, name: []const u8) bool {
