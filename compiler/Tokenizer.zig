@@ -43,7 +43,7 @@ pub fn next(self: *Tokenizer) Token {
             0 => {
                 if (self.index != src.len) continue :state .invalid;
                 // A file ending without a newline still ends its last statement.
-                if (Token.info[@intFromEnum(self.prev)].ends_stmt) break :state .semi;
+                if (Token.traits[@intFromEnum(self.prev)].ends_stmt) break :state .semi;
                 break :state .eof;
             },
             ' ', '\t', '\r' => {
@@ -52,7 +52,7 @@ pub fn next(self: *Tokenizer) Token {
                 continue :state .start;
             },
             '\n' => {
-                if (Token.info[@intFromEnum(self.prev)].ends_stmt) {
+                if (Token.traits[@intFromEnum(self.prev)].ends_stmt) {
                     self.index += 1;
                     break :state .semi;
                 }
@@ -68,18 +68,18 @@ pub fn next(self: *Tokenizer) Token {
                 continue :state .str;
             },
 
-            '(' => break :state self.single(.l_paren),
-            ')' => break :state self.single(.r_paren),
-            '{' => break :state self.single(.l_brace),
-            '}' => break :state self.single(.r_brace),
-            ',' => break :state self.single(.comma),
-            '.' => break :state self.single(.dot),
-            ':' => break :state self.single(.colon),
-            ';' => break :state self.single(.semi),
-            '+' => break :state self.single(.plus),
-            '-' => break :state self.single(.minus),
-            '*' => break :state self.single(.star),
-            '%' => break :state self.single(.percent),
+            '(' => break :state self.singleChar(.l_paren),
+            ')' => break :state self.singleChar(.r_paren),
+            '{' => break :state self.singleChar(.l_brace),
+            '}' => break :state self.singleChar(.r_brace),
+            ',' => break :state self.singleChar(.comma),
+            '.' => break :state self.singleChar(.dot),
+            ':' => break :state self.singleChar(.colon),
+            ';' => break :state self.singleChar(.semi),
+            '+' => break :state self.singleChar(.plus),
+            '-' => break :state self.singleChar(.minus),
+            '*' => break :state self.singleChar(.star),
+            '%' => break :state self.singleChar(.percent),
 
             '=' => continue :state .eq,
             '!' => continue :state .bang,
@@ -205,10 +205,10 @@ pub fn next(self: *Tokenizer) Token {
             },
         },
 
-        .eq => break :state self.pair('=', .eq_eq, .eq),
-        .bang => break :state self.pair('=', .bang_eq, .bang),
-        .lt => break :state self.pair('=', .lt_eq, .lt),
-        .gt => break :state self.pair('=', .gt_eq, .gt),
+        .eq => break :state self.pairOrSingle('=', .eq_eq, .eq),
+        .bang => break :state self.pairOrSingle('=', .bang_eq, .bang),
+        .lt => break :state self.pairOrSingle('=', .lt_eq, .lt),
+        .gt => break :state self.pairOrSingle('=', .gt_eq, .gt),
 
         .invalid => {
             @branchHint(.cold);
@@ -228,23 +228,28 @@ pub fn next(self: *Tokenizer) Token {
     return .{ .tag = tag, .start = start };
 }
 
-inline fn single(self: *Tokenizer, tag: Token.Tag) Token.Tag {
+inline fn singleChar(self: *Tokenizer, tag: Token.Tag) Token.Tag {
     self.index += 1;
     return tag;
 }
 
 /// Longest-match for a two-character operator.
-inline fn pair(self: *Tokenizer, second: u8, both: Token.Tag, one: Token.Tag) Token.Tag {
+inline fn pairOrSingle(
+    self: *Tokenizer,
+    second: u8,
+    if_paired: Token.Tag,
+    if_alone: Token.Tag,
+) Token.Tag {
     self.index += 1;
-    if (self.src[self.index] != second) return one;
+    if (self.src[self.index] != second) return if_alone;
     self.index += 1;
-    return both;
+    return if_paired;
 }
 
 /// The byte just past a token. Fixed-length tags answer from the table, the four
 /// variable-length tags rescan. Nothing on the parser's hot path calls this.
 pub fn tokenEnd(src: [:0]const u8, tag: Token.Tag, start: u32) u32 {
-    const fixed = Token.info[@intFromEnum(tag)].len;
+    const fixed = Token.traits[@intFromEnum(tag)].lexeme_len;
     if (fixed != 0) return start + fixed;
     if (tag == .eof) return start;
 

@@ -119,23 +119,23 @@ pub const Tag = enum(u8) {
 
 pub const tag_count = @typeInfo(Tag).@"enum".fields.len;
 
-pub const Info = packed struct(u8) {
+pub const Traits = packed struct(u8) {
     /// A newline after this token ends a statement, so the tokenizer emits a
     /// synthetic `.semi`.
     ends_stmt: bool = false,
     /// Lexeme length, 0 means variable-length and the end must be rescanned.
-    len: u7 = 0,
+    lexeme_len: u7 = 0,
 };
 
-pub const info: [tag_count]Info = blk: {
-    var table: [tag_count]Info = @splat(.{});
+pub const traits: [tag_count]Traits = blk: {
+    var table: [tag_count]Traits = @splat(.{});
     for (std.enums.values(Tag)) |tag| table[@intFromEnum(tag)] = .{
         .ends_stmt = switch (tag) {
             .ident, .number, .str, .r_paren, .r_brace => true,
             .kw_return, .kw_true, .kw_false => true,
             else => false,
         },
-        .len = if (tag.lexeme()) |l| @intCast(l.len) else 0,
+        .lexeme_len = if (tag.lexeme()) |l| @intCast(l.len) else 0,
     };
     break :blk table;
 };
@@ -187,7 +187,7 @@ pub inline fn keywordOrIdent(src: [*]const u8, start: u32, len: u32) Tag {
                 (@as(u64, 1) << (n * 8)) - 1;
             inline for (keyword_list) |kw| {
                 if (comptime kw[0].len == n) {
-                    if (masked == comptime pack(kw[0])) return kw[1];
+                    if (masked == comptime packLittleEndian(kw[0])) return kw[1];
                 }
             }
             return .ident;
@@ -196,7 +196,7 @@ pub inline fn keywordOrIdent(src: [*]const u8, start: u32, len: u32) Tag {
     }
 }
 
-fn pack(comptime s: []const u8) u64 {
+fn packLittleEndian(comptime s: []const u8) u64 {
     var w: u64 = 0;
     for (s, 0..) |c, i| w |= @as(u64, c) << @intCast(i * 8);
     return w;

@@ -62,7 +62,7 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.Error!void {
-    const node = tree.full(n);
+    const node = tree.viewOf(n);
     const d = depth + 1;
 
     try w.splatByteAll(' ', depth * 2);

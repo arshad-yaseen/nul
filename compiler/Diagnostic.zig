@@ -55,14 +55,14 @@ pub const Error = Allocator.Error || Io.Writer.Error;
 
 /// A label resolved against the source. Columns are 1-based bytes, `end_col` is
 /// exclusive and always greater than `col`, so every label draws at least one marker.
-const Placed = struct {
+const PlacedLabel = struct {
     line: u32,
     col: u32,
     end_col: u32,
     style: Label.Style,
     text: []const u8,
 
-    fn before(_: void, a: Placed, b: Placed) bool {
+    fn sortsBefore(_: void, a: PlacedLabel, b: PlacedLabel) bool {
         return if (a.line != b.line) a.line < b.line else a.col < b.col;
     }
 };
@@ -70,10 +70,10 @@ const Placed = struct {
 pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!void {
     assert(d.labels.len > 0);
 
-    const placed = try gpa.alloc(Placed, d.labels.len);
+    const placed = try gpa.alloc(PlacedLabel, d.labels.len);
     defer gpa.free(placed);
 
-    var header: ?Placed = null;
+    var header: ?PlacedLabel = null;
     var last_line: u32 = 0;
     for (d.labels, placed) |l, *p| {
         const lc = try src.lineCol(gpa, l.start);
@@ -93,15 +93,15 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
     }
     assert(header != null); // a diagnostic without a primary label has nowhere to point
 
-    std.mem.sort(Placed, placed, {}, Placed.before);
+    std.mem.sort(PlacedLabel, placed, {}, PlacedLabel.sortsBefore);
 
-    const gutter = digits(last_line);
+    const gutter = digitCount(last_line);
 
     try w.print("error: {s}\n\n", .{d.message});
 
     try w.splatByteAll(' ', gutter + 1);
     try w.print("┌─ {s}:{d}:{d}\n", .{ src.path, header.?.line, header.?.col });
-    try rule(w, gutter, "│");
+    try writeGutterLine(w, gutter, "│");
 
     var i: usize = 0;
     var prev_line: u32 = 0;
@@ -112,22 +112,22 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
         const group = placed[i..j];
 
         // Lines the reader is not being shown collapse to one mark.
-        if (prev_line != 0 and line > prev_line + 1) try rule(w, gutter, "·");
+        if (prev_line != 0 and line > prev_line + 1) try writeGutterLine(w, gutter, "·");
 
-        try w.splatByteAll(' ', gutter - digits(line));
+        try w.splatByteAll(' ', gutter - digitCount(line));
         try w.print("{d} │ {s}\n", .{ line, try src.lineText(gpa, line) });
 
-        try markers(w, gutter, group);
+        try writeMarkerRow(w, gutter, group);
 
         // The rightmost label spoke on the marker row. The rest queue up under it,
         // and are drawn from the right so no connector crosses another's text.
         const queued = group[0 .. group.len - 1];
         if (queued.len > 0) {
-            try connectors(w, gutter, queued, queued.len, "");
+            try writeConnectorRow(w, gutter, queued, queued.len, "");
             var k = queued.len;
             while (k > 0) {
                 k -= 1;
-                try connectors(w, gutter, queued, k, queued[k].text);
+                try writeConnectorRow(w, gutter, queued, k, queued[k].text);
             }
         }
 
@@ -135,25 +135,25 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
         i = j;
     }
 
-    try rule(w, gutter, "│");
+    try writeGutterLine(w, gutter, "│");
 
     for (d.notes) |n| {
         try w.splatByteAll(' ', gutter + 1);
         try w.print("= {s}: ", .{@tagName(n.kind)});
-        try wrapped(w, n.text, gutter + 9, false);
-        if (n.code.len > 0) try wrapped(w, n.code, gutter + 11, true);
+        try writeIndented(w, n.text, gutter + 9, false);
+        if (n.code.len > 0) try writeIndented(w, n.code, gutter + 11, true);
     }
 }
 
 /// A gutter-only line, `│` between snippet rows and `·` where lines were skipped.
-fn rule(w: *Io.Writer, gutter: u32, mark: []const u8) Io.Writer.Error!void {
+fn writeGutterLine(w: *Io.Writer, gutter: u32, mark: []const u8) Io.Writer.Error!void {
     try w.splatByteAll(' ', gutter + 1);
     try w.writeAll(mark);
     try w.writeByte('\n');
 }
 
 /// The row of `^^^` and `───` under a source line, plus the rightmost label's text.
-fn markers(w: *Io.Writer, gutter: u32, group: []const Placed) Io.Writer.Error!void {
+fn writeMarkerRow(w: *Io.Writer, gutter: u32, group: []const PlacedLabel) Io.Writer.Error!void {
     try w.splatByteAll(' ', gutter + 1);
     try w.writeAll("│ ");
 
@@ -170,46 +170,51 @@ fn markers(w: *Io.Writer, gutter: u32, group: []const Placed) Io.Writer.Error!vo
     try w.writeByte('\n');
 }
 
-/// A row of `│` under the first `bars` queued labels, then `text` at the column of
-/// the label just past them.
-fn connectors(
+/// A row of `│` under the first `connected_count` queued labels, then `text` at the
+/// column of the label just past them.
+fn writeConnectorRow(
     w: *Io.Writer,
     gutter: u32,
-    queued: []const Placed,
-    bars: usize,
+    queued: []const PlacedLabel,
+    connected_count: usize,
     text: []const u8,
 ) Io.Writer.Error!void {
     try w.splatByteAll(' ', gutter + 1);
     try w.writeAll("│");
-    if (bars == 0 and text.len == 0) return w.writeByte('\n');
+    if (connected_count == 0 and text.len == 0) return w.writeByte('\n');
     try w.writeByte(' ');
 
     var col: u32 = 1;
-    for (queued[0..bars]) |g| {
-        try w.splatByteAll(' ', g.col -| col);
+    for (queued[0..connected_count]) |label| {
+        try w.splatByteAll(' ', label.col -| col);
         try w.writeAll("│");
-        col = g.col + 1;
+        col = label.col + 1;
     }
     if (text.len > 0) {
-        try w.splatByteAll(' ', queued[bars].col -| col);
+        try w.splatByteAll(' ', queued[connected_count].col -| col);
         try w.writeAll(text);
     }
     try w.writeByte('\n');
 }
 
-/// Writes `text`, indenting every line after the first to `indent`. `all` indents
-/// the first line too, which is what suggested code wants.
-fn wrapped(w: *Io.Writer, text: []const u8, indent: u32, all: bool) Io.Writer.Error!void {
-    var it = std.mem.splitScalar(u8, text, '\n');
-    var first = true;
-    while (it.next()) |line| : (first = false) {
-        if (all or !first) try w.splatByteAll(' ', indent);
+/// Writes `text`, indenting every line after the first to `indent`. Suggested code
+/// wants the first line indented too.
+fn writeIndented(
+    w: *Io.Writer,
+    text: []const u8,
+    indent: u32,
+    indent_first_line: bool,
+) Io.Writer.Error!void {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var is_first = true;
+    while (lines.next()) |line| : (is_first = false) {
+        if (indent_first_line or !is_first) try w.splatByteAll(' ', indent);
         try w.writeAll(line);
         try w.writeByte('\n');
     }
 }
 
-fn digits(n: u32) u32 {
+fn digitCount(n: u32) u32 {
     var count: u32 = 1;
     var rest = n / 10;
     while (rest > 0) : (rest /= 10) count += 1;
