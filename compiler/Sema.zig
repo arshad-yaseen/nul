@@ -188,6 +188,18 @@ pub fn comptimeInt(sema: *const Sema, node: Ast.Node.Index) ?i128 {
         },
         .grouped => |inner| sema.comptimeInt(inner),
         .unary => |it| if (it.op == .negate) -(sema.comptimeInt(it.operand) orelse return null) else null,
+        .binary => |it| {
+            const lhs = sema.comptimeInt(it.lhs) orelse return null;
+            const rhs = sema.comptimeInt(it.rhs) orelse return null;
+            return switch (it.op) {
+                .add => std.math.add(i128, lhs, rhs) catch null,
+                .sub => std.math.sub(i128, lhs, rhs) catch null,
+                .mul => std.math.mul(i128, lhs, rhs) catch null,
+                .div => if (rhs == 0) null else @divTrunc(lhs, rhs),
+                .mod => if (rhs == 0) null else @rem(lhs, rhs),
+                else => null, // comparisons and logic are not integers
+            };
+        },
         else => null,
     };
 }

@@ -31,6 +31,11 @@ everything below them is easier to design once they exist.
 - [ ] Generics with constraints, checked once at the definition (`spec.md`)
 - [ ] Decide and write down: nested functions (recommend no), closures (need a decision
       before anything depends on them)
+- [ ] `usize` and `isize` are not range checked, because `intInfo` has no width for
+      them. Giving them one makes `usize` and `u64` the same type, which is a decision
+      about the language rather than a fix, and it wants a target concept first
+- [ ] `10 / 0` folds to nothing and reaches the backend as a runtime division. Constant
+      division by zero should be reported where it is written
 - [ ] Does `create` zero its memory? The C backend hands back whatever `malloc` gave, so
       an unset field is garbage today. Decide the semantics, then enforce them
 

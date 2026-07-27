@@ -54,5 +54,7 @@ uint8_t keep(nul_arena * t0);
 
 uint8_t keep(nul_arena * t0) {
     int64_t t1 = 255;
-    return t1;
+    int64_t t2 = 1;
+    int64_t t3 = t1 + t2;
+    return t3;
 }

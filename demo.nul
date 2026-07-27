@@ -1,7 +1,7 @@
 use std.mem.Arena
 
 fn keep(arena: Arena) u8 {
-    let cool: u8 = 256
+    let cool = 255 + 1
 
     return cool
 }
