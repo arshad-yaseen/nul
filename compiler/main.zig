@@ -11,6 +11,7 @@ const InternPool = @import("InternPool.zig");
 const Lower = @import("Lower.zig");
 const Namespace = @import("Namespace.zig");
 const Nir = @import("Nir.zig");
+const Region = @import("Region.zig");
 const Sema = @import("Sema.zig");
 const Type = @import("Type.zig");
 
@@ -38,6 +39,11 @@ pub fn main(init: std.process.Init) !u8 {
 
     var tree = try Ast.parse(gpa, src.bytes);
     defer tree.deinit(gpa);
+
+    if (tree.errors.len > 0) {
+        try Diagnostic.renderAll(gpa, tree.errors, tree, &src, w);
+        return 1;
+    }
 
     // try w.writeAll("tokens\n");
     // for (tree.tokens.items(.tag), tree.tokens.items(.start)) |tag, start| {
@@ -105,10 +111,18 @@ pub fn main(init: std.process.Init) !u8 {
     //     try dumpBody(body, &pool, tree, w);
     // }
 
+    for (namespace.all()) |decl| {
+        if (tree.nodeTag(decl.node) != .fn_decl) continue;
+        var body = try Lower.run(&sema, decl);
+        defer body.deinit(gpa);
+        try Region.run(gpa, &pool, &tree, &diagnostics, body);
+    }
+
     if (diagnostics.all().len == 0) return 0;
 
     // try w.writeByte('\n');
     // try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
+    try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
     return 1;
 }
 

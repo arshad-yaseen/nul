@@ -19,6 +19,7 @@ const Lower = @This();
 const Token = Ast.TokenIndex;
 const Inst = Nir.Inst;
 const Mark = Diagnostic.Mark;
+const Span = struct { Token, Token };
 const Note = Diagnostic.Note;
 
 sema: *Sema,
@@ -30,6 +31,7 @@ function: Ast.View.FnDecl,
 returns: Type.Index,
 insts: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
+names: std.ArrayList(Ast.TokenIndex) = .empty,
 /// Innermost last, so a backward scan finds the name that shadows. A block shrinks back
 /// to the length it entered with.
 locals: std.ArrayList(Local) = .empty,
@@ -63,6 +65,7 @@ pub fn run(sema: *Sema, decl: Namespace.Decl) Allocator.Error!Nir {
     errdefer {
         lower.insts.deinit(lower.gpa);
         lower.extra.deinit(lower.gpa);
+        lower.names.deinit(lower.gpa);
     }
 
     try lower.bindParams(signature.params);
@@ -71,6 +74,7 @@ pub fn run(sema: *Sema, decl: Namespace.Decl) Allocator.Error!Nir {
     return .{
         .insts = try lower.insts.toOwnedSlice(lower.gpa),
         .extra = try lower.extra.toOwnedSlice(lower.gpa),
+        .names = try lower.names.toOwnedSlice(lower.gpa),
     };
 }
 
@@ -98,6 +102,7 @@ fn bindParams(lower: *Lower, params: []const Type.Index) Allocator.Error!void {
 fn add(lower: *Lower, inst: Inst) Allocator.Error!u32 {
     const at: u32 = @intCast(lower.insts.items.len);
     try lower.insts.append(lower.gpa, inst);
+    try lower.names.append(lower.gpa, Nir.no_name);
     return at;
 }
 
@@ -120,6 +125,7 @@ fn typeOf(lower: *const Lower, inst: u32) Type.Index {
 }
 
 fn declare(lower: *Lower, token: Token, inst: u32, ty: Type.Index, is_mutable: bool) Allocator.Error!void {
+    lower.names.items[inst] = token;
     try lower.locals.append(lower.gpa, .{
         .name = lower.tree.tokenSlice(token),
         .token = token,
@@ -220,6 +226,7 @@ fn returnStmt(lower: *Lower, node: Ast.Node.Index, value: Ast.Node.OptionalIndex
     _ = try lower.add(.{
         .tag = .ret,
         .token = lower.mainToken(node),
+        .last = lower.tree.lastToken(node),
         .ty = .void,
         .lhs = @intFromEnum(operand),
     });
@@ -267,6 +274,7 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
         .marks = try lower.mark(declared_at, try lower.print("'{s}' was declared here", .{text})),
     });
 
+    lower.names.items[value] = token;
     local.inst = value;
     return value;
 }
@@ -292,7 +300,9 @@ fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAcces
 
     return lower.add(.{
         .tag = .store_field,
-        .token = lower.mainToken(node.lhs),
+        // The value, not the destination: it is what a lifetime error is about.
+        .token = lower.tree.firstToken(node.rhs),
+        .last = lower.tree.lastToken(node.rhs),
         .ty = .void,
         .lhs = target,
         .rhs = value,
@@ -314,7 +324,7 @@ fn expr(lower: *Lower, node: Ast.Node.Index) Allocator.Error!u32 {
         .grouped => |inner| return lower.expr(inner),
         .binary => |it| return lower.binary(it),
         .unary => |it| return lower.unary(it),
-        .field_access => |it| return lower.fieldOf(try lower.expr(it.lhs), it),
+        .field_access => |it| return lower.fieldOf(try lower.expr(it.lhs), it, node),
         .call => |it| return lower.call(node, it),
         else => return lower.todo(lower.mainToken(node)),
     }
@@ -375,7 +385,7 @@ fn unary(lower: *Lower, node: Ast.View.Unary) Allocator.Error!u32 {
     return lower.add(.{ .tag = .unary, .token = node.op_token, .ty = ty, .lhs = operand });
 }
 
-fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess) Allocator.Error!u32 {
+fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess, node: Ast.Node.Index) Allocator.Error!u32 {
     // Through a pointer as readily as into a value: `n.next.value` never says which.
     const owner = Type.pointeeOf(lower.pool, lower.typeOf(base)) orelse lower.typeOf(base);
     // An `Arena` method is not a field, and `call` has already taken those.
@@ -401,7 +411,8 @@ fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess) Allocator.Err
 
     return lower.add(.{
         .tag = .field,
-        .token = access.name_token,
+        .token = lower.tree.firstToken(node),
+        .last = access.name_token,
         .ty = lower.pool.structFieldTypes(owner)[at],
         .lhs = base,
         .rhs = at,
@@ -410,6 +421,7 @@ fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess) Allocator.Err
 
 fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!u32 {
     const token = lower.mainToken(node);
+    const span: Span = .{ lower.tree.firstToken(node), lower.tree.lastToken(node) };
 
     const callee = switch (lower.tree.viewOf(it.callee)) {
         // Arena's operations are builtins rather than fields, so the receiver decides
@@ -417,9 +429,9 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
         .field_access => |access| blk: {
             const receiver = try lower.expr(access.lhs);
             if (lower.typeOf(receiver) == .Arena or lower.isArenaType(receiver)) {
-                return lower.arenaMethod(receiver, access.name_token, it.args, token);
+                return lower.arenaMethod(receiver, access.name_token, it.args, token, span);
             }
-            break :blk try lower.fieldOf(receiver, access);
+            break :blk try lower.fieldOf(receiver, access, it.callee);
         },
         else => try lower.expr(it.callee),
     };
@@ -509,6 +521,7 @@ fn arenaMethod(
     name_token: Token,
     args: []const Ast.Node.Index,
     token: Token,
+    span: Span,
 ) Allocator.Error!u32 {
     const text = lower.tree.tokenSlice(name_token);
     const method = methods.get(text) orelse return lower.fail(.{
@@ -530,17 +543,34 @@ fn arenaMethod(
     });
 
     return switch (method) {
-        .init => lower.add(.{ .tag = .arena_init, .token = token, .ty = .Arena }),
-        .child => lower.add(.{ .tag = .arena_child, .token = token, .ty = .Arena, .lhs = receiver }),
-        .reset => lower.add(.{ .tag = .arena_reset, .token = token, .ty = .void, .lhs = receiver }),
-        .destroy => lower.add(.{ .tag = .arena_destroy, .token = token, .ty = .void, .lhs = receiver }),
+        .init => lower.add(.{ .tag = .arena_init, .token = span[0], .last = span[1], .ty = .Arena }),
+        .child => lower.add(.{
+            .tag = .arena_child,
+            .token = span[0],
+            .last = span[1],
+            .ty = .Arena,
+            .lhs = receiver,
+        }),
+        .reset, .destroy => lower.add(.{
+            .tag = if (method == .reset) .arena_reset else .arena_destroy,
+            .token = span[0],
+            .last = span[1],
+            .ty = .void,
+            .lhs = receiver,
+        }),
         .create => blk: {
             const of = try lower.sema.evalTypeExpr(args[0], name_token);
             const ty = if (of == .poisoned) .poisoned else try lower.pool.intern(
                 lower.gpa,
                 .{ .pointer = .{ .pointee = of, .is_mutable = true } },
             );
-            break :blk lower.add(.{ .tag = .arena_create, .token = token, .ty = ty, .lhs = receiver });
+            break :blk lower.add(.{
+                .tag = .arena_create,
+                .token = span[0],
+                .last = span[1],
+                .ty = ty,
+                .lhs = receiver,
+            });
         },
         .copy => blk: {
             const value = try lower.expr(args[0]);
@@ -559,7 +589,8 @@ fn arenaMethod(
             }
             break :blk lower.add(.{
                 .tag = .arena_copy,
-                .token = token,
+                .token = span[0],
+                .last = span[1],
                 .ty = ty,
                 .lhs = receiver,
                 .rhs = value,
@@ -675,13 +706,13 @@ fn print(lower: *Lower, comptime fmt: []const u8, args: anytype) Allocator.Error
 }
 
 fn mark(lower: *Lower, token: Token, text: []const u8) Allocator.Error![]const Mark {
-    return lower.marks(&.{.{ .token = token, .text = text }});
+    return lower.sema.diagnostics.mark(token, text);
 }
 
 fn marks(lower: *Lower, values: []const Mark) Allocator.Error![]const Mark {
-    return lower.sema.diagnostics.allocator().dupe(Mark, values);
+    return lower.sema.diagnostics.marks(values);
 }
 
 fn notes(lower: *Lower, values: []const Note) Allocator.Error![]const Note {
-    return lower.sema.diagnostics.allocator().dupe(Note, values);
+    return lower.sema.diagnostics.notes(values);
 }

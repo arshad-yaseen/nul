@@ -334,6 +334,49 @@ pub fn nodeTag(tree: Ast, n: Node.Index) Node.Tag {
     return tree.nodes.items(.tag)[@intFromEnum(n)];
 }
 
+/// The first token of a node's source span.
+pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
+    return switch (tree.viewOf(node)) {
+        .ident, .number_literal, .str_literal => |token| token,
+        .bool_literal => |it| it.token,
+        .param, .field => |it| it.name_token,
+        .binary => |it| tree.firstToken(it.lhs),
+        .field_access => |it| tree.firstToken(it.lhs),
+        .assign => |it| tree.firstToken(it.lhs),
+        .call => |it| tree.firstToken(it.callee),
+        else => tree.nodeMainToken(node),
+    };
+}
+
+/// The last token of a node's source span, so a label can underline all of it.
+pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
+    return switch (tree.viewOf(node)) {
+        .ident, .number_literal, .str_literal => |token| token,
+        .bool_literal => |it| it.token,
+        .field_access => |it| it.name_token,
+        .binary => |it| tree.lastToken(it.rhs),
+        .assign => |it| tree.lastToken(it.rhs),
+        .unary => |it| tree.lastToken(it.operand),
+        .grouped => |inner| tree.lastToken(inner) + 1,
+        .pointer_type => |it| tree.lastToken(it.child),
+        .param, .field => |it| tree.lastToken(it.type_expr),
+        .var_decl => |it| tree.lastToken(it.init_expr),
+        .return_stmt => |it| if (it.unwrap()) |e| tree.lastToken(e) else tree.nodeMainToken(node),
+        // The closing token is not stored, and always follows what it closes.
+        .call => |it| 1 + if (it.args.len > 0)
+            tree.lastToken(it.args[it.args.len - 1])
+        else
+            tree.nodeMainToken(node),
+        .block, .struct_type, .root => |stmts| 1 + if (stmts.len > 0)
+            tree.lastToken(stmts[stmts.len - 1])
+        else
+            tree.nodeMainToken(node),
+        .use_decl => |child| tree.lastToken(child),
+        .fn_decl => |it| tree.lastToken(it.body),
+        .err => tree.nodeMainToken(node),
+    };
+}
+
 pub fn nodeMainToken(tree: Ast, n: Node.Index) TokenIndex {
     return tree.nodes.items(.main_token)[@intFromEnum(n)];
 }

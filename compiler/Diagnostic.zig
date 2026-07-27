@@ -66,6 +66,9 @@ pub const Tag = enum {
     not_callable,
     wrong_arg_count,
     copy_holds_pointer,
+    does_not_live_long_enough,
+    release_needs_a_name,
+    used_after_release,
 };
 
 /// A secondary span with its own wording. Owned by the `List`.
@@ -117,6 +120,9 @@ pub const Entry = struct {
             .copy_holds_pointer => try w.writeAll(
                 "this type holds a pointer, so copying it would relabel memory it does not own",
             ),
+            .does_not_live_long_enough => try w.print("'{s}' does not live long enough", .{name}),
+            .release_needs_a_name => try w.writeAll("an arena can only be released by name"),
+            .used_after_release => try w.print("'{s}' is used after its arena was released", .{name}),
         }
     }
 };
@@ -143,6 +149,18 @@ pub const List = struct {
 
     pub fn print(list: *List, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
         return std.fmt.allocPrint(list.allocator(), fmt, args);
+    }
+
+    pub fn mark(list: *List, token: Ast.TokenIndex, text: []const u8) Allocator.Error![]const Mark {
+        return list.marks(&.{.{ .token = token, .text = text }});
+    }
+
+    pub fn marks(list: *List, values: []const Mark) Allocator.Error![]const Mark {
+        return list.allocator().dupe(Mark, values);
+    }
+
+    pub fn notes(list: *List, values: []const Note) Allocator.Error![]const Note {
+        return list.allocator().dupe(Note, values);
     }
 
     pub fn add(list: *List, entry: Entry) Allocator.Error!void {

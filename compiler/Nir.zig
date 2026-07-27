@@ -16,6 +16,11 @@ const Nir = @This();
 insts: []const Inst,
 /// Variable-length operands: a call's arguments.
 extra: []const u32,
+/// The name bound to each instruction, `no_name` where there is none. Diagnostics name
+/// values; the IR itself never reads this.
+names: []const Ast.TokenIndex,
+
+pub const no_name = std.math.maxInt(Ast.TokenIndex);
 
 pub const Index = enum(u32) { _ };
 
@@ -34,6 +39,8 @@ pub const Inst = struct {
     tag: Tag,
     /// What a diagnostic about this instruction points at.
     token: Ast.TokenIndex,
+    /// Last token of that span, so a label underlines the whole expression.
+    last: Ast.TokenIndex = 0,
     /// The type of the value produced, `.void` when there is none.
     ty: Type.Index,
     lhs: u32 = 0,
@@ -78,7 +85,19 @@ pub const Inst = struct {
 pub fn deinit(nir: *Nir, gpa: Allocator) void {
     gpa.free(nir.insts);
     gpa.free(nir.extra);
+    gpa.free(nir.names);
     nir.* = undefined;
+}
+
+/// `last` defaults to `token`, since most instructions are one token wide.
+pub fn spanOf(nir: Nir, inst: u32) struct { Ast.TokenIndex, Ast.TokenIndex } {
+    const it = nir.insts[inst];
+    return .{ it.token, if (it.last == 0) it.token else it.last };
+}
+
+pub fn nameOf(nir: Nir, inst: u32) ?Ast.TokenIndex {
+    const token = nir.names[inst];
+    return if (token == no_name) null else token;
 }
 
 pub fn callArgs(nir: Nir, inst: Inst) []const u32 {
