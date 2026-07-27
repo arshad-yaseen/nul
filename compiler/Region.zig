@@ -205,7 +205,7 @@ fn checkReturn(region: *Region, inst: Nir.Inst) Allocator.Error!void {
             .{
                 .kind = .note,
                 .text = try region.print(
-                    "a result is stored into the caller, so it has to live in an arena the caller\nalready has. '{s}' is made inside this call, and dies with it.",
+                    "a result is stored into the caller, so it has to live in an arena the caller\nalready has. '{s}' is made in this function, and dies with it.",
                     .{home},
                 ),
             },
@@ -343,13 +343,10 @@ fn markOrigin(region: *Region, marks: *Marks, index: Index) Allocator.Error!void
     try marks.append(region.gpa, .{
         .token = it.token,
         .text = switch (it.kind) {
-            .given => try region.print("'{s}' is the arena this call was given", .{own}),
-            .borrowed => try region.print(
-                "'{s}' is borrowed, and this call cannot know how long it lives",
-                .{own},
-            ),
+            .given => try region.print("'{s}' comes from the caller", .{own}),
+            .borrowed => try region.print("the caller owns what '{s}' points at", .{own}),
             .made => try region.print(
-                "'{s}' is made here, and dies when this call returns",
+                "'{s}' is made here, and dies at the end of this function",
                 .{own},
             ),
             .child => try region.print("'{s}' is created here, as a child of '{s}'", .{
@@ -388,12 +385,12 @@ fn why(region: *Region, src: Index, dst: Index) Allocator.Error!Diagnostic.Note 
     const b = region.regionName(dst);
     const text = if (region.info(src).kind == .borrowed)
         try region.print(
-            "'{s}' is borrowed from the caller. This call cannot know how long it lives,\nso nothing may keep a pointer to it.",
+            "'{s}' is borrowed. The caller decides how long it lives, so nothing here may\nkeep a pointer to it.",
             .{a},
         )
     else if (region.info(dst).kind == .borrowed)
         try region.print(
-            "'{s}' belongs to the caller and outlives this call.\n'{s}' dies when the call returns.",
+            "'{s}' belongs to the caller and outlives this function.\n'{s}' dies at the end of it.",
             .{ b, a },
         )
     else if (region.outlives(dst, src))
@@ -413,6 +410,8 @@ fn homeArena(region: *const Region, dst: Index) Index {
     return if (region.info(dst).kind == .borrowed) region.info(dst).parent else dst;
 }
 
+/// Names what has to become true, then shows one way to get there. The compiler cannot
+/// know which way the author meant, so it states the rule and leaves the choice.
 fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator.Error!Diagnostic.Note {
     const home = region.homeArena(dst);
     if (home == .static) return .{
@@ -434,26 +433,30 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
     if (region.info(src).kind == .borrowed) return .{
         .kind = .help,
         .text = try region.print(
-            "copy what '{s}' points at into '{s}', and store the copy",
-            .{ value, arena },
+            "{s} has to own what it keeps. One way, copying into '{s}':",
+            .{ try region.label(region.nir.insts[inst.lhs].lhs), arena },
         ),
         .code = try region.print("{s} = {s}.create({s})", .{
             try region.destination(inst),                                   arena,
             try region.typeName(Type.pointeeOf(region.pool, ty) orelse ty),
         }),
+        .at = region.tree.tokenStart(inst.token),
     };
     if (Type.isCopyable(region.pool, ty)) return .{
         .kind = .help,
-        .text = try region.print("copy it into '{s}', which outlives the destination", .{arena}),
+        .text = try region.print("{s}. One way, copying into '{s}':", .{
+            try region.rule(inst), arena,
+        }),
         .code = try region.print("{s} = {s}.copy({s})", .{
             try region.destination(inst), arena, value,
         }),
+        .at = region.tree.tokenStart(inst.token),
     };
     // A pointer cannot be copied, so the allocation itself has to move.
     return .{
         .kind = .help,
-        .text = try region.print("allocate it from '{s}' instead of '{s}'", .{
-            arena, region.regionName(src),
+        .text = try region.print("{s}. One way, allocating it from '{s}':", .{
+            try region.rule(inst), arena,
         }),
         .code = try region.print("var {s} = {s}", .{ value, try region.allocatedFrom(inst.rhs, arena) }),
         .at = region.anchor(inst.rhs),
@@ -465,9 +468,10 @@ fn howToReturn(region: *Region, value: u32) Allocator.Error!Diagnostic.Note {
         if (it.kind != .given) continue;
         return .{
             .kind = .help,
-            .text = try region.print("allocate the result from '{s}' instead", .{
-                region.tree.tokenSlice(it.token),
-            }),
+            .text = try region.print(
+                "{s} has to outlive this function. One way, allocating it from '{s}':",
+                .{ try region.label(value), region.tree.tokenSlice(it.token) },
+            ),
             .code = try region.print("var {s} = {s}", .{
                 region.name(value) orelse "result",
                 try region.allocatedFrom(value, region.tree.tokenSlice(it.token)),
@@ -517,6 +521,12 @@ fn anchor(region: *const Region, inst: u32) ?u32 {
 /// What an argument was written as: its name, or the token it came from.
 fn argText(region: *const Region, inst: u32) []const u8 {
     return region.name(inst) orelse region.tree.tokenSlice(region.nir.insts[inst].token);
+}
+
+/// `'probe' has to outlive 'second'`: the thing the code has to satisfy.
+fn rule(region: *Region, inst: Nir.Inst) Allocator.Error![]const u8 {
+    const held = region.label(region.nir.insts[inst.lhs].lhs) catch "this memory";
+    return region.print("{s} has to outlive {s}", .{ try region.label(inst.rhs), held });
 }
 
 fn regionName(region: *const Region, index: Index) []const u8 {

@@ -1,91 +1,21 @@
 use std.mem.Arena
 
-let Span = struct {
-    start: i64
-    stop:  i64
+let Payload = struct {
+    tag: i64
 }
 
-let Cursor = struct {
-    at:  i64
-    end: i64
+let Link = struct {
+    to: *Payload
 }
 
-let Line = struct {
-    label: str
-    span:  *Span
-    next:  *Line
-}
+/// Siblings have no ordering between them. Neither outlives the other, so a
+/// pointer either way is rejected.
+fn cross(arena: Arena) {
+    var first = arena.child()
+    var second = arena.child()
 
-let Report = struct {
-    title: str
-    head:  *Line
-    count: i64
-}
+    var link = first.create(Link)
+    var payload = second.create(Payload)
 
-/// Allocates a span in whichever arena it is handed.
-fn makeSpan(a: Arena, start: i64, stop: i64) *Span {
-    var s = a.create(Span)
-
-    s.start = start
-    s.stop = stop
-
-    return s
-}
-
-/// The label is copied, so the line owns the text it shows.
-fn makeLine(a: Arena, label: str) *Line {
-    var l = a.create(Line)
-
-    l.label = a.copy(label)
-
-    return l
-}
-
-/// Reads through a borrowed cursor and moves it. Numbers only, so no arena.
-fn advance(c: *var Cursor, by: i64) i64 {
-    c.at = c.at + by
-
-    return c.at
-}
-
-fn widthOf(s: *Span) i64 {
-    return s.stop - s.start
-}
-
-/// Builds a two line report. The measuring pass runs in a scratch child, which is
-/// reset before returning, so none of that temporary work reaches the caller.
-fn build(arena: Arena, raw: str) *Report {
-    var scratch = arena.child()
-
-    var doc = arena.create(Report)
-
-    doc.title = arena.copy(raw)
-    doc.count = 0
-
-    // Measuring work, thrown away before this function returns.
-    var cur = scratch.create(Cursor)
-
-    cur.at = 0
-    cur.end = 128
-
-    var pos = advance(cur, 32)
-    var probe = makeSpan(scratch, 0, pos)
-    var width = widthOf(probe)
-
-    var first = makeLine(arena, raw)
-
-    first.span = makeSpan(arena, 0, width)
-
-    var second = makeLine(arena, raw)
-
-    second.span = probe
-
-    first.next = second
-
-    doc.head = first
-    doc.count = 2
-
-    scratch.reset()
-
-    return doc
+    link.to = payload
 }

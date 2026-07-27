@@ -12,26 +12,28 @@ const Diagnostic = @This();
 
 // What a pass records
 
-pub const Tag = enum {
-    redeclared,
-    shadows_builtin,
-    undefined_name,
-    depends_on_itself,
-    not_a_type,
-    type_mismatch,
-    unsupported_value,
-    invalid_digit,
-    literal_too_large,
-    multiple_arenas,
-    not_mutable,
-    not_assignable,
-    no_such_field,
-    not_callable,
-    wrong_arg_count,
-    copy_holds_pointer,
-    does_not_live_long_enough,
-    release_needs_a_name,
-    used_after_release,
+/// Codes are explicit and permanent: a kind may be reordered or retired, never
+/// renumbered, so `E0007` means one thing forever.
+pub const Tag = enum(u16) {
+    redeclared = 1,
+    shadows_builtin = 2,
+    undefined_name = 3,
+    depends_on_itself = 4,
+    not_a_type = 5,
+    type_mismatch = 6,
+    unsupported_value = 7,
+    invalid_digit = 8,
+    literal_too_large = 9,
+    multiple_arenas = 10,
+    not_mutable = 11,
+    not_assignable = 12,
+    no_such_field = 13,
+    not_callable = 14,
+    wrong_arg_count = 15,
+    copy_holds_pointer = 16,
+    does_not_live_long_enough = 17,
+    release_needs_a_name = 18,
+    used_after_release = 19,
 };
 
 /// One recorded mistake. Most need only a tag and a token, which costs no allocation;
@@ -159,6 +161,8 @@ pub const List = struct {
 
 /// Says what is wrong, never where.
 message: []const u8,
+/// Rendered as `error[E0007]`. Parse errors carry none yet.
+code: ?u16 = null,
 /// Any order; the renderer sorts. Exactly one `.primary`, which fixes the header.
 labels: []const Label,
 notes: []const Note = &.{},
@@ -244,7 +248,12 @@ pub fn renderAll(
             label.* = spanOf(tree, m.token, m.last, .secondary, m.text);
         }
 
-        const d: Diagnostic = .{ .message = message, .labels = labels, .notes = extras.notes };
+        const d: Diagnostic = .{
+            .message = message,
+            .code = if (@TypeOf(entry.tag) == Tag) @intFromEnum(entry.tag) else null,
+            .labels = labels,
+            .notes = extras.notes,
+        };
         try d.render(gpa, src, w, palette);
     }
 }
@@ -329,6 +338,7 @@ pub fn render(
     };
 
     try r.tint(palette.fail, "error");
+    if (d.code) |code| try r.print(palette.fail, "[E{d:0>4}]", .{code});
     try r.tint(palette.bold, ": ");
     try r.tint(palette.bold, d.message);
     try w.writeAll("\n\n");
