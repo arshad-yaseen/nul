@@ -1,6 +1,7 @@
 # Nul
 
-A systems programming language with compile time memory safety and no runtime.
+A research project exploring compile time memory safety for a systems language with no
+runtime. Not usable, and not intended for use any time soon.
 
 ```zig
 use std.io
@@ -31,82 +32,17 @@ fn load(arena: Arena, path: str) !*Node {
 
     return head                      // text is gone, the list is not, and the compiler checked
 }
-
-pub fn main() !void {
-    var arena = Arena.init()
-
-    let list = try load(arena, "input.txt")
-
-    io.print("{list.next.name}\n")
-}
 ```
 
-No garbage collector. No hidden allocations. No lifetime annotations. Nothing new to learn.
+No garbage collector. No hidden allocations. No lifetime annotations.
 
-The full model is in [memory_model.md](memory_model.md).
+The question the project is asking: how much of memory safety can be proven from the
+allocator you were already passing down, without a borrow checker to learn?
 
-## Tooling
-
-One binary. No package manager to install separately, no formatter to configure, no
-language server to wire up by hand.
-
-```
-nul run main.nul        build and run
-nul build               build the project described by build.nul
-nul test                run every test block in the project
-nul check               types and memory only, no codegen, what the editor runs
-nul fmt                 format in place, no options
-nul doc                 extract documentation from /// comments
-nul lsp                 language server, spoken by the same binary
-```
-
-Cross compilation is a flag, because the compiler ships every target it supports.
-
-```
-nul build --target aarch64-linux
-nul build --target riscv32-freestanding --release
-```
-
-`nul check` is separate from `nul build` on purpose. Memory safety is a type-level
-property here, so your editor can tell you a pointer escapes its arena without ever
-running the backend.
-
-## Project layout
-
-```
-myproject/
-  build.nul          the build, written in Nul
-  src/
-    main.nul         entry point
-    lexer.nul        a file is a struct, `use .lexer` imports it
-  deps/              vendored, checked in, versioned by you
-```
-
-`build.nul` is a program, not a configuration format.
-
-```nul
-use std.build
-
-pub fn configure(b: *var build.Builder) {
-    let exe = b.executable("myproject", "src/main.nul")
-    exe.optimize(b.mode)
-    exe.link_c()
-    b.install(exe)
-}
-```
-
-Dependencies are directories under `deps/`, imported by path like any other file.
-There is no central registry, no lockfile format to learn, and no build step that
-downloads code you did not read.
+The model is written up in [memory_model.md](memory_model.md), the language in
+[spec.md](spec.md). The compiler lags both.
 
 ## Status
 
-Early. The design is settled, the compiler is not. Not usable yet.
-
-## Why
-
-C gives you control without safety. Rust gives you safety at the cost of a borrow
-checker you have to learn. Go gives you simplicity at the cost of a garbage collector.
-
-Nul keeps the control, keeps the simplicity, and moves the safety proof into something
-you were already writing, which is the allocator you pass down.
+Design first, implementation second. The compiler is incomplete, the surface will
+change, and nothing here is stable. Read it as a set of ideas, not a toolchain.
