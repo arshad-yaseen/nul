@@ -13,11 +13,12 @@ entries: std.MultiArrayList(Entry),
 extra: std.ArrayList(u32),
 /// NUL terminated. `String` is a position here.
 strings: std.ArrayList(u8),
-/// Kept in lockstep with `entries`, so map position N describes type N.
+/// In lockstep with `entries`, so map position N describes type N.
 dedup: std.AutoArrayHashMapUnmanaged(void, void),
+next_nominal_id: u32,
 
-/// A nominal type's declaration site, minted by the caller. The pool never interprets
-/// it, it only uses it to keep nominal types apart.
+/// All that keeps one nominal type apart from another. Minted here, not derived from the
+/// declaration site, so two files cannot mint the same one.
 pub const NominalId = enum(u32) { _ };
 
 /// Not deduplicated, so a repeated name costs its bytes twice.
@@ -25,8 +26,8 @@ pub const String = enum(u32) { empty = 0, _ };
 
 // Indices
 
-/// The types that exist before any source is read, in seeding order. Each member is
-/// spelled the way Nul spells it, because `builtinName` feeds diagnostics.
+/// The types that exist before any source is read, in seeding order. Every member up to
+/// `poisoned` is spelled the way Nul spells it.
 pub const Index = enum(u32) {
     void,
     never,
@@ -48,6 +49,9 @@ pub const Index = enum(u32) {
     u32,
     u64,
     usize,
+    /// What analysis yields once it has reported why it has no answer. Not `never`: that
+    /// is a type a program can mean, and `let x: never = 10` is wrong where this is not.
+    poisoned,
     _,
 };
 
@@ -59,24 +63,23 @@ pub fn builtinName(index: Index) ?[]const u8 {
     return null;
 }
 
+/// Only the spellable ones, so no source can name `poisoned`.
 pub fn builtinNamed(name: []const u8) ?Index {
     inline for (@typeInfo(Index).@"enum".fields) |field| {
-        if (std.mem.eql(u8, field.name, name)) return @enumFromInt(field.value);
+        if (field.value < @intFromEnum(Index.poisoned) and std.mem.eql(u8, field.name, name))
+            return @enumFromInt(field.value);
     }
     return null;
 }
 
 // Keys
 
-/// What makes a type distinct, and so what `intern` looks it up by. Never stored, and
-/// deliberately excludes anything derived: see `Entry`.
+/// What `intern` looks a type up by. Never stored, and excludes anything derived.
 pub const Key = union(enum) {
     /// Its own index. A builtin has no structure to describe it by.
     builtin: Index,
     pointer: Pointer,
-    /// Nominal: keyed on the declaration, never the shape. So two identical `struct`
-    /// bodies are two types, and the body can arrive later, which
-    /// `let Node = struct { next: *Node }` needs.
+    /// Keyed on the declaration, never the shape, so the body can arrive later.
     struct_type: NominalId,
     func: Func,
 
@@ -117,14 +120,13 @@ pub const Key = union(enum) {
 
 // Storage
 
-/// A `Key` in stored form, plus what the pool derives. Slices become positions in
-/// `extra`, and a struct's name and fields live here rather than in its key, so
-/// `defineStruct` can fill them in without changing the hash it was interned under.
+/// A `Key` in stored form. A struct's name and fields live here rather than in its key,
+/// so `defineStruct` can fill them in without changing the hash it was interned under.
 const Entry = struct {
     tag: Tag,
     /// Read according to `tag`.
     payload: u32,
-    /// Decided when the entry becomes complete. See `Type.isFlat`.
+    /// Decided when the entry becomes complete.
     is_flat: bool,
 };
 
@@ -140,8 +142,8 @@ const Tag = enum(u8) {
     func,
 };
 
-/// Four consecutive slots in `extra`. `fields_start_slot` holds the position of the
-/// field data, which is `field_count` names followed by `field_count` types.
+/// Four slots in `extra`. `fields_start_slot` locates `field_count` names followed by
+/// `field_count` types.
 const StructRecord = struct {
     const id_slot = 0;
     const name_slot = 1;
@@ -164,11 +166,11 @@ pub fn init(gpa: Allocator) Allocator.Error!InternPool {
         .extra = .empty,
         .strings = .empty,
         .dedup = .empty,
+        .next_nominal_id = 0,
     };
     errdefer pool.deinit(gpa);
 
-    // So `String.empty` reads back empty.
-    try pool.strings.append(gpa, 0);
+    try pool.strings.append(gpa, 0); // so `String.empty` reads back empty
 
     inline for (@typeInfo(Index).@"enum".fields) |field| {
         const expected: Index = @enumFromInt(field.value);
@@ -229,7 +231,7 @@ pub fn intern(pool: *InternPool, gpa: Allocator, key: Key) Allocator.Error!Index
             record[StructRecord.field_count_slot] = 0;
             record[StructRecord.fields_start_slot] = StructRecord.body_undefined;
             try pool.extra.appendSlice(gpa, &record);
-            // Unknowable until the body arrives, so `defineStruct` decides.
+            // Unknowable until the body arrives.
             break :blk .{ .tag = .struct_type, .payload = at, .is_flat = false };
         },
         .func => |func| blk: {
@@ -273,9 +275,8 @@ pub fn keyOf(pool: *const InternPool, index: Index) Key {
     };
 }
 
-/// Whether a value of this type can contain an access path to arena memory.
-/// `Arena.copy` requires it, since copying a pointer would relabel its region without
-/// moving what it points at.
+/// Whether a value can contain an access path to arena memory. `Arena.copy` requires it,
+/// since copying a pointer relabels its region without moving what it points at.
 pub fn isFlat(pool: *const InternPool, index: Index) bool {
     assert(pool.isDefined(index));
     return pool.entries.items(.is_flat)[@intFromEnum(index)];
@@ -283,14 +284,11 @@ pub fn isFlat(pool: *const InternPool, index: Index) bool {
 
 // Nominal types
 
-/// Mints the index before the body is known, so `*Node` can be interned against it
-/// while `Node`'s fields are still resolving. Pair with `defineStruct`.
-pub fn declareStruct(
-    pool: *InternPool,
-    gpa: Allocator,
-    id: NominalId,
-    name: String,
-) Allocator.Error!Index {
+/// Mints the index before the body is known, so `*Node` can be interned while `Node`'s
+/// fields still resolve. Pair with `defineStruct`.
+pub fn declareStruct(pool: *InternPool, gpa: Allocator, name: String) Allocator.Error!Index {
+    const id: NominalId = @enumFromInt(pool.next_nominal_id);
+    pool.next_nominal_id += 1;
     const index = try pool.intern(gpa, .{ .struct_type = id });
     pool.extra.items[pool.structRecordAt(index) + StructRecord.name_slot] = @intFromEnum(name);
     return index;

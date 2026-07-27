@@ -9,8 +9,8 @@ const TokenIndex = Ast.TokenIndex;
 
 const Parse = @This();
 
-/// Recursive descent means adversarial input can exhaust the native stack. A fixed
-/// limit with a real diagnostic beats a crash, and beats an explicit-stack parser.
+/// Recursive descent lets adversarial input exhaust the stack. A limit with a real
+/// diagnostic beats a crash.
 const max_depth = 256;
 /// Past this many errors the file is generated, not edited. Stop recording.
 const max_errors = 128;
@@ -184,7 +184,7 @@ fn parseRoot(p: *Parse) Allocator.Error!void {
     while (!p.eof()) {
         const before = p.tok_i;
         switch (p.tag()) {
-            // Stray terminators, and doc comments, which are not attached yet.
+            // Stray terminators, and doc comments, not attached yet.
             .semi, .doc_comment => p.tok_i += 1,
             .kw_use => try p.scratch.append(p.gpa, try p.parseUseDecl()),
             .kw_fn => try p.scratch.append(p.gpa, try p.parseFnDecl()),
@@ -446,8 +446,7 @@ fn parsePrefixExpr(p: *Parse) Allocator.Error!Node.Index {
 
     const op_token = p.nextToken();
 
-    // `*var T` is a pointer that can be written through. `Ast.full` reads it back off
-    // the token after `*`, so there is nothing to store here.
+    // `Ast.viewOf` reads mutability off the token after `*`, so nothing is stored.
     if (node_tag == .pointer_type) _ = p.eatToken(.kw_var);
 
     return p.addNode(.{

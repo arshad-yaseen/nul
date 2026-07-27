@@ -1,36 +1,36 @@
-//! A compiler diagnostic, and the renderer that draws it over the source.
+//! What a pass records when something is wrong, and the renderer that draws it.
+//!
+//! Passes append an `Entry`, a tag and a token; the wording waits until there is a source
+//! to render against. One `List` serves every pass, so there is one sort and one renderer.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const assert = std.debug.assert;
 
+const Ast = @import("Ast.zig");
 const Source = @import("Source.zig");
 
 const Diagnostic = @This();
 
-/// The headline. Says what is wrong, never where.
+/// Says what is wrong, never where.
 message: []const u8,
-/// Need not be in source order, the renderer sorts. Exactly one is `.primary`, and
-/// that one fixes the `path:line:col` in the header.
+/// Any order; the renderer sorts. Exactly one `.primary`, which fixes the header.
 labels: []const Label,
-/// Drawn under the snippet, in order.
 notes: []const Note = &.{},
 
 pub const Label = struct {
-    /// Half-open byte offsets. A span reaching past its first line is drawn as if it
-    /// stopped at the end of that line, because a marker only ever spans one row.
+    /// Half-open. A span past its first line is drawn as if it stopped there, since a
+    /// marker only ever spans one row.
     start: u32,
     end: u32,
     style: Style = .secondary,
-    /// May be empty, which draws the marker and nothing after it.
     text: []const u8 = "",
 
     pub const Style = enum {
         primary,
         secondary,
 
-        /// One column wide, which is not the same as one byte wide.
         fn marker(s: Style) []const u8 {
             return switch (s) {
                 .primary => "^",
@@ -42,19 +42,125 @@ pub const Label = struct {
 
 pub const Note = struct {
     kind: Kind,
-    /// A newline starts a continuation line, aligned under the first character of
-    /// the text. Wrapping is the producer's, so the wording lands as it was written.
+    /// A newline starts a continuation line. Wrapping is the producer's.
     text: []const u8,
-    /// Suggested code, drawn two columns further in. May be several lines.
+    /// Suggested code, drawn two columns further in.
     code: []const u8 = "",
 
     pub const Kind = enum { note, help };
 };
 
+// What passes record
+
+pub const Tag = enum {
+    redeclared,
+    shadows_builtin,
+    undefined_name,
+    depends_on_itself,
+    not_a_type,
+    type_mismatch,
+    unsupported_value,
+    invalid_digit,
+    literal_too_large,
+};
+
+/// Cheap to accumulate and to sort, since neither needs the wording.
+pub const Entry = struct {
+    tag: Tag,
+    token: Ast.TokenIndex,
+
+    pub fn render(entry: Entry, tree: Ast, w: *Io.Writer) Io.Writer.Error!void {
+        const name = tree.tokenSlice(entry.token);
+        switch (entry.tag) {
+            .redeclared => try w.print("'{s}' is declared more than once", .{name}),
+            .shadows_builtin => try w.print("'{s}' is a builtin type", .{name}),
+            .undefined_name => try w.print("no declaration named '{s}'", .{name}),
+            .depends_on_itself => try w.print("'{s}' depends on itself", .{name}),
+            .not_a_type => try w.print("'{s}' is not a type", .{name}),
+            .type_mismatch => try w.writeAll("the declared type does not match the value"),
+            .unsupported_value => try w.writeAll(
+                "evaluating this at compile time is not implemented yet",
+            ),
+            .invalid_digit => try w.print("'{s}' is not a valid number", .{name}),
+            .literal_too_large => try w.print("'{s}' does not fit any integer type", .{name}),
+        }
+    }
+};
+
+pub const List = struct {
+    items: std.ArrayList(Entry),
+
+    pub const empty: List = .{ .items = .empty };
+
+    pub fn deinit(list: *List, gpa: Allocator) void {
+        list.items.deinit(gpa);
+        list.* = undefined;
+    }
+
+    pub fn add(list: *List, gpa: Allocator, entry: Entry) Allocator.Error!void {
+        @branchHint(.cold);
+        try list.items.append(gpa, entry);
+    }
+
+    pub fn all(list: *const List) []const Entry {
+        return list.items.items;
+    }
+
+    /// Neither collection nor resolution runs in the reader's order.
+    pub fn sortBySource(list: *List) void {
+        std.mem.sort(Entry, list.items.items, {}, struct {
+            fn before(_: void, a: Entry, b: Entry) bool {
+                return a.token < b.token;
+            }
+        }.before);
+    }
+};
+
+// Rendering
+
 pub const Error = Allocator.Error || Io.Writer.Error;
 
-/// A label resolved against the source. Columns are 1-based bytes, `end_col` is
-/// exclusive and always greater than `col`, so every label draws at least one marker.
+/// Takes `Ast.Error`s as readily as `Entry`s: both word themselves with `render` and
+/// point at a `token`, which is why a parse error and a type error look the same.
+pub fn renderAll(
+    gpa: Allocator,
+    entries: anytype,
+    tree: Ast,
+    src: *Source,
+    w: *Io.Writer,
+) Error!void {
+    var wording: Io.Writer.Allocating = .init(gpa);
+    defer wording.deinit();
+
+    for (entries, 0..) |entry, at| {
+        if (at > 0) try w.writeByte('\n');
+        wording.clearRetainingCapacity();
+        try entry.render(tree, &wording.writer);
+        try renderAt(gpa, wording.written(), tree, entry.token, src, w);
+    }
+}
+
+/// Says `message`, and underlines `token` as the one place it is about.
+fn renderAt(
+    gpa: Allocator,
+    message: []const u8,
+    tree: Ast,
+    token: Ast.TokenIndex,
+    src: *Source,
+    w: *Io.Writer,
+) Error!void {
+    const start = tree.tokenStart(token);
+    const labels: [1]Label = .{.{
+        .start = start,
+        .end = start + @as(u32, @intCast(tree.tokenSlice(token).len)),
+        .style = .primary,
+    }};
+    const d: Diagnostic = .{ .message = message, .labels = &labels };
+    try d.render(gpa, src, w);
+}
+
+/// Columns are 1-based bytes; `end_col` is exclusive and always past `col`, so every
+/// label draws at least one marker.
 const PlacedLabel = struct {
     line: u32,
     col: u32,
@@ -78,8 +184,8 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
     for (d.labels, placed) |l, *p| {
         const lc = try src.lineCol(gpa, l.start);
         const line_len: u32 = @intCast((try src.lineText(gpa, lc.line)).len);
-        // A zero-width span still has to be visible, and one past the last column is
-        // where "expected something, found end of line" points.
+        // Zero-width still has to be visible, and one past the end is where
+        // "found end of file" points.
         const width = @max(1, l.end -| l.start);
         p.* = .{
             .line = lc.line,
@@ -91,7 +197,7 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
         if (l.style == .primary and header == null) header = p.*;
         last_line = @max(last_line, lc.line);
     }
-    assert(header != null); // a diagnostic without a primary label has nowhere to point
+    assert(header != null); // nothing to point at
 
     std.mem.sort(PlacedLabel, placed, {}, PlacedLabel.sortsBefore);
 
@@ -111,7 +217,7 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
         while (j < placed.len and placed[j].line == line) j += 1;
         const group = placed[i..j];
 
-        // Lines the reader is not being shown collapse to one mark.
+        // Skipped lines collapse to one mark.
         if (prev_line != 0 and line > prev_line + 1) try writeGutterLine(w, gutter, "·");
 
         try w.splatByteAll(' ', gutter - digitCount(line));
@@ -119,8 +225,8 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
 
         try writeMarkerRow(w, gutter, group);
 
-        // The rightmost label spoke on the marker row. The rest queue up under it,
-        // and are drawn from the right so no connector crosses another's text.
+        // The rightmost label spoke on the marker row. The rest are drawn from the
+        // right, so no connector crosses another's text.
         const queued = group[0 .. group.len - 1];
         if (queued.len > 0) {
             try writeConnectorRow(w, gutter, queued, queued.len, "");
@@ -145,14 +251,14 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
     }
 }
 
-/// A gutter-only line, `│` between snippet rows and `·` where lines were skipped.
+/// `│` between snippet rows, `·` where lines were skipped.
 fn writeGutterLine(w: *Io.Writer, gutter: u32, mark: []const u8) Io.Writer.Error!void {
     try w.splatByteAll(' ', gutter + 1);
     try w.writeAll(mark);
     try w.writeByte('\n');
 }
 
-/// The row of `^^^` and `───` under a source line, plus the rightmost label's text.
+/// The `^^^` and `───` under a source line, plus the rightmost label's text.
 fn writeMarkerRow(w: *Io.Writer, gutter: u32, group: []const PlacedLabel) Io.Writer.Error!void {
     try w.splatByteAll(' ', gutter + 1);
     try w.writeAll("│ ");
@@ -170,8 +276,7 @@ fn writeMarkerRow(w: *Io.Writer, gutter: u32, group: []const PlacedLabel) Io.Wri
     try w.writeByte('\n');
 }
 
-/// A row of `│` under the first `connected_count` queued labels, then `text` at the
-/// column of the label just past them.
+/// `│` under the first `connected_count` queued labels, then `text` at the next one.
 fn writeConnectorRow(
     w: *Io.Writer,
     gutter: u32,
@@ -197,8 +302,7 @@ fn writeConnectorRow(
     try w.writeByte('\n');
 }
 
-/// Writes `text`, indenting every line after the first to `indent`. Suggested code
-/// wants the first line indented too.
+/// Indents every line after the first; suggested code wants the first indented too.
 fn writeIndented(
     w: *Io.Writer,
     text: []const u8,

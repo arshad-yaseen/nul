@@ -1,6 +1,7 @@
 use std.io
 
-let nice = nice
+let A = struct { b: B }
+let B = struct { a: A }
 
 pub fn main() {
     let x = add(1, 2) * 3

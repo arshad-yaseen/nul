@@ -44,8 +44,7 @@ pub fn deinit(src: *Source, gpa: Allocator) void {
 
 pub const LineCol = struct { line: u32, col: u32 };
 
-/// The byte offset of the first character of each line, so `line_starts[n]` begins
-/// line `n + 1`. Built once, on the first diagnostic.
+/// Where each line starts, so `line_starts[n]` begins line `n + 1`. Built on first use.
 fn lineStarts(src: *Source, gpa: Allocator) Allocator.Error![]u32 {
     return src.line_starts orelse blk: {
         var list: std.ArrayList(u32) = .empty;
@@ -60,7 +59,7 @@ fn lineStarts(src: *Source, gpa: Allocator) Allocator.Error![]u32 {
     };
 }
 
-/// Resolves a byte offset to a 1-based line and column.
+/// A byte offset as a 1-based line and column.
 pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCol {
     const starts = try src.lineStarts(gpa);
     const line = std.sort.upperBound(u32, starts, offset, struct {
@@ -71,8 +70,8 @@ pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCo
     return .{ .line = @intCast(line + 1), .col = offset - starts[line] + 1 };
 }
 
-/// The text of a 1-based line, without its terminator. Out of range yields empty,
-/// so a diagnostic pointing past the end still renders.
+/// A 1-based line without its terminator. Out of range is empty, so a diagnostic
+/// pointing past the end still renders.
 pub fn lineText(src: *Source, gpa: Allocator, line: u32) Allocator.Error![]const u8 {
     const starts = try src.lineStarts(gpa);
     if (line == 0 or line > starts.len) return "";
