@@ -25,11 +25,8 @@ pub fn deinit(sema: *Sema) void {
     sema.* = undefined;
 }
 
-/// Formats `ty` the way a programmer wrote it, into the arena the diagnostic lives in.
 pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
-    var out: std.Io.Writer.Allocating = .init(sema.diagnostics.allocator());
-    Type.write(sema.pool, ty, &out.writer) catch return error.OutOfMemory;
-    return out.written();
+    return Type.spell(sema.pool, ty, sema.diagnostics.allocator());
 }
 
 /// Analysis never stops at the first mistake, so what has no answer becomes poison.
@@ -97,27 +94,32 @@ fn applyAnnotation(
     binding_init: Ast.Node.Index,
 ) Allocator.Error!void {
     const declared = try sema.evalTypeExpr(annotation);
-    // `coerce` answers for the type, not the value: whether `300` fits a `u8` needs the
-    // literal. Poison on either side already reported.
-    if (declared != .poisoned and decl.ty != .poisoned and
-        Type.coerce(sema.pool, decl.ty, declared) == null)
-    {
-        const annotated = sema.tree.nodeMainToken(annotation);
-        try sema.diagnostics.add(.{
+    const value = sema.comptimeInt(binding_init);
+    defer decl.ty = declared;
+
+    // Poison on either side already reported.
+    if (declared == .poisoned or decl.ty == .poisoned) return;
+
+    _ = Type.coerce(sema.pool, decl.ty, declared, value) catch |refusal| switch (refusal) {
+        error.OutOfRange => return sema.reportRange(binding_init, value.?, declared),
+        error.WrongType => return sema.diagnostics.add(.{
             .tag = .type_mismatch,
             .token = sema.tree.nodeMainToken(binding_init),
             .message = try sema.diagnostics.print(
                 "'{s}' is declared '{s}', but its value is '{s}'",
-                .{ sema.tree.tokenSlice(decl.name_token), try sema.typeName(declared), try sema.typeName(decl.ty) },
+                .{
+                    sema.tree.tokenSlice(decl.name_token),
+                    try sema.typeName(declared),
+                    try sema.typeName(decl.ty),
+                },
             ),
             .text = try sema.diagnostics.print("this is '{s}'", .{try sema.typeName(decl.ty)}),
-            .marks = try sema.diagnostics.allocator().dupe(Diagnostic.Mark, &.{.{
-                .token = annotated,
-                .text = try sema.diagnostics.print("declared '{s}' here", .{try sema.typeName(declared)}),
-            }}),
-        });
-    }
-    decl.ty = declared;
+            .marks = try sema.diagnostics.mark(
+                sema.tree.nodeMainToken(annotation),
+                try sema.diagnostics.print("declared '{s}' here", .{try sema.typeName(declared)}),
+            ),
+        }),
+    };
 }
 
 fn resolveImport(sema: *Sema, decl: *Decl) void {
@@ -178,7 +180,36 @@ fn evalNamedType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
     return decl.value;
 }
 
-/// The tokenizer accepts more than is valid, so a bad number is caught here.
+pub fn comptimeInt(sema: *const Sema, node: Ast.Node.Index) ?i128 {
+    return switch (sema.tree.viewOf(node)) {
+        .number_literal => |token| switch (Type.parseNumber(sema.tree.tokenSlice(token)) catch return null) {
+            .int => |value| value,
+            .float => null,
+        },
+        .grouped => |inner| sema.comptimeInt(inner),
+        .unary => |it| if (it.op == .negate) -(sema.comptimeInt(it.operand) orelse return null) else null,
+        else => null,
+    };
+}
+
+/// Reports a literal that its type cannot hold.
+pub fn reportRange(
+    sema: *Sema,
+    node: Ast.Node.Index,
+    value: i128,
+    into: Type.Index,
+) Allocator.Error!void {
+    const range = Type.intRange(into) orelse return;
+    try sema.diagnostics.add(.{
+        .tag = .literal_out_of_range,
+        .token = sema.tree.firstToken(node),
+        .last = sema.tree.lastToken(node),
+        .message = try sema.diagnostics.print("{d} does not fit in '{s}', which holds {d} to {d}", .{
+            value, try sema.typeName(into), range.min, range.max,
+        }),
+    });
+}
+
 pub fn numberLiteralType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
     const number = Type.parseNumber(sema.tree.tokenSlice(token)) catch |err|
         return sema.fail(switch (err) {

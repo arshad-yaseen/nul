@@ -206,7 +206,7 @@ fn localDecl(lower: *Lower, binding: Ast.View.VarDecl) Allocator.Error!void {
 
     if (binding.type_expr.unwrap()) |annotation| {
         const declared = try lower.sema.evalTypeExpr(annotation);
-        if (!lower.fits(ty, declared)) inst = try lower.fail(.{
+        if (!try lower.fits(binding.init_expr, ty, declared)) inst = try lower.fail(.{
             .tag = .type_mismatch,
             .token = lower.mainToken(binding.init_expr),
             .message = try lower.print("'{s}' is declared '{s}', but its value is '{s}'", .{
@@ -234,7 +234,7 @@ fn returnStmt(lower: *Lower, node: Ast.Node.Index, value: Ast.Node.OptionalIndex
         const inst = try lower.expr(expr_node);
         operand = @enumFromInt(inst);
         const got = lower.typeOf(inst);
-        if (!lower.fits(got, lower.returns)) try lower.report(.{
+        if (!try lower.fits(expr_node, got, lower.returns)) try lower.report(.{
             .tag = .type_mismatch,
             .token = lower.mainToken(expr_node),
             .message = try lower.print("'{s}' returns '{s}', but this is '{s}'", .{
@@ -298,7 +298,7 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
     });
 
     const got = lower.typeOf(value);
-    if (!lower.fits(got, held)) try lower.report(.{
+    if (!try lower.fits(rhs, got, held)) try lower.report(.{
         .tag = .type_mismatch,
         .token = lower.mainToken(rhs),
         .message = try lower.print("'{s}' holds '{s}', but this is '{s}'", .{
@@ -320,7 +320,7 @@ fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAcces
     const got = lower.typeOf(value);
     const field_name = lower.tree.tokenSlice(access.name_token);
 
-    if (!lower.fits(got, held)) try lower.report(.{
+    if (!try lower.fits(node.rhs, got, held)) try lower.report(.{
         .tag = .type_mismatch,
         .token = lower.mainToken(node.rhs),
         .message = try lower.print("field '{s}' holds '{s}', but this is '{s}'", .{
@@ -493,12 +493,13 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
     for (it.args, 0..) |arg, at| {
         const value = try lower.expr(arg);
         const got = lower.typeOf(value);
-        if (at < signature.params.len and !lower.fits(got, signature.params[at])) {
-            try lower.report(.{
+        if (at < signature.params.len) {
+            const want = signature.params[at];
+            if (!try lower.fits(arg, got, want)) try lower.report(.{
                 .tag = .type_mismatch,
                 .token = lower.mainToken(arg),
                 .message = try lower.print("argument {d} of '{s}' is '{s}', but this is '{s}'", .{
-                    at + 1, callee_name, try lower.typeName(signature.params[at]), try lower.typeName(got),
+                    at + 1, callee_name, try lower.typeName(want), try lower.typeName(got),
                 }),
                 .text = try lower.thisIs(got),
             });
@@ -636,22 +637,27 @@ fn arenaMethod(
 
 // Checking
 
-/// Poison on either side counts as fitting, since whatever produced it already reported.
-fn fits(lower: *const Lower, from: Type.Index, into: Type.Index) bool {
+/// Whether `from` can become `into`, reporting a literal out of range on the way.
+fn fits(lower: *Lower, node: Ast.Node.Index, from: Type.Index, into: Type.Index) Allocator.Error!bool {
     if (from == .poisoned or into == .poisoned) return true;
-    return Type.coerce(lower.pool, from, into) != null;
+    const value = lower.sema.comptimeInt(node);
+    _ = Type.coerce(lower.pool, from, into, value) catch |refusal| switch (refusal) {
+        error.OutOfRange => try lower.sema.reportRange(node, value.?, into),
+        error.WrongType => return false,
+    };
+    return true;
 }
 
 /// The type both sides settle on, or null when neither reaches the other.
 fn unify(lower: *const Lower, a: Type.Index, b: Type.Index) ?Type.Index {
     if (a == .poisoned or b == .poisoned) return .poisoned;
-    if (Type.coerce(lower.pool, a, b) != null) return b;
-    if (Type.coerce(lower.pool, b, a) != null) return a;
+    if (Type.coerce(lower.pool, a, b, null)) |_| return b else |_| {}
+    if (Type.coerce(lower.pool, b, a, null)) |_| return a else |_| {}
     return null;
 }
 
 fn needsBool(lower: *Lower, node: Ast.Node.Index, ty: Type.Index, op: []const u8) Allocator.Error!void {
-    if (lower.fits(ty, .bool)) return;
+    if (try lower.fits(node, ty, .bool)) return;
     try lower.report(.{
         .tag = .type_mismatch,
         .token = lower.mainToken(node),

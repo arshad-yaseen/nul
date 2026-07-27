@@ -34,6 +34,7 @@ pub const Tag = enum(u16) {
     does_not_live_long_enough = 17,
     release_needs_a_name = 18,
     used_after_release = 19,
+    literal_out_of_range = 20,
 };
 
 /// One recorded mistake. Most need only a tag and a token, which costs no allocation;
@@ -78,6 +79,7 @@ pub const Entry = struct {
             .does_not_live_long_enough => try w.print("'{s}' does not live long enough", .{name}),
             .release_needs_a_name => try w.writeAll("an arena can only be released by name"),
             .used_after_release => try w.print("'{s}' is used after its arena was released", .{name}),
+            .literal_out_of_range => try w.writeAll("this value does not fit its type"),
         }
     }
 };

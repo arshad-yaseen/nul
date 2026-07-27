@@ -1,6 +1,7 @@
 //! Pure functions over `InternPool`, which does the storing.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const InternPool = @import("InternPool.zig");
@@ -38,24 +39,42 @@ fn isFloat(ty: Index) bool {
     return ty == .f32 or ty == .f64;
 }
 
-/// Which one, not just whether: some change representation and must emit an instruction,
-/// others are a relabelling that must not.
+/// Why a coercion was refused. The two need different words, the kinds not agreeing is
+/// a mistake about types, and a literal not fitting is a mistake about one value.
+pub const Refusal = error{ WrongType, OutOfRange };
+
 pub const Coercion = enum {
     identity,
     int_widen,
-    /// Whether the *value* fits is for whoever holds it.
     comptime_literal,
     from_never,
     pointer_to_readonly,
 };
 
-pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coercion {
+pub fn intRange(ty: Index) ?struct { min: i128, max: i128 } {
+    const info = intInfo(ty) orelse return null;
+    if (!info.signed) return .{ .min = 0, .max = (@as(i128, 1) << @intCast(info.bits)) - 1 };
+    const limit = @as(i128, 1) << @intCast(info.bits - 1);
+    return .{ .min = -limit, .max = limit - 1 };
+}
+
+/// `value` is the source's comptime value where it has one, since a literal has to fit
+/// the type it becomes as well as agree with it in kind.
+pub fn coerce(
+    pool: *const InternPool,
+    source: Index,
+    destination: Index,
+    value: ?i128,
+) Refusal!Coercion {
     if (source == destination) return .identity;
     if (source == .never) return .from_never;
 
-    // A literal has no type of its own, so the destination decides.
-    if (source == .comptime_int and (isInteger(destination) or isFloat(destination)))
+    if (source == .comptime_int and (isInteger(destination) or isFloat(destination))) {
+        if (value) |literal| if (intRange(destination)) |range| {
+            if (literal < range.min or literal > range.max) return error.OutOfRange;
+        };
         return .comptime_literal;
+    }
     if (source == .comptime_float and isFloat(destination)) return .comptime_literal;
 
     if (intInfo(source)) |from| if (intInfo(destination)) |into| {
@@ -65,20 +84,20 @@ pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coerc
             into.bits > from.bits // an unsigned source needs a spare sign bit
         else
             false; // a signed source never fits an unsigned destination
-        return if (fits) .int_widen else null;
+        return if (fits) .int_widen else error.WrongType;
     };
 
     switch (pool.keyOf(source)) {
         .pointer => |from| switch (pool.keyOf(destination)) {
             .pointer => |into| {
-                if (from.pointee != into.pointee) return null;
+                if (from.pointee != into.pointee) return error.WrongType;
                 // Giving up the right to write is safe. Gaining it never is.
                 const gives_up_writing = from.is_mutable and !into.is_mutable;
-                return if (gives_up_writing) .pointer_to_readonly else null;
+                return if (gives_up_writing) .pointer_to_readonly else error.WrongType;
             },
-            else => return null,
+            else => return error.WrongType,
         },
-        else => return null,
+        else => return error.WrongType,
     }
 }
 
@@ -129,7 +148,13 @@ fn containsAny(text: []const u8, set: []const u8) bool {
 }
 
 /// Writes `ty` as a programmer would read it back.
-pub fn write(pool: *const InternPool, ty: Index, out: *Io.Writer) Io.Writer.Error!void {
+pub fn spell(pool: *const InternPool, ty: Index, arena: Allocator) Allocator.Error![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    write(pool, ty, &out.writer) catch return error.OutOfMemory;
+    return out.written();
+}
+
+fn write(pool: *const InternPool, ty: Index, out: *Io.Writer) Io.Writer.Error!void {
     if (InternPool.builtinName(ty)) |name| return out.writeAll(name);
 
     switch (pool.keyOf(ty)) {

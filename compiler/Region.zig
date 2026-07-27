@@ -566,9 +566,7 @@ fn destination(region: *Region, inst: Nir.Inst) Allocator.Error![]const u8 {
 }
 
 fn typeName(region: *Region, ty: Type.Index) Allocator.Error![]const u8 {
-    var out: std.Io.Writer.Allocating = .init(region.diagnostics.allocator());
-    Type.write(region.pool, ty, &out.writer) catch return error.OutOfMemory;
-    return out.written();
+    return Type.spell(region.pool, ty, region.diagnostics.allocator());
 }
 
 fn print(region: *Region, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {

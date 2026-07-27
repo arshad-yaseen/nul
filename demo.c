@@ -49,106 +49,10 @@ nul_str nul_arena_copy_str(nul_arena *a, nul_str s) {
     return (nul_str){ bytes, s.len };
 }
 
-typedef struct Blob Blob;
-typedef struct Slot Slot;
-typedef struct Table Table;
 
-struct Blob {
-    int64_t tag;
-    int64_t size;
-};
+uint8_t keep(nul_arena * t0);
 
-struct Slot {
-    Blob * blob;
-    Slot * next;
-    int64_t key;
-};
-
-struct Table {
-    nul_str name;
-    Slot * first;
-    int64_t total;
-    int64_t count;
-};
-
-Blob * makeBlob(nul_arena * t0, int64_t t1, int64_t t2);
-Slot * makeSlot(nul_arena * t0, int64_t t1, int64_t t2, int64_t t3);
-int64_t sizeOf(Slot * t0);
-int64_t keyOf(Slot * t0);
-Table * build(nul_arena * t0, nul_str t1);
-int64_t nul_main(nul_arena * t0);
-
-Blob * makeBlob(nul_arena * t0, int64_t t1, int64_t t2) {
-    Blob * t3 = nul_arena_alloc(t0, sizeof(Blob));
-    t3->tag = t1;
-    t3->size = t2;
-    return t3;
-}
-
-Slot * makeSlot(nul_arena * t0, int64_t t1, int64_t t2, int64_t t3) {
-    Slot * t4 = nul_arena_alloc(t0, sizeof(Slot));
-    Blob * t7 = makeBlob(t0, t1, t2);
-    t4->blob = t7;
-    t4->key = t3;
-    return t4;
-}
-
-int64_t sizeOf(Slot * t0) {
-    Blob * t1 = t0->blob;
-    int64_t t2 = t1->size;
-    return t2;
-}
-
-int64_t keyOf(Slot * t0) {
-    int64_t t1 = t0->key;
+uint8_t keep(nul_arena * t0) {
+    int64_t t1 = 255;
     return t1;
-}
-
-Table * build(nul_arena * t0, nul_str t1) {
-    nul_arena * t2 = nul_arena_child(t0);
-    Table * t3 = nul_arena_alloc(t0, sizeof(Table));
-    nul_str t5 = nul_arena_copy_str(t0, t1);
-    t3->name = t5;
-    int64_t t8 = 0;
-    t3->total = t8;
-    int64_t t11 = 0;
-    t3->count = t11;
-    int64_t t14 = 1;
-    int64_t t15 = 100;
-    int64_t t16 = 7;
-    Slot * t17 = makeSlot(t2, t14, t15, t16);
-    int64_t t19 = 2;
-    int64_t t20 = 150;
-    int64_t t21 = 9;
-    Slot * t22 = makeSlot(t0, t19, t20, t21);
-    int64_t t24 = sizeOf(t17);
-    int64_t t26 = sizeOf(t22);
-    int64_t t27 = t24 + t26;
-    int64_t t29 = 3;
-    int64_t t30 = 11;
-    Slot * t31 = makeSlot(t0, t29, t27, t30);
-    t3->first = t22;
-    t3->total = t27;
-    int64_t t37 = 2;
-    t3->count = t37;
-    nul_arena_destroy(t2);
-    return t3;
-}
-
-int64_t nul_main(nul_arena * t0) {
-    nul_str t2 = (nul_str){ "sessions", 8 };
-    Table * t3 = build(t0, t2);
-    Slot * t5 = t3->first;
-    int64_t t6 = sizeOf(t5);
-    Slot * t8 = t3->first;
-    int64_t t9 = keyOf(t8);
-    int64_t t10 = t6 + t9;
-    return t10;
-}
-
-int main(void) {
-    nul_arena *root = nul_arena_init();
-    int64_t code = nul_main(root);
-    nul_arena_destroy(root);
-    return (int)code;
 }
