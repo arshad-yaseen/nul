@@ -1,7 +1,4 @@
 //! What a pass records when something is wrong, and the renderer that draws it.
-//!
-//! Passes append an `Entry`, a tag and a token; the wording waits until there is a source
-//! to render against. One `List` serves every pass, so there is one sort and one renderer.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
