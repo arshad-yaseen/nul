@@ -63,8 +63,13 @@ pub fn builtinName(index: Index) ?[]const u8 {
     return null;
 }
 
-/// Only the spellable ones, so no source can name `poisoned`.
+const aliases = std.StaticStringMap(Index).initComptime(.{
+    .{ "int", Index.i64 },
+    .{ "uint", Index.u64 },
+});
+
 pub fn builtinNamed(name: []const u8) ?Index {
+    if (aliases.get(name)) |alias| return alias;
     inline for (@typeInfo(Index).@"enum".fields) |field| {
         if (field.value < @intFromEnum(Index.poisoned) and std.mem.eql(u8, field.name, name))
             return @enumFromInt(field.value);
