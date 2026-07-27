@@ -49,116 +49,101 @@ nul_str nul_arena_copy_str(nul_arena *a, nul_str s) {
     return (nul_str){ bytes, s.len };
 }
 
-typedef struct Word Word;
-typedef struct Line Line;
-typedef struct Doc Doc;
+typedef struct Blob Blob;
+typedef struct Slot Slot;
+typedef struct Table Table;
 
-struct Word {
-    nul_str text;
+struct Blob {
+    int64_t tag;
+    int64_t size;
+};
+
+struct Slot {
+    Blob * blob;
+    Slot * next;
+    int64_t key;
+};
+
+struct Table {
+    nul_str name;
+    Slot * first;
+    int64_t total;
     int64_t count;
 };
 
-struct Line {
-    Word * head;
-    Line * next;
-    int64_t span;
-};
-
-struct Doc {
-    nul_str title;
-    Line * first;
-    int64_t lines;
-    int64_t words;
-};
-
-Word * makeWord(nul_arena * t0, nul_str t1, int64_t t2);
-Line * makeLine(nul_arena * t0, nul_str t1, int64_t t2, int64_t t3);
-int64_t widthOf(Line * t0);
-Doc * build(nul_arena * t0, nul_str t1);
+Blob * makeBlob(nul_arena * t0, int64_t t1, int64_t t2);
+Slot * makeSlot(nul_arena * t0, int64_t t1, int64_t t2, int64_t t3);
+int64_t sizeOf(Slot * t0);
+int64_t keyOf(Slot * t0);
+Table * build(nul_arena * t0, nul_str t1);
 int64_t nul_main(nul_arena * t0);
 
-Word * makeWord(nul_arena * t0, nul_str t1, int64_t t2) {
-    Word * t3 = nul_arena_alloc(t0, sizeof(Word));
-    nul_str t5 = nul_arena_copy_str(t0, t1);
-    t3->text = t5;
-    t3->count = t2;
+Blob * makeBlob(nul_arena * t0, int64_t t1, int64_t t2) {
+    Blob * t3 = nul_arena_alloc(t0, sizeof(Blob));
+    t3->tag = t1;
+    t3->size = t2;
     return t3;
 }
 
-Line * makeLine(nul_arena * t0, nul_str t1, int64_t t2, int64_t t3) {
-    Line * t4 = nul_arena_alloc(t0, sizeof(Line));
-    Word * t7 = makeWord(t0, t1, t2);
-    t4->head = t7;
-    t4->span = t3;
+Slot * makeSlot(nul_arena * t0, int64_t t1, int64_t t2, int64_t t3) {
+    Slot * t4 = nul_arena_alloc(t0, sizeof(Slot));
+    Blob * t7 = makeBlob(t0, t1, t2);
+    t4->blob = t7;
+    t4->key = t3;
     return t4;
 }
 
-int64_t widthOf(Line * t0) {
-    int64_t t1 = t0->span;
-    Word * t2 = t0->head;
-    int64_t t3 = t2->count;
-    int64_t t4 = t1 * t3;
-    return t4;
+int64_t sizeOf(Slot * t0) {
+    Blob * t1 = t0->blob;
+    int64_t t2 = t1->size;
+    return t2;
 }
 
-Doc * build(nul_arena * t0, nul_str t1) {
+int64_t keyOf(Slot * t0) {
+    int64_t t1 = t0->key;
+    return t1;
+}
+
+Table * build(nul_arena * t0, nul_str t1) {
     nul_arena * t2 = nul_arena_child(t0);
-    nul_arena * t3 = nul_arena_child(t2);
-    nul_str t5 = (nul_str){ "probe", 5 };
-    int64_t t6 = 2;
-    int64_t t7 = 3;
-    Line * t8 = makeLine(t2, t5, t6, t7);
-    nul_str t10 = (nul_str){ "deep", 4 };
-    int64_t t11 = 4;
-    int64_t t12 = 5;
-    Line * t13 = makeLine(t3, t10, t11, t12);
-    int64_t t15 = widthOf(t8);
-    int64_t t17 = widthOf(t13);
-    int64_t t18 = t15 + t17;
-    nul_arena_destroy(t3);
-    nul_arena_reset(t2);
-    Doc * t21 = nul_arena_alloc(t0, sizeof(Doc));
-    nul_str t23 = nul_arena_copy_str(t0, t1);
-    t21->title = t23;
-    int64_t t26 = 0;
-    t21->lines = t26;
-    int64_t t29 = 0;
-    t21->words = t29;
-    nul_str t32 = (nul_str){ "alpha", 5 };
-    int64_t t33 = 3;
-    int64_t t34 = 7;
-    Line * t35 = makeLine(t0, t32, t33, t34);
-    nul_str t37 = (nul_str){ "beta", 4 };
-    int64_t t38 = 5;
-    int64_t t39 = 2;
-    Line * t40 = makeLine(t0, t37, t38, t39);
-    t35->next = t40;
-    t21->first = t35;
-    int64_t t46 = 2;
-    t21->lines = t46;
-    int64_t t50 = widthOf(t35);
-    int64_t t52 = widthOf(t40);
-    int64_t t53 = t50 + t52;
-    int64_t t54 = t53 + t18;
-    t21->words = t54;
+    Table * t3 = nul_arena_alloc(t0, sizeof(Table));
+    nul_str t5 = nul_arena_copy_str(t0, t1);
+    t3->name = t5;
+    int64_t t8 = 0;
+    t3->total = t8;
+    int64_t t11 = 0;
+    t3->count = t11;
+    int64_t t14 = 1;
+    int64_t t15 = 100;
+    int64_t t16 = 7;
+    Slot * t17 = makeSlot(t2, t14, t15, t16);
+    int64_t t19 = 2;
+    int64_t t20 = 150;
+    int64_t t21 = 9;
+    Slot * t22 = makeSlot(t0, t19, t20, t21);
+    int64_t t24 = sizeOf(t17);
+    int64_t t26 = sizeOf(t22);
+    int64_t t27 = t24 + t26;
+    int64_t t29 = 3;
+    int64_t t30 = 11;
+    Slot * t31 = makeSlot(t0, t29, t27, t30);
+    t3->first = t22;
+    t3->total = t27;
+    int64_t t37 = 2;
+    t3->count = t37;
     nul_arena_destroy(t2);
-    return t21;
+    return t3;
 }
 
 int64_t nul_main(nul_arena * t0) {
-    nul_arena * t1 = nul_arena_child(t0);
-    nul_str t3 = (nul_str){ "report", 6 };
-    Doc * t4 = build(t0, t3);
-    nul_arena * t5 = nul_arena_child(t1);
-    nul_str t7 = (nul_str){ "note", 4 };
-    int64_t t8 = 1;
-    Word * t9 = makeWord(t5, t7, t8);
-    int64_t t10 = t4->words;
-    int64_t t11 = t9->count;
-    int64_t t12 = t10 + t11;
-    nul_arena_destroy(t1);
-    nul_arena_destroy(t5);
-    return t12;
+    nul_str t2 = (nul_str){ "sessions", 8 };
+    Table * t3 = build(t0, t2);
+    Slot * t5 = t3->first;
+    int64_t t6 = sizeOf(t5);
+    Slot * t8 = t3->first;
+    int64_t t9 = keyOf(t8);
+    int64_t t10 = t6 + t9;
+    return t10;
 }
 
 int main(void) {

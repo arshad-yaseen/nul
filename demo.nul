@@ -1,88 +1,79 @@
-use std.mem.Arena
+  use std.mem.Arena
 
-let Word = struct {
-    text:  str
-    count: i64
-}
+  let Blob = struct {
+      tag:  i64
+      size: i64
+  }
 
-let Line = struct {
-    head: *Word
-    next: *Line
-    span: i64
-}
+  let Slot = struct {
+      blob: *Blob
+      next: *Slot
+      key:  i64
+  }
 
-let Doc = struct {
-    title: str
-    first: *Line
-    lines: i64
-    words: i64
-}
+  let Table = struct {
+      name:  str
+      first: *Slot
+      total: i64
+      count: i64
+  }
 
-fn makeWord(a: Arena, text: str, count: i64) *Word {
-    var w = a.create(Word)
+  fn makeBlob(a: Arena, tag: i64, size: i64) *Blob {
+      var b = a.create(Blob)
 
-    w.text = a.copy(text)
-    w.count = count
+      b.tag = tag
+      b.size = size
 
-    return w
-}
+      return b
+  }
 
-fn makeLine(a: Arena, text: str, count: i64, span: i64) *Line {
-    var l = a.create(Line)
+  fn makeSlot(a: Arena, tag: i64, size: i64, key: i64) *Slot {
+      var s = a.create(Slot)
 
-    l.head = makeWord(a, text, count)
-    l.span = span
+      s.blob = makeBlob(a, tag, size)
+      s.key = key
 
-    return l
-}
+      return s
+  }
 
-fn widthOf(l: *Line) i64 {
-    return l.span * l.head.count
-}
+  fn sizeOf(s: *Slot) i64 {
+      return s.blob.size
+  }
 
-/// Measures in a scratch child and a grandchild below it, releases both, then builds
-/// what is kept in the arena it was given.
-fn build(arena: Arena, title: str) *Doc {
-    var scratch = arena.child()
-    var inner = scratch.child()
+  fn keyOf(s: *Slot) i64 {
+      return s.key
+  }
 
-    var probe = makeLine(scratch, "probe", 2, 3)
-    var deep = makeLine(inner, "deep", 4, 5)
+  /// Sizes two draft slots in staging space, keeps only the budget they imply, and
+  /// stores the slot that actually survives. Staging is released before the table is
+  /// handed back, so nothing measured here outlives the call.
+  fn build(arena: Arena, name: str) *Table {
+      var staging = arena.child()
 
-    var base = widthOf(probe) + widthOf(deep)
+      var table = arena.create(Table)
 
-    inner.destroy()
-    scratch.reset()
+      table.name = arena.copy(name)
+      table.total = 0
+      table.count = 0
 
-    var doc = arena.create(Doc)
+      var draft = makeSlot(staging, 1, 100, 7)
+      var probe = makeSlot(arena, 2, 150, 9)
 
-    doc.title = arena.copy(title)
-    doc.lines = 0
-    doc.words = 0
+      var budget = sizeOf(draft) + sizeOf(probe)
 
-    var first = makeLine(arena, "alpha", 3, 7)
-    var second = makeLine(arena, "beta", 5, 2)
+      var kept = makeSlot(arena, 3, budget, 11)
 
-    first.next = second
-    doc.first = first
-    doc.lines = 2
-    doc.words = widthOf(first) + widthOf(second) + base
+      table.first = probe
+      table.total = budget
+      table.count = 2
 
-    return doc
-}
+      staging.destroy()
 
-/// A second arena tree beside the one `build` uses, to prove they do not interfere.
-fn main(arena: Arena) i64 {
-    var work = arena.child()
+      return table
+  }
 
-    var doc = build(arena, "report")
+  fn main(arena: Arena) i64 {
+      var table = build(arena, "sessions")
 
-    var extra = work.child()
-    var note = makeWord(extra, "note", 1)
-
-    var total = doc.words + note.count
-
-    work.destroy()
-
-    return total
-}
+      return sizeOf(table.first) + keyOf(table.first)
+  }
