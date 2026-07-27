@@ -172,9 +172,6 @@ pub fn next(self: *Tokenizer) Token {
             }
         },
 
-        // These two can be entered already sitting on the sentinel (`//` at end of
-        // file), so they read before advancing. Any state reachable at the sentinel
-        // must do the same.
         .line_comment => switch (src[self.index]) {
             0 => {
                 if (self.index != src.len) {
