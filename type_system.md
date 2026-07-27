@@ -35,7 +35,7 @@ an arena*, and *is this type flat* (§10).
 | Zig | types as comptime values, error unions, explicit allocation, no hidden control flow, arbitrary-width integers | `anytype`, inferred error sets, unbounded comptime, untagged unions by default |
 | Rust | constrained generics checked at definition, exhaustive matching, no implicit conversion, newtypes | lifetimes, `&mut` exclusivity, coherence and orphan rules, `impl Trait` in return position, `Deref` chains |
 | ML | sum types, exhaustiveness, inference inside bodies, no subtyping | global inference, higher-kinded types, runtime dictionaries |
-| Ada | integer subranges as a first-class idea | the syntax, and the runtime check tax |
+| Ada | defined overflow behaviour rather than undefined | integer subranges, and the runtime check tax they carry |
 | Swift | protocol-shaped constraints, optional chaining | ARC, existential boxing |
 | Go | a small type system ships | `interface{}`, lying zero values, runtime-dispatched interfaces |
 | TypeScript | discriminated-union ergonomics, `never` | structural typing at scale, and the error messages it produces |
@@ -117,86 +117,62 @@ concrete type.
 `never` coerces to every type and inhabits none, so `fn abort() never` composes with
 any expression and `match` arms that call it satisfy any result type.
 
-## 4. Integers are ranges
+## 4. Integers
 
-The boldest decision here, and the one that removes the most friction.
+Ordinary sized integers. Signedness and width, nothing else.
 
-**Every integer type is an inclusive range.** The named types are spellings for common
-ranges:
+**Widening is implicit, narrowing is written.** `A` converts to `B` when `B` can hold
+every value of `A`: same signedness and no fewer bits, or unsigned into signed with a
+bit to spare. That covers `u8` into `u32`, `u8` into `i16`, `i8` into `i64`, and
+refuses `u64` into `i64`, `i64` into `i32`, and anything signed into anything
+unsigned. It is the one integer coercion rule, and it removes the casts that exist
+only to tell a compiler what it already knew.
 
-```nul
-u8   ==  0..=255
-i32  ==  -2147483648..=2147483647
-usize ==  0..=(platform word max)
-```
+`usize` and `isize` are their own types, not aliases for the word-size width. Their
+size is a target property, so converting between them and a sized integer is an
+explicit cast. That keeps a program's meaning the same on every target.
 
-A range is a type you can write directly, and so is a name for one:
-
-```nul
-let Percent = 0..=100
-let Weekday = 1..=7
-
-fn scale(p: Percent, n: u32) u32 { ... }
-```
-
-The storage width of a range type is the smallest integer that holds it. `0..=100` is
-one byte. `Percent` and `u8` are *different types* with the same representation.
-
-### What this buys
-
-**Conversion by containment.** `A` converts implicitly to `B` when `A`'s range is
-contained in `B`'s. This is the whole integer coercion rule, and it subsumes widening,
-signedness, and every `@intCast` written to satisfy a compiler that already knew the
-answer. Narrowing is not implicit, because it is not lossless.
-
-**Bounds checks that vanish by typing.** A `for` over a range gives the index a range
-type, so indexing needs no check and no annotation:
+**Overflow is defined, and which behaviour you get is written down:**
 
 ```nul
-for i in 0..items.len {
-    total = total + items[i]      // i : 0..items.len, so this cannot be out of bounds
-}
-```
-
-Indexing `[N]T` requires an index whose range is contained in `0..N`. Indexing `[]T`
-requires containment in `0..s.len`, which is a comparison against a value, so the
-compiler either proves it, or requires you to handle failure:
-
-```nul
-let v = try items.at(k)          // k's range is not known to fit
-```
-
-**Overflow is a range violation.** Arithmetic produces the range implied by its
-operands: `u8 + u8` has range `0..=510`. Storing that into a `u8` needs a narrowing,
-which is exactly where an overflow would have been, so the compiler asks you to say
-what you meant:
-
-```nul
-a + b       // range-checked: traps in debug, traps in release, never wraps silently
-a +% b      // wrapping, result range is the destination's
+a + b       // checked: traps, in every build mode, and never wraps silently
+a +% b      // wrapping
 a +| b      // saturating
 try a + b   // yields an error instead of trapping
 ```
 
-Where the compiler can prove the sum fits, all four are the same instruction and the
-check is gone.
+Where the optimizer can prove the sum fits, all four are the same instruction and the
+check is gone. That proof is a value-range analysis over the IR, using facts already
+in scope such as a loop condition, and the same analysis is what removes a bounds
+check from `items[i]` inside `for i in 0..items.len`. It is an optimization over
+values, not a property of types, and keeping it there is what stops types from
+growing arithmetic of their own.
 
-### The cost, stated plainly
+`a..b` is a sequence, and only ever exclusive of `b`, so `0..items.len` covers exactly
+the valid indices. Because a range is no longer also a type, there is one meaning to
+give it and no `..=` to distinguish.
 
-Interval arithmetic is imprecise for multiplication, division, and shifts, and range
-types on mutable storage would grow without bound across a loop. So the rule is:
+### Why not integer subranges
 
-> Ranges refine *expressions* and `let` bindings. `var` storage has a declared or
-> inferred concrete type, and values narrow into it at assignment.
+An earlier draft made every integer type an inclusive range, so `u8` *was* `0..=255`
+and `let Percent = 0..=100` was a type. It was cut, for three reasons worth recording.
 
-```nul
-var i: usize = 0        // storage is usize, not 0..=0
-i = i + 1               // fine, the sum's range fits usize
-```
+The prize was bounds checks vanishing by typing: `for i in 0..<items.len` giving `i` a
+type that cannot be out of bounds. But `items.len` is a runtime value, so that type has
+to name a value — dependent typing, not constant ranges. The analysis above delivers
+the same elimination without it.
 
-This is the pragmatic cut that makes the feature implementable with plain interval
-arithmetic and no solver. If range types are ever cut for schedule reasons, keep the
-`for i in 0..n` case: it is most of the value for a fraction of the work.
+The remaining benefits do not need ranges. Implicit widening follows from signedness
+and width. A bounded domain type is `distinct u8` plus a validating constructor, which
+also avoids a subrange's real cost: `p + 1` leaves `0..=100` immediately, so every
+arithmetic operation needs a check or a cast.
+
+And ranges have a cost that is paid whether or not the feature is used. If a type *is*
+its range, then `usize` and `u64` are the same type on a 64-bit target, and code that
+silently depends on the word size compiles on one target and not another. Interval
+arithmetic also degrades to nothing across multiplication and shifts, and refined
+ranges cannot live on mutable storage without growing unbounded across a loop, so the
+feature would have needed a second rule to be usable at all.
 
 ## 5. Aggregates
 
@@ -432,7 +408,7 @@ One predicate, consulted by the region checker and by `Arena.copy`.
 > `flat(T)` holds when no value of `T` contains an access path to arena memory.
 
 ```
-flat:      void, never, bool, all integers and ranges, all floats, enum,
+flat:      void, never, bool, all integers, all floats, enum,
            error sets, type-level values,
            fn (points at code, which outlives every arena),
            distinct T          if flat(T),
@@ -521,8 +497,8 @@ and `distinct` declaration creates a fresh type. Two identical declarations are
 unrelated. This is what keeps error messages readable: types have names, and a mismatch
 names them.
 
-**Structural for constructed types.** `*T`, `?T`, `[]T`, `[N]T`, `E!T`, tuples, ranges,
-and function types are equal when their components are. They are hash-consed.
+**Structural for constructed types.** `*T`, `?T`, `[]T`, `[N]T`, `E!T`, tuples, and
+function types are equal when their components are. They are hash-consed.
 
 **Aliases are not types.** `let a = Arena` binds a name to a type value. Both spellings
 evaluate to the same interned type, so `arena: a` and `arena: Arena` and
@@ -540,7 +516,7 @@ closed and short is itself a feature.
 
 | From | To | Condition |
 |---|---|---|
-| range `A` | range `B` | `A ⊆ B` |
+| integer `A` | integer `B` | `B` holds every value of `A` |
 | `comptime_int` / `comptime_float` | any numeric | the value fits exactly |
 | `T` | `?T` | — |
 | `T` | `E!T` | — |
@@ -619,9 +595,9 @@ are hash-consed on `(tag, operands)`. Nominal types are keyed on
 **Cached per type**, because they are asked constantly and computed recursively:
 `flat`, size, alignment, `has_tag`, and whether the type is comptime-only.
 
-**Two queries are the entire type-system surface the region checker uses:**
-`ty == Type.Index.arena` and `flat(ty)`. Nothing else about types reaches it, which is
-what keeps `memory_model.md`'s claim true that regions never appear in types.
+**The region checker asks a type only about arena-ness, flatness, and pointer shape.**
+It never asks where a value lives, which is what keeps `memory_model.md`'s claim true
+that regions never appear in types.
 
 **Order of work in Sema.** Signature typing precedes body checking and never consults a
 body. Declaration-space evaluation is lazy and memoized with in-progress cycle
@@ -629,7 +605,7 @@ detection, since `let A = struct { b: *B }` and `let B = struct { a: *A }` must 
 resolve. A cycle through a value field is an error and must name the field that closes
 it; a cycle through a pointer is fine.
 
-**Ranges are an interval per integer-typed IR value.** No solver, no symbolic
-reasoning beyond comparing against a length that is already in scope. When an interval
-cannot be proven to fit, the operation requires an explicit narrowing, and that is the
-only failure mode.
+**Value ranges belong to the IR, not to `Type`.** Proving that a sum fits, or that an
+index is in bounds, is an analysis over IR values using facts already in scope. Types
+carry signedness and width and nothing more, which is what keeps `Type.coerce` a table
+lookup instead of an arithmetic.

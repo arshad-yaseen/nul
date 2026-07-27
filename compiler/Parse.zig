@@ -119,7 +119,7 @@ fn addLeaf(p: *Parse, node_tag: Node.Tag) Allocator.Error!Node.Index {
     return p.addNode(.{ .tag = node_tag, .main_token = p.nextToken(), .data = .{ .none = {} } });
 }
 
-fn listToSpan(p: *Parse, list: []const Node.Index) Allocator.Error!Node.SubRange {
+fn storeChildren(p: *Parse, list: []const Node.Index) Allocator.Error!Node.ExtraRange {
     try p.extra.appendSlice(p.gpa, @ptrCast(list));
     return .{
         .start = @enumFromInt(p.extra.items.len - list.len),
@@ -133,14 +133,14 @@ fn addError(p: *Parse, err: Ast.Error) Allocator.Error!void {
     try p.errors.append(p.gpa, err);
 }
 
-fn addErrNode(p: *Parse, err: Ast.Error) Allocator.Error!Node.Index {
+fn errNodeReporting(p: *Parse, err: Ast.Error) Allocator.Error!Node.Index {
     @branchHint(.cold);
     try p.addError(err);
     return p.addNode(.{ .tag = .err, .main_token = err.token, .data = .{ .none = {} } });
 }
 
 fn errNode(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index {
-    return p.addErrNode(.{ .tag = err_tag, .token = p.tok_i });
+    return p.errNodeReporting(.{ .tag = err_tag, .token = p.tok_i });
 }
 
 fn errNodeAdvance(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index {
@@ -149,21 +149,29 @@ fn errNodeAdvance(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index 
     return n;
 }
 
+fn errNodeExpecting(p: *Parse, expected: Token.Tag) Allocator.Error!Node.Index {
+    return p.errNodeReporting(.{
+        .tag = .expected_token,
+        .token = p.tok_i,
+        .expected = expected,
+    });
+}
+
 const TokenSet = std.EnumSet(Token.Tag);
 
-const expr_first = TokenSet.initMany(&.{
+const starts_expr = TokenSet.initMany(&.{
     .ident,   .number, .str,  .kw_true, .kw_false,
     .l_paren, .minus,  .bang, .star,    .kw_struct,
 });
 
-const stmt_first = expr_first.unionWith(TokenSet.initMany(&.{ .kw_let, .kw_var, .kw_return }));
+const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{ .kw_let, .kw_var, .kw_return }));
 
 /// Tokens that can only start a top-level declaration.
-const decl_first = TokenSet.initMany(&.{ .kw_use, .kw_fn, .kw_pub });
+const starts_decl = TokenSet.initMany(&.{ .kw_use, .kw_fn, .kw_pub });
 
-const block_recovery = decl_first.unionWith(TokenSet.initMany(&.{.r_brace}));
-const param_recovery = decl_first.unionWith(TokenSet.initMany(&.{ .r_paren, .l_brace }));
-const arg_recovery = decl_first.unionWith(TokenSet.initMany(&.{ .r_paren, .r_brace, .semi }));
+const recover_in_block = starts_decl.unionWith(TokenSet.initMany(&.{.r_brace}));
+const recover_in_params = starts_decl.unionWith(TokenSet.initMany(&.{ .r_paren, .l_brace }));
+const recover_in_args = starts_decl.unionWith(TokenSet.initMany(&.{ .r_paren, .r_brace, .semi }));
 
 // Declarations
 
@@ -195,7 +203,7 @@ fn parseRoot(p: *Parse) Allocator.Error!void {
         p.ensureProgress(before);
     }
 
-    const span = try p.listToSpan(p.scratch.items[top..]);
+    const span = try p.storeChildren(p.scratch.items[top..]);
     p.nodes.items(.data)[0] = .{ .extra_range = span };
 }
 
@@ -223,7 +231,7 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
         }
         if (p.at(.ident)) {
             try p.scratch.append(p.gpa, try p.parseParam());
-        } else if (param_recovery.contains(p.tag())) {
+        } else if (recover_in_params.contains(p.tag())) {
             break;
         } else {
             try p.scratch.append(p.gpa, try p.errNodeAdvance(.expected_param));
@@ -234,7 +242,7 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
     try p.expectToken(.r_paren);
 
     // A return type only if something can start an expression.
-    const return_type: Node.OptionalIndex = if (expr_first.contains(p.tag()))
+    const return_type: Node.OptionalIndex = if (starts_expr.contains(p.tag()))
         (try p.parseExpr()).toOptional()
     else
         .none;
@@ -247,7 +255,7 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
     return p.addNode(.{
         .tag = .fn_decl,
         .main_token = fn_token,
-        .data = .{ .extra_range = try p.listToSpan(p.scratch.items[top..]) },
+        .data = .{ .extra_range = try p.storeChildren(p.scratch.items[top..]) },
     });
 }
 
@@ -265,7 +273,7 @@ fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
             p.tok_i += 1;
         } else if (p.at(.ident)) {
             try p.scratch.append(p.gpa, try p.parseField());
-        } else if (block_recovery.contains(p.tag())) {
+        } else if (recover_in_block.contains(p.tag())) {
             break;
         } else {
             try p.scratch.append(p.gpa, try p.errNodeAdvance(.expected_field));
@@ -277,7 +285,7 @@ fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
     return p.addNode(.{
         .tag = .struct_type,
         .main_token = struct_token,
-        .data = .{ .extra_range = try p.listToSpan(p.scratch.items[top..]) },
+        .data = .{ .extra_range = try p.storeChildren(p.scratch.items[top..]) },
     });
 }
 
@@ -299,8 +307,7 @@ fn parseParam(p: *Parse) Allocator.Error!Node.Index {
 // Statements
 
 fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
-    if (!p.at(.l_brace))
-        return p.addErrNode(.{ .tag = .expected_token, .token = p.tok_i, .expected = .l_brace });
+    if (!p.at(.l_brace)) return p.errNodeExpecting(.l_brace);
     if (p.depth >= max_depth) return p.errNode(.nesting_too_deep);
     p.depth += 1;
     defer p.depth -= 1;
@@ -313,9 +320,9 @@ fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
         const before = p.tok_i;
         if (p.at(.semi) or p.at(.doc_comment)) {
             p.tok_i += 1;
-        } else if (stmt_first.contains(p.tag())) {
+        } else if (starts_stmt.contains(p.tag())) {
             try p.scratch.append(p.gpa, try p.parseStatement());
-        } else if (block_recovery.contains(p.tag())) {
+        } else if (recover_in_block.contains(p.tag())) {
             break;
         } else {
             try p.scratch.append(p.gpa, try p.errNodeAdvance(.expected_statement));
@@ -324,7 +331,7 @@ fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
     }
     try p.expectToken(.r_brace);
 
-    const span = try p.listToSpan(p.scratch.items[top..]);
+    const span = try p.storeChildren(p.scratch.items[top..]);
     return p.addNode(.{ .tag = .block, .main_token = lbrace, .data = .{ .extra_range = span } });
 }
 
@@ -333,7 +340,7 @@ fn parseStatement(p: *Parse) Allocator.Error!Node.Index {
         .kw_let, .kw_var => return p.parseVarDecl(),
         .kw_return => {
             const return_token = p.nextToken();
-            const operand: Node.OptionalIndex = if (expr_first.contains(p.tag()))
+            const operand: Node.OptionalIndex = if (starts_expr.contains(p.tag()))
                 (try p.parseExpr()).toOptional()
             else
                 .none;
@@ -456,8 +463,7 @@ fn parseSuffixExpr(p: *Parse) Allocator.Error!Node.Index {
         .l_paren => node = try p.parseCall(node),
         .dot => {
             const dot_token = p.nextToken();
-            if (p.eatToken(.ident) == null)
-                return p.addErrNode(.{ .tag = .expected_token, .token = p.tok_i, .expected = .ident });
+            if (p.eatToken(.ident) == null) return p.errNodeExpecting(.ident);
             node = try p.addNode(.{
                 .tag = .field_access,
                 .main_token = dot_token,
@@ -478,9 +484,9 @@ fn parseCall(p: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
 
     while (!p.at(.r_paren) and !p.eof()) {
         const before = p.tok_i;
-        if (expr_first.contains(p.tag())) {
+        if (starts_expr.contains(p.tag())) {
             try p.scratch.append(p.gpa, try p.parseExpr());
-        } else if (arg_recovery.contains(p.tag())) {
+        } else if (recover_in_args.contains(p.tag())) {
             break;
         } else {
             try p.scratch.append(p.gpa, try p.errNodeAdvance(.expected_expr));
@@ -493,7 +499,7 @@ fn parseCall(p: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
     return p.addNode(.{
         .tag = .call,
         .main_token = lparen,
-        .data = .{ .extra_range = try p.listToSpan(p.scratch.items[top..]) },
+        .data = .{ .extra_range = try p.storeChildren(p.scratch.items[top..]) },
     });
 }
 

@@ -14,7 +14,7 @@ const Ast = @This();
 source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
 nodes: NodeList.Slice,
-/// Variable-length children, referenced by `SubRange`. A node's children appear here
+/// Variable-length children, referenced by `ExtraRange`. A node's children appear here
 /// in source order.
 extra: []u32,
 errors: []const Error,
@@ -69,7 +69,7 @@ pub const Node = struct {
     };
 
     /// A contiguous run of children in `extra`.
-    pub const SubRange = struct { start: ExtraIndex, end: ExtraIndex };
+    pub const ExtraRange = struct { start: ExtraIndex, end: ExtraIndex };
 
     pub const Tag = enum(u8) {
         root,
@@ -112,7 +112,7 @@ pub const Node = struct {
         opt_node: OptionalIndex,
         node_and_node: struct { Index, Index },
         opt_node_and_node: struct { OptionalIndex, Index },
-        extra_range: SubRange,
+        extra_range: ExtraRange,
     };
 };
 
@@ -189,7 +189,7 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
 };
 
 /// A node widened into named fields. Materialized on demand, never stored.
-pub const Full = union(enum) {
+pub const View = union(enum) {
     root: []const Node.Index,
     block: []const Node.Index,
     struct_type: []const Node.Index,
@@ -239,13 +239,13 @@ pub const Full = union(enum) {
     pub const Unary = struct { op: UnaryOp, op_token: TokenIndex, operand: Node.Index };
 };
 
-pub fn full(tree: Ast, n: Node.Index) Full {
+pub fn viewOf(tree: Ast, n: Node.Index) View {
     const main = tree.nodeMainToken(n);
     const data = tree.nodes.items(.data)[@intFromEnum(n)];
     return switch (tree.nodeTag(n)) {
-        .root => .{ .root = tree.list(data.extra_range) },
-        .block => .{ .block = tree.list(data.extra_range) },
-        .struct_type => .{ .struct_type = tree.list(data.extra_range) },
+        .root => .{ .root = tree.nodesIn(data.extra_range) },
+        .block => .{ .block = tree.nodesIn(data.extra_range) },
+        .struct_type => .{ .struct_type = tree.nodesIn(data.extra_range) },
         .use_decl => .{ .use_decl = data.node },
         .grouped => .{ .grouped = data.node },
         .pointer_type => .{ .pointer_type = .{
@@ -325,7 +325,7 @@ pub fn full(tree: Ast, n: Node.Index) Full {
     };
 }
 
-fn list(tree: Ast, range: Node.SubRange) []const Node.Index {
+fn nodesIn(tree: Ast, range: Node.ExtraRange) []const Node.Index {
     return @ptrCast(tree.extra[@intFromEnum(range.start)..@intFromEnum(range.end)]);
 }
 
