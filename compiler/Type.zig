@@ -1,6 +1,4 @@
-//! The type system's rules: what converts to what, what may cross an arena, how a
-//! type reads back as source. Pure functions over `InternPool`, which does the
-//! storing. See type_system.md.
+//! Pure functions over `InternPool`, which does the storing.
 
 const std = @import("std");
 const Io = std.Io;
@@ -18,8 +16,6 @@ pub fn pointeeOf(pool: *const InternPool, ty: Index) ?Index {
 
 // Coercion
 
-/// Null for `usize` and `isize` too: their width is a target property, so they
-/// convert only by a cast.
 fn intInfo(ty: Index) ?struct { signed: bool, bits: u16 } {
     return switch (ty) {
         .i8 => .{ .signed = true, .bits = 8 },
@@ -42,18 +38,17 @@ fn isFloat(ty: Index) bool {
     return ty == .f32 or ty == .f64;
 }
 
-/// Sema needs which one, not just whether: some change representation and must emit an
+/// Sema needs which one, not just whether, some change representation and must emit an
 /// instruction, others are a relabelling that must not.
 pub const Coercion = enum {
     identity,
     int_widen,
-    /// Whether the *value* fits is Sema's to check; it holds the value, this does not.
+    /// Whether the *value* fits is Sema's to check, it holds the value, this does not.
     comptime_literal,
     from_never,
     pointer_to_readonly,
 };
 
-/// The closed coercion table from type_system.md. Anything absent needs a written cast.
 pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coercion {
     if (source == destination) return .identity;
     if (source == .never) return .from_never;
@@ -86,8 +81,6 @@ pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coerc
         else => return null,
     }
 }
-
-// Rendering
 
 /// Writes `ty` as a programmer would read it back.
 pub fn write(pool: *const InternPool, ty: Index, out: *Io.Writer) Io.Writer.Error!void {
