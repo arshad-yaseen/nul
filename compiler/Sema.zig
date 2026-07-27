@@ -27,7 +27,7 @@ pub fn deinit(sema: *Sema) void {
 
 /// Analysis never stops at the first mistake, so what has no answer becomes poison.
 fn fail(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!Type.Index {
-    try sema.diagnostics.add(sema.gpa, .{ .tag = tag, .token = token });
+    try sema.diagnostics.add(.{ .tag = tag, .token = token });
     return .poisoned;
 }
 
@@ -242,11 +242,20 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
     const base = sema.scratch.items.len;
     defer sema.scratch.shrinkRetainingCapacity(base);
 
+    var arenas: [2]Ast.View.TypedName = undefined;
+    var arena_count: usize = 0;
+
     for (0..function.params.len) |at| {
         const param = (try sema.typedNameIn(function.params, at)) orelse continue;
         const param_ty = try sema.evalTypeExpr(param.type_expr, param.name_token);
+        if (param_ty == .Arena and arena_count < arenas.len) {
+            arenas[arena_count] = param;
+            arena_count += 1;
+        }
         try sema.scratch.append(sema.gpa, param_ty);
     }
+
+    if (arena_count == arenas.len) try sema.tooManyArenas(function, arenas[0], arenas[1]);
 
     const return_type = if (function.return_type.unwrap()) |node|
         try sema.evalTypeExpr(node, function.name_token)
@@ -257,4 +266,58 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
         .params = sema.scratch.items[base..],
         .return_type = return_type,
     } });
+}
+
+/// A function allocates its results into exactly one arena, which is what lets a caller
+/// know where a result lives without anyone writing a lifetime down.
+fn tooManyArenas(
+    sema: *Sema,
+    function: Ast.View.FnDecl,
+    first: Ast.View.TypedName,
+    second: Ast.View.TypedName,
+) Allocator.Error!void {
+    const diagnostics = sema.diagnostics;
+    const owner = diagnostics.allocator();
+    const name = sema.tree.tokenSlice(second.name_token);
+
+    var marks: std.ArrayList(Diagnostic.Mark) = .empty;
+    try marks.append(owner, .{
+        .token = first.name_token,
+        .last = sema.tree.nodeMainToken(first.type_expr),
+        .text = "the first arena parameter",
+    });
+    if (function.return_type.unwrap()) |node| {
+        try marks.append(owner, .{
+            .token = sema.tree.nodeMainToken(node),
+            .text = "which arena is this in?",
+        });
+    }
+
+    try diagnostics.add(.{
+        .tag = .multiple_arenas,
+        .token = second.name_token,
+        .last = sema.tree.nodeMainToken(second.type_expr),
+        .message = try diagnostics.print(
+            "'{s}' takes more than one arena, so its result has no single home",
+            .{sema.tree.tokenSlice(function.name_token)},
+        ),
+        .text = "a second arena parameter",
+        .marks = marks.items,
+        .notes = try owner.dupe(Diagnostic.Note, &.{
+            .{ .kind = .note, .text = "a function allocates its results into exactly one arena. That rule is" ++
+                "\nwhat lets a caller know where a result lives without anyone writing a" ++
+                "\nlifetime down." },
+            .{
+                .kind = .help,
+                .text = try diagnostics.print(
+                    "drop '{s}', and create a child inside the body for temporaries",
+                    .{name},
+                ),
+                .code = try diagnostics.print(
+                    "var {s} = {s}.child()",
+                    .{ name, sema.tree.tokenSlice(first.name_token) },
+                ),
+            },
+        }),
+    });
 }

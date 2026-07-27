@@ -59,13 +59,33 @@ pub const Tag = enum {
     unsupported_value,
     invalid_digit,
     literal_too_large,
+    multiple_arenas,
 };
 
-/// Cheap to accumulate and to sort, since neither needs the wording.
+/// A secondary span with its own wording. Owned by the `List`.
+pub const Mark = struct {
+    token: Ast.TokenIndex,
+    /// Last token of the span. Null covers `token` alone.
+    last: ?Ast.TokenIndex = null,
+    text: []const u8 = "",
+};
+
+/// One recorded mistake. Most need only a tag and a token, which costs no allocation,
+/// everything below `token` is owned by the `List` and usually empty.
 pub const Entry = struct {
     tag: Tag,
+    /// The primary span: what the header points at, and what sorting orders on.
     token: Ast.TokenIndex,
+    /// Last token of the primary span. Null covers `token` alone.
+    last: ?Ast.TokenIndex = null,
+    /// Overrides the tag's wording, for a headline naming something `token` does not.
+    message: []const u8 = "",
+    /// The primary label's text. Empty draws the marker alone.
+    text: []const u8 = "",
+    marks: []const Mark = &.{},
+    notes: []const Note = &.{},
 
+    /// The tag's default wording. `message` wins when it is set.
     pub fn render(entry: Entry, tree: Ast, w: *Io.Writer) Io.Writer.Error!void {
         const name = tree.tokenSlice(entry.token);
         switch (entry.tag) {
@@ -80,23 +100,40 @@ pub const Entry = struct {
             ),
             .invalid_digit => try w.print("'{s}' is not a valid number", .{name}),
             .literal_too_large => try w.print("'{s}' does not fit any integer type", .{name}),
+            .multiple_arenas => try w.writeAll(
+                "this function takes more than one arena, so its result has no single home",
+            ),
         }
     }
 };
 
+/// Everything a diagnostic points at outlives the compilation and dies with it, so one
+/// arena owns the entries and every string they reach.
 pub const List = struct {
+    arena: std.heap.ArenaAllocator,
     items: std.ArrayList(Entry),
 
-    pub const empty: List = .{ .items = .empty };
+    pub fn init(gpa: Allocator) List {
+        return .{ .arena = .init(gpa), .items = .empty };
+    }
 
-    pub fn deinit(list: *List, gpa: Allocator) void {
-        list.items.deinit(gpa);
+    pub fn deinit(list: *List) void {
+        list.arena.deinit();
         list.* = undefined;
     }
 
-    pub fn add(list: *List, gpa: Allocator, entry: Entry) Allocator.Error!void {
+    /// For the marks, notes and messages an `Entry` points at.
+    pub fn allocator(list: *List) Allocator {
+        return list.arena.allocator();
+    }
+
+    pub fn print(list: *List, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
+        return std.fmt.allocPrint(list.allocator(), fmt, args);
+    }
+
+    pub fn add(list: *List, entry: Entry) Allocator.Error!void {
         @branchHint(.cold);
-        try list.items.append(gpa, entry);
+        try list.items.append(list.allocator(), entry);
     }
 
     pub fn all(list: *const List) []const Entry {
@@ -117,6 +154,26 @@ pub const List = struct {
 
 pub const Error = Allocator.Error || Io.Writer.Error;
 
+const Extras = struct {
+    message: []const u8 = "",
+    last: ?Ast.TokenIndex = null,
+    text: []const u8 = "",
+    marks: []const Mark = &.{},
+    notes: []const Note = &.{},
+};
+
+/// An `Ast.Error` carries none of these; an `Entry` may.
+fn extrasOf(entry: anytype) Extras {
+    if (!@hasField(@TypeOf(entry), "marks")) return .{};
+    return .{
+        .message = entry.message,
+        .last = entry.last,
+        .text = entry.text,
+        .marks = entry.marks,
+        .notes = entry.notes,
+    };
+}
+
 /// Takes `Ast.Error`s as readily as `Entry`s: both word themselves with `render` and
 /// point at a `token`, which is why a parse error and a type error look the same.
 pub fn renderAll(
@@ -131,29 +188,40 @@ pub fn renderAll(
 
     for (entries, 0..) |entry, at| {
         if (at > 0) try w.writeByte('\n');
-        wording.clearRetainingCapacity();
-        try entry.render(tree, &wording.writer);
-        try renderAt(gpa, wording.written(), tree, entry.token, src, w);
+        const extras = extrasOf(entry);
+
+        const message = if (extras.message.len > 0) extras.message else blk: {
+            wording.clearRetainingCapacity();
+            try entry.render(tree, &wording.writer);
+            break :blk wording.written();
+        };
+
+        const labels = try gpa.alloc(Label, 1 + extras.marks.len);
+        defer gpa.free(labels);
+        labels[0] = spanOf(tree, entry.token, extras.last, .primary, extras.text);
+        for (extras.marks, labels[1..]) |mark, *label| {
+            label.* = spanOf(tree, mark.token, mark.last, .secondary, mark.text);
+        }
+
+        const d: Diagnostic = .{ .message = message, .labels = labels, .notes = extras.notes };
+        try d.render(gpa, src, w);
     }
 }
 
-/// Says `message`, and underlines `token` as the one place it is about.
-fn renderAt(
-    gpa: Allocator,
-    message: []const u8,
+fn spanOf(
     tree: Ast,
     token: Ast.TokenIndex,
-    src: *Source,
-    w: *Io.Writer,
-) Error!void {
-    const start = tree.tokenStart(token);
-    const labels: [1]Label = .{.{
-        .start = start,
-        .end = start + @as(u32, @intCast(tree.tokenSlice(token).len)),
-        .style = .primary,
-    }};
-    const d: Diagnostic = .{ .message = message, .labels = &labels };
-    try d.render(gpa, src, w);
+    last: ?Ast.TokenIndex,
+    style: Label.Style,
+    text: []const u8,
+) Label {
+    const end_token = last orelse token;
+    return .{
+        .start = tree.tokenStart(token),
+        .end = tree.tokenStart(end_token) + @as(u32, @intCast(tree.tokenSlice(end_token).len)),
+        .style = style,
+        .text = text,
+    };
 }
 
 /// Columns are 1-based bytes; `end_col` is exclusive and always past `col`, so every
@@ -299,7 +367,7 @@ fn writeConnectorRow(
     try w.writeByte('\n');
 }
 
-/// Indents every line after the first; suggested code wants the first indented too.
+/// Indents every line after the first, suggested code wants the first indented too.
 fn writeIndented(
     w: *Io.Writer,
     text: []const u8,
@@ -320,4 +388,66 @@ fn digitCount(n: u32) u32 {
     var rest = n / 10;
     while (rest > 0) : (rest /= 10) count += 1;
     return count;
+}
+
+test "renders several labels and notes" {
+    const gpa = std.testing.allocator;
+    const text =
+        \\var scratch = arena.child()
+        \\var box = arena.create(Box)
+        \\var temp = scratch.create(i64)
+        \\box.item = temp
+        \\
+    ;
+    var src: Source = .{ .path = "leak.nul", .bytes = text };
+    // The bytes are static here, so only the built line table is ours to free.
+    defer if (src.line_starts) |starts| gpa.free(starts);
+
+    const at = struct {
+        fn f(needle: []const u8) u32 {
+            return @intCast(std.mem.indexOf(u8, text, needle).?);
+        }
+    }.f;
+
+    const d: Diagnostic = .{
+        .message = "'temp' does not live long enough",
+        .labels = &.{
+            .{ .start = at("scratch ="), .end = at("scratch =") + 7, .text = "'scratch' is created here" },
+            .{ .start = at("box ="), .end = at("box =") + 3, .text = "'box' lives in 'arena'" },
+            .{ .start = at("temp ="), .end = at("temp =") + 4, .text = "'temp' lives in 'scratch'" },
+            .{ .start = at("box.item"), .end = at("box.item") + 8, .text = "this memory lives in 'arena'" },
+            .{ .start = at("temp\n"), .end = at("temp\n") + 4, .style = .primary, .text = "this points into 'scratch'" },
+        },
+        .notes = &.{
+            .{ .kind = .note, .text = "'scratch' is a child of 'arena', and a child dies\nbefore its parent." },
+            .{ .kind = .help, .text = "copy the value into the arena that outlives it", .code = "box.item = arena.copy(temp)" },
+        },
+    };
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try d.render(gpa, &src, &out.writer);
+
+    try std.testing.expectEqualStrings(
+        \\error: 'temp' does not live long enough
+        \\
+        \\  ┌─ leak.nul:4:12
+        \\  │
+        \\1 │ var scratch = arena.child()
+        \\  │     ───────  'scratch' is created here
+        \\2 │ var box = arena.create(Box)
+        \\  │     ───  'box' lives in 'arena'
+        \\3 │ var temp = scratch.create(i64)
+        \\  │     ────  'temp' lives in 'scratch'
+        \\4 │ box.item = temp
+        \\  │ ────────   ^^^^  this points into 'scratch'
+        \\  │ │
+        \\  │ this memory lives in 'arena'
+        \\  │
+        \\  = note: 'scratch' is a child of 'arena', and a child dies
+        \\          before its parent.
+        \\  = help: copy the value into the arena that outlives it
+        \\            box.item = arena.copy(temp)
+        \\
+    , out.written());
 }

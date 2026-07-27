@@ -62,8 +62,8 @@ pub fn main(init: std.process.Init) !u8 {
     var pool = try InternPool.init(gpa);
     defer pool.deinit(gpa);
 
-    var diagnostics: Diagnostic.List = .empty;
-    defer diagnostics.deinit(gpa);
+    var diagnostics: Diagnostic.List = .init(gpa);
+    defer diagnostics.deinit();
 
     var namespace = try Namespace.collect(gpa, &tree, &diagnostics);
     defer namespace.deinit(gpa);

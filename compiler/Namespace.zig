@@ -53,13 +53,13 @@ pub fn collect(
 
         // Imports are exempt: `use std.mem.Arena` binds the `Arena` that *is* the builtin.
         if (tree.nodeTag(node) != .use_decl and InternPool.builtinNamed(name) != null) {
-            try diagnostics.add(gpa, .{ .tag = .shadows_builtin, .token = name_token });
+            try diagnostics.add(.{ .tag = .shadows_builtin, .token = name_token });
             continue;
         }
 
         const found = try ns.by_name.getOrPut(gpa, name);
         if (found.found_existing) {
-            try diagnostics.add(gpa, .{ .tag = .redeclared, .token = name_token });
+            try diagnostics.add(.{ .tag = .redeclared, .token = name_token });
             continue;
         }
         found.value_ptr.* = @intCast(ns.decls.items.len);

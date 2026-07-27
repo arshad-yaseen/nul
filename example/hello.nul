@@ -1,9 +1,15 @@
-use std.io
+use std.mem.Arena
 
-let A = struct { b: B }
-let B = struct { a: A }
+let Report = struct {
+    lines: i64
+}
 
-pub fn main() {
-    let x = add(1, 2) * 3
-    io.print("hello, world\n")
+/// Two arena parameters leave the region of the result ambiguous. A function
+/// allocates into exactly one, and makes a child for anything temporary.
+fn analyze(long: Arena, short: Arena, input: str) *Report {
+    var r = long.create(Report)
+
+    r.lines = 0
+
+    return r
 }
