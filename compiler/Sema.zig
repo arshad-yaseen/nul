@@ -97,8 +97,6 @@ fn applyAnnotation(
     decl.ty = declared;
 }
 
-/// Builtins are the only part of `std` that exists before the module resolver. Anything
-/// else stays bound but unresolved, claiming nothing either way.
 fn resolveImport(sema: *Sema, decl: *Decl) void {
     const builtin = InternPool.builtinNamed(sema.tree.tokenSlice(decl.name_token)) orelse
         return;
@@ -108,7 +106,7 @@ fn resolveImport(sema: *Sema, decl: *Decl) void {
 // Type expressions
 
 /// `blame` is where an unevaluable expression is reported, since its own token is often
-/// punctuation: for a call it is the `(`.
+/// punctuation, for a call it is the `(`.
 fn evalTypeExpr(
     sema: *Sema,
     node: Ast.Node.Index,
@@ -157,7 +155,7 @@ fn numberLiteralType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
 
 // Composite types
 
-/// Null when there is nothing to bind: the parser rejected it, or an earlier sibling took
+/// Null when there is nothing to bind, the parser rejected it, or an earlier sibling took
 /// the name. A `param` and a `field` are the same shape, so one walk serves both.
 fn bindingIn(
     sema: *Sema,
