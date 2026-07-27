@@ -19,7 +19,7 @@ pub const Tag = enum(u8) {
 
     // Variable-length tags.
     ident,
-    int,
+    number,
     str,
     doc_comment,
 
@@ -64,7 +64,7 @@ pub const Tag = enum(u8) {
     /// The fixed text of this token, or null if its text varies.
     pub fn lexeme(tag: Tag) ?[]const u8 {
         return switch (tag) {
-            .invalid, .eof, .ident, .int, .str, .doc_comment => null,
+            .invalid, .eof, .ident, .number, .str, .doc_comment => null,
 
             .kw_and => "and",
             .kw_false => "false",
@@ -109,7 +109,7 @@ pub const Tag = enum(u8) {
             .invalid => "invalid bytes",
             .eof => "end of file",
             .ident => "an identifier",
-            .int => "a number",
+            .number => "a number",
             .str => "a string literal",
             .doc_comment => "a documentation comment",
             else => unreachable,
@@ -131,7 +131,7 @@ pub const info: [tag_count]Info = blk: {
     var table: [tag_count]Info = @splat(.{});
     for (std.enums.values(Tag)) |tag| table[@intFromEnum(tag)] = .{
         .ends_stmt = switch (tag) {
-            .ident, .int, .str, .r_paren, .r_brace => true,
+            .ident, .number, .str, .r_paren, .r_brace => true,
             .kw_return, .kw_true, .kw_false => true,
             else => false,
         },

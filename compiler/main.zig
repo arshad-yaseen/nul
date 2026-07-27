@@ -68,12 +68,21 @@ fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.E
     try w.splatByteAll(' ', depth * 2);
     try w.writeAll(@tagName(tree.nodeTag(n)));
     switch (node) {
-        .ident, .int_literal, .str_literal => |tok| try w.print(" '{s}'", .{tree.tokenSlice(tok)}),
+        .ident, .number_literal, .str_literal => |tok| try w.print(" '{s}'", .{tree.tokenSlice(tok)}),
         .field_access => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
         .param, .field => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
-        .fn_decl => |f| try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)}),
-        .var_decl => |v| try w.print(" '{s}'", .{tree.tokenSlice(v.name_token)}),
+        .fn_decl => |f| {
+            try w.print(" '{s}'", .{tree.tokenSlice(f.name_token)});
+            if (f.is_pub) try w.writeAll(" pub");
+        },
+        .var_decl => |v| {
+            try w.print(" '{s}'", .{tree.tokenSlice(v.name_token)});
+            if (v.is_pub) try w.writeAll(" pub");
+        },
         .pointer_type => |ptr| if (ptr.is_mutable) try w.writeAll(" var"),
+        .binary => |b| try w.print(" {s}", .{@tagName(b.op)}),
+        .unary => |u| try w.print(" {s}", .{@tagName(u.op)}),
+        .bool_literal => |b| try w.print(" {}", .{b.value}),
         else => {},
     }
     try w.writeByte('\n');
@@ -107,6 +116,6 @@ fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.E
             if (v.type_expr.unwrap()) |t| try dumpNode(tree, w, t, d);
             try dumpNode(tree, w, v.init_expr, d);
         },
-        .ident, .int_literal, .str_literal, .bool_literal, .err => {},
+        .ident, .number_literal, .str_literal, .bool_literal, .err => {},
     }
 }

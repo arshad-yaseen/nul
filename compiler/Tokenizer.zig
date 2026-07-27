@@ -20,7 +20,7 @@ pub fn init(src: [:0]const u8) Tokenizer {
 const State = enum {
     start,
     ident,
-    int,
+    number,
     str,
     str_backslash,
     slash,
@@ -62,7 +62,7 @@ pub fn next(self: *Tokenizer) Token {
             },
 
             'a'...'z', 'A'...'Z', '_' => continue :state .ident,
-            '0'...'9' => continue :state .int,
+            '0'...'9' => continue :state .number,
             '"' => {
                 self.index += 1;
                 continue :state .str;
@@ -98,11 +98,23 @@ pub fn next(self: *Tokenizer) Token {
             }
         },
 
-        .int => {
+        .number => {
             self.index += 1;
             switch (src[self.index]) {
-                '0'...'9', 'a'...'z', 'A'...'Z', '_' => continue :state .int,
-                else => break :state .int,
+                '0'...'9', 'a'...'z', 'A'...'Z', '_' => continue :state .number,
+                '.' => switch (src[self.index + 1]) {
+                    '0'...'9' => {
+                        self.index += 1;
+                        continue :state .number;
+                    },
+                    else => break :state .number,
+                },
+                // An exponent's sign
+                '+', '-' => switch (src[self.index - 1]) {
+                    'e', 'E', 'p', 'P' => continue :state .number,
+                    else => break :state .number,
+                },
+                else => break :state .number,
             }
         },
 

@@ -77,7 +77,7 @@ pub const Node = struct {
         fn_decl,
         param,
         block,
-        let_decl,
+        /// Both `let` and `var`. `main_token` is the keyword, which says which.
         var_decl,
         return_stmt,
         assign,
@@ -91,28 +91,15 @@ pub const Node = struct {
         /// `*T`. `main_token` is `*`, `data` is `node`: the pointee type.
         pointer_type,
 
-        add,
-        sub,
-        mul,
-        div,
-        mod,
-        equal,
-        not_equal,
-        less_than,
-        less_or_equal,
-        greater_than,
-        greater_or_equal,
-        bool_and,
-        bool_or,
-
-        negate,
-        bool_not,
+        /// `main_token` is the operator, which is what says which operator it is.
+        binary,
+        unary,
 
         ident,
-        int_literal,
+        number_literal,
         str_literal,
-        true_literal,
-        false_literal,
+        /// `main_token` is `true` or `false`.
+        bool_literal,
 
         err,
     };
@@ -151,7 +138,7 @@ fn assertPositionIndependent(comptime T: type) void {
 
 // The view
 
-pub const BinaryOp = enum {
+pub const BinaryOp = enum(u4) {
     add,
     sub,
     mul,
@@ -168,6 +155,38 @@ pub const BinaryOp = enum {
 };
 
 pub const UnaryOp = enum { negate, bool_not };
+
+pub const Assoc = enum(u1) { left, none };
+
+/// `prec` 0 means the token is not an infix operator.
+pub const OperInfo = packed struct(u16) {
+    prec: u5 = 0,
+    assoc: Assoc = .left,
+    op: BinaryOp = .add,
+    _pad: u6 = 0,
+};
+
+/// The one place a token is mapped to the operator it means. `Parse` reads `prec` and
+/// `assoc` to shape the tree, `full` reads `op` back off the operator token.
+pub const oper_table: [Token.tag_count]OperInfo = blk: {
+    var t: [Token.tag_count]OperInfo = @splat(.{});
+    for (.{
+        .{ Token.Tag.kw_or, 1, Assoc.left, BinaryOp.bool_or },
+        .{ Token.Tag.kw_and, 2, Assoc.left, BinaryOp.bool_and },
+        .{ Token.Tag.eq_eq, 3, Assoc.none, BinaryOp.equal },
+        .{ Token.Tag.bang_eq, 3, Assoc.none, BinaryOp.not_equal },
+        .{ Token.Tag.lt, 3, Assoc.none, BinaryOp.less_than },
+        .{ Token.Tag.lt_eq, 3, Assoc.none, BinaryOp.less_or_equal },
+        .{ Token.Tag.gt, 3, Assoc.none, BinaryOp.greater_than },
+        .{ Token.Tag.gt_eq, 3, Assoc.none, BinaryOp.greater_or_equal },
+        .{ Token.Tag.plus, 4, Assoc.left, BinaryOp.add },
+        .{ Token.Tag.minus, 4, Assoc.left, BinaryOp.sub },
+        .{ Token.Tag.star, 5, Assoc.left, BinaryOp.mul },
+        .{ Token.Tag.slash, 5, Assoc.left, BinaryOp.div },
+        .{ Token.Tag.percent, 5, Assoc.left, BinaryOp.mod },
+    }) |e| t[@intFromEnum(e[0])] = .{ .prec = e[1], .assoc = e[2], .op = e[3] };
+    break :blk t;
+};
 
 /// A node widened into named fields. Materialized on demand, never stored.
 pub const Full = union(enum) {
@@ -192,7 +211,7 @@ pub const Full = union(enum) {
     assign: struct { lhs: Node.Index, rhs: Node.Index },
 
     ident: TokenIndex,
-    int_literal: TokenIndex,
+    number_literal: TokenIndex,
     str_literal: TokenIndex,
     bool_literal: struct { value: bool, token: TokenIndex },
 
@@ -208,6 +227,7 @@ pub const Full = union(enum) {
     pub const VarDecl = struct {
         name_token: TokenIndex,
         is_mutable: bool,
+        is_pub: bool,
         type_expr: Node.OptionalIndex,
         init_expr: Node.Index,
     };
@@ -267,44 +287,41 @@ pub fn full(tree: Ast, n: Node.Index) Full {
             } };
         },
 
-        inline .let_decl, .var_decl => |t| .{ .var_decl = .{
+        .var_decl => .{ .var_decl = .{
             .name_token = main + 1,
-            .is_mutable = t == .var_decl,
+            .is_mutable = tree.tokenTag(main) == .kw_var,
+            .is_pub = main > 0 and tree.tokenTag(main - 1) == .kw_pub,
             .type_expr = data.opt_node_and_node[0],
             .init_expr = data.opt_node_and_node[1],
         } },
 
-        inline .add,
-        .sub,
-        .mul,
-        .div,
-        .mod,
-        .equal,
-        .not_equal,
-        .less_than,
-        .less_or_equal,
-        .greater_than,
-        .greater_or_equal,
-        .bool_and,
-        .bool_or,
-        => |t| .{ .binary = .{
-            .op = @field(BinaryOp, @tagName(t)),
-            .op_token = main,
-            .lhs = data.node_and_node[0],
-            .rhs = data.node_and_node[1],
-        } },
-
-        inline .negate, .bool_not => |t| .{ .unary = .{
-            .op = @field(UnaryOp, @tagName(t)),
+        .binary => blk: {
+            const info = oper_table[@intFromEnum(tree.tokenTag(main))];
+            assert(info.prec != 0); // a binary node's main_token is an infix operator
+            break :blk .{ .binary = .{
+                .op = info.op,
+                .op_token = main,
+                .lhs = data.node_and_node[0],
+                .rhs = data.node_and_node[1],
+            } };
+        },
+        .unary => .{ .unary = .{
+            .op = switch (tree.tokenTag(main)) {
+                .minus => .negate,
+                .bang => .bool_not,
+                else => unreachable,
+            },
             .op_token = main,
             .operand = data.node,
         } },
 
         .ident => .{ .ident = main },
-        .int_literal => .{ .int_literal = main },
+        .number_literal => .{ .number_literal = main },
         .str_literal => .{ .str_literal = main },
-        .true_literal => .{ .bool_literal = .{ .value = true, .token = main } },
-        .false_literal => .{ .bool_literal = .{ .value = false, .token = main } },
+        .bool_literal => .{ .bool_literal = .{
+            .value = tree.tokenTag(main) == .kw_true,
+            .token = main,
+        } },
     };
 }
 

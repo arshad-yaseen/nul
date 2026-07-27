@@ -133,16 +133,16 @@ fn addError(p: *Parse, err: Ast.Error) Allocator.Error!void {
     try p.errors.append(p.gpa, err);
 }
 
-/// Records an error and yields an `err` node without consuming, so a closing bracket
-/// stays available to whichever loop is waiting for it.
-fn errNode(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index {
+fn addErrNode(p: *Parse, err: Ast.Error) Allocator.Error!Node.Index {
     @branchHint(.cold);
-    try p.addError(.{ .tag = err_tag, .token = p.tok_i });
-    return p.addNode(.{ .tag = .err, .main_token = p.tok_i, .data = .{ .none = {} } });
+    try p.addError(err);
+    return p.addNode(.{ .tag = .err, .main_token = err.token, .data = .{ .none = {} } });
 }
 
-/// Same, but consumes the offending token. Used where it cannot belong to any
-/// enclosing construct.
+fn errNode(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index {
+    return p.addErrNode(.{ .tag = err_tag, .token = p.tok_i });
+}
+
 fn errNodeAdvance(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index {
     const n = try p.errNode(err_tag);
     if (!p.eof()) p.tok_i += 1;
@@ -152,14 +152,14 @@ fn errNodeAdvance(p: *Parse, err_tag: Ast.Error.Tag) Allocator.Error!Node.Index 
 const TokenSet = std.EnumSet(Token.Tag);
 
 const expr_first = TokenSet.initMany(&.{
-    .ident,   .int,   .str,  .kw_true, .kw_false,
-    .l_paren, .minus, .bang, .star,    .kw_struct,
+    .ident,   .number, .str,  .kw_true, .kw_false,
+    .l_paren, .minus,  .bang, .star,    .kw_struct,
 });
 
 const stmt_first = expr_first.unionWith(TokenSet.initMany(&.{ .kw_let, .kw_var, .kw_return }));
 
 /// Tokens that can only start a top-level declaration.
-const decl_first = TokenSet.initMany(&.{ .kw_use, .kw_fn, .kw_pub, .doc_comment });
+const decl_first = TokenSet.initMany(&.{ .kw_use, .kw_fn, .kw_pub });
 
 const block_recovery = decl_first.unionWith(TokenSet.initMany(&.{.r_brace}));
 const param_recovery = decl_first.unionWith(TokenSet.initMany(&.{ .r_paren, .l_brace }));
@@ -179,7 +179,14 @@ fn parseRoot(p: *Parse) Allocator.Error!void {
             // Stray terminators, and doc comments, which are not attached yet.
             .semi, .doc_comment => p.tok_i += 1,
             .kw_use => try p.scratch.append(p.gpa, try p.parseUseDecl()),
-            .kw_pub, .kw_fn => try p.scratch.append(p.gpa, try p.parseFnDecl()),
+            .kw_fn => try p.scratch.append(p.gpa, try p.parseFnDecl()),
+            .kw_pub => switch (p.tokens.items(.tag)[p.tok_i + 1]) {
+                .kw_let, .kw_var => {
+                    p.tok_i += 1;
+                    try p.scratch.append(p.gpa, try p.parseVarDecl());
+                },
+                else => try p.scratch.append(p.gpa, try p.parseFnDecl()),
+            },
             // Types are values, so a type declaration is an ordinary binding.
             .kw_let, .kw_var => try p.scratch.append(p.gpa, try p.parseVarDecl()),
             .invalid => try p.scratch.append(p.gpa, try p.errNodeAdvance(.invalid_bytes)),
@@ -210,6 +217,10 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
     try p.expectToken(.l_paren);
     while (!p.at(.r_paren) and !p.eof()) {
         const before = p.tok_i;
+        if (p.at(.doc_comment)) {
+            p.tok_i += 1;
+            continue;
+        }
         if (p.at(.ident)) {
             try p.scratch.append(p.gpa, try p.parseParam());
         } else if (param_recovery.contains(p.tag())) {
@@ -250,7 +261,7 @@ fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
     try p.expectToken(.l_brace);
     while (!p.at(.r_brace) and !p.eof()) {
         const before = p.tok_i;
-        if (p.at(.semi)) {
+        if (p.at(.semi) or p.at(.doc_comment)) {
             p.tok_i += 1;
         } else if (p.at(.ident)) {
             try p.scratch.append(p.gpa, try p.parseField());
@@ -288,10 +299,8 @@ fn parseParam(p: *Parse) Allocator.Error!Node.Index {
 // Statements
 
 fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
-    if (!p.at(.l_brace)) {
-        try p.addError(.{ .tag = .expected_token, .token = p.tok_i, .expected = .l_brace });
-        return p.addNode(.{ .tag = .err, .main_token = p.tok_i, .data = .{ .none = {} } });
-    }
+    if (!p.at(.l_brace))
+        return p.addErrNode(.{ .tag = .expected_token, .token = p.tok_i, .expected = .l_brace });
     if (p.depth >= max_depth) return p.errNode(.nesting_too_deep);
     p.depth += 1;
     defer p.depth -= 1;
@@ -302,7 +311,7 @@ fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
 
     while (!p.at(.r_brace) and !p.eof()) {
         const before = p.tok_i;
-        if (p.at(.semi)) {
+        if (p.at(.semi) or p.at(.doc_comment)) {
             p.tok_i += 1;
         } else if (stmt_first.contains(p.tag())) {
             try p.scratch.append(p.gpa, try p.parseStatement());
@@ -340,7 +349,6 @@ fn parseStatement(p: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseVarDecl(p: *Parse) Allocator.Error!Node.Index {
-    const node_tag: Node.Tag = if (p.at(.kw_var)) .var_decl else .let_decl;
     const kw = p.nextToken();
     try p.expectToken(.ident);
 
@@ -354,7 +362,7 @@ fn parseVarDecl(p: *Parse) Allocator.Error!Node.Index {
     try p.expectSemi();
 
     return p.addNode(.{
-        .tag = node_tag,
+        .tag = .var_decl,
         .main_token = kw,
         .data = .{ .opt_node_and_node = .{ type_expr, init_expr } },
     });
@@ -387,35 +395,6 @@ fn parseExprStatement(p: *Parse) Allocator.Error!Node.Index {
 
 // Expressions
 
-const Assoc = enum(u1) { left, none };
-
-const OperInfo = packed struct(u16) {
-    prec: u5 = 0,
-    assoc: Assoc = .left,
-    node_tag: Node.Tag = .err,
-    _pad: u2 = 0,
-};
-
-const oper_table: [Token.tag_count]OperInfo = blk: {
-    var t: [Token.tag_count]OperInfo = @splat(.{});
-    for (.{
-        .{ Token.Tag.kw_or, 1, Assoc.left, Node.Tag.bool_or },
-        .{ Token.Tag.kw_and, 2, Assoc.left, Node.Tag.bool_and },
-        .{ Token.Tag.eq_eq, 3, Assoc.none, Node.Tag.equal },
-        .{ Token.Tag.bang_eq, 3, Assoc.none, Node.Tag.not_equal },
-        .{ Token.Tag.lt, 3, Assoc.none, Node.Tag.less_than },
-        .{ Token.Tag.lt_eq, 3, Assoc.none, Node.Tag.less_or_equal },
-        .{ Token.Tag.gt, 3, Assoc.none, Node.Tag.greater_than },
-        .{ Token.Tag.gt_eq, 3, Assoc.none, Node.Tag.greater_or_equal },
-        .{ Token.Tag.plus, 4, Assoc.left, Node.Tag.add },
-        .{ Token.Tag.minus, 4, Assoc.left, Node.Tag.sub },
-        .{ Token.Tag.star, 5, Assoc.left, Node.Tag.mul },
-        .{ Token.Tag.slash, 5, Assoc.left, Node.Tag.div },
-        .{ Token.Tag.percent, 5, Assoc.left, Node.Tag.mod },
-    }) |e| t[@intFromEnum(e[0])] = .{ .prec = e[1], .assoc = e[2], .node_tag = e[3] };
-    break :blk t;
-};
-
 fn parseExpr(p: *Parse) Allocator.Error!Node.Index {
     return p.parseExprPrec(1);
 }
@@ -429,7 +408,7 @@ fn parseExprPrec(p: *Parse, min_prec: u5) Allocator.Error!Node.Index {
     var banned_prec: u5 = 0;
 
     while (true) {
-        const info = oper_table[@intFromEnum(p.tag())];
+        const info = Ast.oper_table[@intFromEnum(p.tag())];
         if (info.prec < min_prec) break;
         if (info.prec == banned_prec) {
             try p.addError(.{ .tag = .chained_comparison, .token = p.tok_i });
@@ -438,7 +417,7 @@ fn parseExprPrec(p: *Parse, min_prec: u5) Allocator.Error!Node.Index {
         const op_token = p.nextToken();
         const rhs = try p.parseExprPrec(info.prec + 1);
         node = try p.addNode(.{
-            .tag = info.node_tag,
+            .tag = .binary,
             .main_token = op_token,
             .data = .{ .node_and_node = .{ node, rhs } },
         });
@@ -450,8 +429,7 @@ fn parseExprPrec(p: *Parse, min_prec: u5) Allocator.Error!Node.Index {
 
 fn parsePrefixExpr(p: *Parse) Allocator.Error!Node.Index {
     const node_tag: Node.Tag = switch (p.tag()) {
-        .minus => .negate,
-        .bang => .bool_not,
+        .minus, .bang => .unary,
         .star => .pointer_type,
         else => return p.parseSuffixExpr(),
     };
@@ -478,14 +456,8 @@ fn parseSuffixExpr(p: *Parse) Allocator.Error!Node.Index {
         .l_paren => node = try p.parseCall(node),
         .dot => {
             const dot_token = p.nextToken();
-            if (p.eatToken(.ident) == null) {
-                try p.addError(.{
-                    .tag = .expected_token,
-                    .token = p.tok_i,
-                    .expected = .ident,
-                });
-                return p.addNode(.{ .tag = .err, .main_token = dot_token, .data = .{ .none = {} } });
-            }
+            if (p.eatToken(.ident) == null)
+                return p.addErrNode(.{ .tag = .expected_token, .token = p.tok_i, .expected = .ident });
             node = try p.addNode(.{
                 .tag = .field_access,
                 .main_token = dot_token,
@@ -528,11 +500,10 @@ fn parseCall(p: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
 fn parsePrimaryExpr(p: *Parse) Allocator.Error!Node.Index {
     switch (p.tag()) {
         .ident => return p.addLeaf(.ident),
-        .int => return p.addLeaf(.int_literal),
+        .number => return p.addLeaf(.number_literal),
         .str => return p.addLeaf(.str_literal),
+        .kw_true, .kw_false => return p.addLeaf(.bool_literal),
         .kw_struct => return p.parseStructType(),
-        .kw_true => return p.addLeaf(.true_literal),
-        .kw_false => return p.addLeaf(.false_literal),
         .l_paren => {
             const lparen = p.nextToken();
             const inner = try p.parseExpr();
