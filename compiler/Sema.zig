@@ -155,28 +155,28 @@ fn numberLiteralType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
 
 // Composite types
 
-/// Null when there is nothing to bind, the parser rejected it, or an earlier sibling took
-/// the name. A `param` and a `field` are the same shape, so one walk serves both.
-fn bindingIn(
+/// Null when there is nothing to declare, the parser rejected it, or an earlier sibling
+/// took the name. A `param` and a `field` are the same shape, so one walk serves both.
+fn typedNameIn(
     sema: *Sema,
     nodes: []const Ast.Node.Index,
     at: usize,
-) Allocator.Error!?Ast.View.Binding {
-    const binding = sema.bindingOf(nodes[at]) orelse return null;
-    const name = sema.tree.tokenSlice(binding.name_token);
+) Allocator.Error!?Ast.View.TypedName {
+    const declared = sema.typedNameOf(nodes[at]) orelse return null;
+    const name = sema.tree.tokenSlice(declared.name_token);
     for (nodes[0..at]) |earlier| {
-        const seen = sema.bindingOf(earlier) orelse continue;
+        const seen = sema.typedNameOf(earlier) orelse continue;
         if (std.mem.eql(u8, sema.tree.tokenSlice(seen.name_token), name)) {
-            _ = try sema.fail(.redeclared, binding.name_token);
+            _ = try sema.fail(.redeclared, declared.name_token);
             return null;
         }
     }
-    return binding;
+    return declared;
 }
 
-fn bindingOf(sema: *Sema, node: Ast.Node.Index) ?Ast.View.Binding {
+fn typedNameOf(sema: *Sema, node: Ast.Node.Index) ?Ast.View.TypedName {
     return switch (sema.tree.viewOf(node)) {
-        .param, .field => |binding| binding,
+        .param, .field => |declared| declared,
         else => null,
     };
 }
@@ -220,7 +220,7 @@ fn resolveStructFields(
     defer names.deinit(sema.gpa);
 
     for (0..fields.len) |at| {
-        const field = (try sema.bindingIn(fields, at)) orelse continue;
+        const field = (try sema.typedNameIn(fields, at)) orelse continue;
 
         var field_ty = try sema.evalTypeExpr(field.type_expr, field.name_token);
         // A field held by value needs a size where a pointer to one does not.
@@ -243,7 +243,7 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
     defer sema.scratch.shrinkRetainingCapacity(base);
 
     for (0..function.params.len) |at| {
-        const param = (try sema.bindingIn(function.params, at)) orelse continue;
+        const param = (try sema.typedNameIn(function.params, at)) orelse continue;
         const param_ty = try sema.evalTypeExpr(param.type_expr, param.name_token);
         try sema.scratch.append(sema.gpa, param_ty);
     }

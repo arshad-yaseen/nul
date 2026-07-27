@@ -202,9 +202,8 @@ pub const View = union(enum) {
     call: Call,
     binary: Binary,
     unary: Unary,
-    /// A name bound to a type; the same shape in both places.
-    param: Binding,
-    field: Binding,
+    param: TypedName,
+    field: TypedName,
     field_access: struct { lhs: Node.Index, name_token: TokenIndex },
     assign: struct { lhs: Node.Index, rhs: Node.Index },
 
@@ -231,7 +230,7 @@ pub const View = union(enum) {
     };
     /// Mutability is a token, never a stored bit.
     pub const Pointer = struct { is_mutable: bool, child: Node.Index };
-    pub const Binding = struct { name_token: TokenIndex, type_expr: Node.Index };
+    pub const TypedName = struct { name_token: TokenIndex, type_expr: Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     pub const Binary = struct { op: BinaryOp, op_token: TokenIndex, lhs: Node.Index, rhs: Node.Index };
     pub const Unary = struct { op: UnaryOp, op_token: TokenIndex, operand: Node.Index };
