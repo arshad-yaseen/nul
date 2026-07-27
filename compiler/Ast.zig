@@ -204,8 +204,8 @@ pub const View = union(enum) {
     unary: Unary,
     param: TypedName,
     field: TypedName,
-    field_access: struct { lhs: Node.Index, name_token: TokenIndex },
-    assign: struct { lhs: Node.Index, rhs: Node.Index },
+    field_access: FieldAccess,
+    assign: Assign,
 
     ident: TokenIndex,
     number_literal: TokenIndex,
@@ -232,6 +232,8 @@ pub const View = union(enum) {
     pub const Pointer = struct { is_mutable: bool, child: Node.Index };
     pub const TypedName = struct { name_token: TokenIndex, type_expr: Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
+    pub const FieldAccess = struct { lhs: Node.Index, name_token: TokenIndex };
+    pub const Assign = struct { lhs: Node.Index, rhs: Node.Index };
     pub const Binary = struct { op: BinaryOp, op_token: TokenIndex, lhs: Node.Index, rhs: Node.Index };
     pub const Unary = struct { op: UnaryOp, op_token: TokenIndex, operand: Node.Index };
 };

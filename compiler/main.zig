@@ -8,7 +8,9 @@ const Tokenizer = @import("Tokenizer.zig");
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const InternPool = @import("InternPool.zig");
+const Lower = @import("Lower.zig");
 const Namespace = @import("Namespace.zig");
+const Nir = @import("Nir.zig");
 const Sema = @import("Sema.zig");
 const Type = @import("Type.zig");
 
@@ -92,6 +94,15 @@ pub fn main(init: std.process.Init) !u8 {
             try Type.write(&pool, decl.value, w);
         }
         try w.writeByte('\n');
+    }
+
+    try w.writeAll("\nbodies\n");
+    for (namespace.all()) |decl| {
+        if (tree.nodeTag(decl.node) != .fn_decl) continue;
+        try w.print("  {s}\n", .{tree.tokenSlice(decl.name_token)});
+        var body = try Lower.run(&sema, decl);
+        defer body.deinit(gpa);
+        try body.write(&pool, tree, w);
     }
 
     if (diagnostics.all().len == 0) return 0;

@@ -25,6 +25,13 @@ pub fn deinit(sema: *Sema) void {
     sema.* = undefined;
 }
 
+/// Formats `ty` the way a programmer wrote it, into the arena the diagnostic lives in.
+pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(sema.diagnostics.allocator());
+    Type.write(sema.pool, ty, &out.writer) catch return error.OutOfMemory;
+    return out.written();
+}
+
 /// Analysis never stops at the first mistake, so what has no answer becomes poison.
 fn fail(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!Type.Index {
     try sema.diagnostics.add(.{ .tag = tag, .token = token });
@@ -39,7 +46,7 @@ pub fn resolveDeclarations(sema: *Sema) Allocator.Error!void {
 }
 
 /// Reentrant: `in_progress` means the declaration needs itself.
-fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
+pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
     switch (decl.state) {
         .resolved => return,
         .in_progress => {
@@ -62,7 +69,9 @@ fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
 
 fn resolveBinding(sema: *Sema, decl: *Decl, binding: Ast.View.VarDecl) Allocator.Error!void {
     try sema.bindInitializer(decl, binding.init_expr);
-    if (binding.type_expr.unwrap()) |annotation| try sema.applyAnnotation(decl, annotation);
+    if (binding.type_expr.unwrap()) |annotation| {
+        try sema.applyAnnotation(decl, annotation, binding.init_expr);
+    }
 }
 
 /// A declaration is either a value, whose type the initializer decides, or a type.
@@ -85,6 +94,7 @@ fn applyAnnotation(
     sema: *Sema,
     decl: *Decl,
     annotation: Ast.Node.Index,
+    binding_init: Ast.Node.Index,
 ) Allocator.Error!void {
     const declared = try sema.evalTypeExpr(annotation, decl.name_token);
     // `coerce` answers for the type, not the value: whether `300` fits a `u8` needs the
@@ -92,7 +102,20 @@ fn applyAnnotation(
     if (declared != .poisoned and decl.ty != .poisoned and
         Type.coerce(sema.pool, decl.ty, declared) == null)
     {
-        _ = try sema.fail(.type_mismatch, sema.tree.nodeMainToken(annotation));
+        const annotated = sema.tree.nodeMainToken(annotation);
+        try sema.diagnostics.add(.{
+            .tag = .type_mismatch,
+            .token = sema.tree.nodeMainToken(binding_init),
+            .message = try sema.diagnostics.print(
+                "'{s}' is declared '{s}', but its value is '{s}'",
+                .{ sema.tree.tokenSlice(decl.name_token), try sema.typeName(declared), try sema.typeName(decl.ty) },
+            ),
+            .text = try sema.diagnostics.print("this is '{s}'", .{try sema.typeName(decl.ty)}),
+            .marks = try sema.diagnostics.allocator().dupe(Diagnostic.Mark, &.{.{
+                .token = annotated,
+                .text = try sema.diagnostics.print("declared '{s}' here", .{try sema.typeName(declared)}),
+            }}),
+        });
     }
     decl.ty = declared;
 }
@@ -107,7 +130,7 @@ fn resolveImport(sema: *Sema, decl: *Decl) void {
 
 /// `blame` is where an unevaluable expression is reported, since its own token is often
 /// punctuation, for a call it is the `(`.
-fn evalTypeExpr(
+pub fn evalTypeExpr(
     sema: *Sema,
     node: Ast.Node.Index,
     blame: Token,
@@ -144,7 +167,7 @@ fn evalNamedType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
 }
 
 /// The tokenizer accepts more than is valid, so a bad number is caught here.
-fn numberLiteralType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
+pub fn numberLiteralType(sema: *Sema, token: Token) Allocator.Error!Type.Index {
     const number = Type.parseNumber(sema.tree.tokenSlice(token)) catch |err|
         return sema.fail(switch (err) {
             error.InvalidDigit => .invalid_digit,

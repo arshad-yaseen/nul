@@ -335,7 +335,7 @@ pub fn structName(pool: *const InternPool, index: Index) String {
     return @enumFromInt(pool.extra.items[pool.structRecordAt(index) + StructRecord.name_slot]);
 }
 
-fn structFieldNames(pool: *const InternPool, index: Index) []const String {
+pub fn structFieldNames(pool: *const InternPool, index: Index) []const String {
     const record = pool.structRecordAt(index);
     const count = pool.extra.items[record + StructRecord.field_count_slot];
     const fields_at = pool.extra.items[record + StructRecord.fields_start_slot];

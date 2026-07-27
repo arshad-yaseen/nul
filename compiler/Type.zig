@@ -82,6 +82,13 @@ pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coerc
     }
 }
 
+/// Whether `Arena.copy` can duplicate everything the value owns: a flat type trivially,
+/// and `str`, whose characters it copies. A type holding a pointer cannot be, since the
+/// copy would be relabelled without moving what it reaches.
+pub fn isCopyable(pool: *const InternPool, ty: Index) bool {
+    return ty == .str or pool.isFlat(ty);
+}
+
 // Literals
 
 pub const Number = union(enum) { int: i128, float: f64 };

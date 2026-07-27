@@ -1,15 +1,14 @@
 use std.mem.Arena
 
-let Report = struct {
-    lines: i64
+let Inner = struct {
+    value: i64
 }
 
-/// Two arena parameters leave the region of the result ambiguous. A function
-/// allocates into exactly one, and makes a child for anything temporary.
-fn analyze(long: Arena, short: Arena, input: str) *Report {
-    var r = long.create(Report)
+let Pair = struct {
+    left:  Inner
+    count: i64
+}
 
-    r.lines = 0
-
-    return r
+fn keep(arena: Arena, p: Pair) Pair {
+    return arena.copy(p)
 }

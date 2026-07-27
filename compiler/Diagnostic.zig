@@ -60,6 +60,12 @@ pub const Tag = enum {
     invalid_digit,
     literal_too_large,
     multiple_arenas,
+    not_mutable,
+    not_assignable,
+    no_such_field,
+    not_callable,
+    wrong_arg_count,
+    copy_holds_pointer,
 };
 
 /// A secondary span with its own wording. Owned by the `List`.
@@ -102,6 +108,14 @@ pub const Entry = struct {
             .literal_too_large => try w.print("'{s}' does not fit any integer type", .{name}),
             .multiple_arenas => try w.writeAll(
                 "this function takes more than one arena, so its result has no single home",
+            ),
+            .not_mutable => try w.print("'{s}' is a 'let', so it cannot be assigned to", .{name}),
+            .not_assignable => try w.writeAll("cannot assign to this expression"),
+            .no_such_field => try w.print("no field named '{s}'", .{name}),
+            .not_callable => try w.writeAll("this is not a function"),
+            .wrong_arg_count => try w.writeAll("wrong number of arguments"),
+            .copy_holds_pointer => try w.writeAll(
+                "this type holds a pointer, so copying it would relabel memory it does not own",
             ),
         }
     }
@@ -290,9 +304,13 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
 
         try writeMarkerRow(w, gutter, group);
 
-        // The rightmost label spoke on the marker row. The rest are drawn from the
-        // right, so no connector crosses another's text.
-        const queued = group[0 .. group.len - 1];
+        var speaking: usize = 0;
+        for (group[0 .. group.len - 1]) |label| {
+            if (label.text.len == 0) continue;
+            group[speaking] = label;
+            speaking += 1;
+        }
+        const queued = group[0..speaking];
         if (queued.len > 0) {
             try writeConnectorRow(w, gutter, queued, queued.len, "");
             var k = queued.len;
