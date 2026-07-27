@@ -10,44 +10,7 @@ const Source = @import("Source.zig");
 
 const Diagnostic = @This();
 
-/// Says what is wrong, never where.
-message: []const u8,
-/// Any order; the renderer sorts. Exactly one `.primary`, which fixes the header.
-labels: []const Label,
-notes: []const Note = &.{},
-
-pub const Label = struct {
-    /// Half-open. A span past its first line is drawn as if it stopped there, since a
-    /// marker only ever spans one row.
-    start: u32,
-    end: u32,
-    style: Style = .secondary,
-    text: []const u8 = "",
-
-    pub const Style = enum {
-        primary,
-        secondary,
-
-        fn marker(s: Style) []const u8 {
-            return switch (s) {
-                .primary => "^",
-                .secondary => "─",
-            };
-        }
-    };
-};
-
-pub const Note = struct {
-    kind: Kind,
-    /// A newline starts a continuation line. Wrapping is the producer's.
-    text: []const u8,
-    /// Suggested code, drawn two columns further in.
-    code: []const u8 = "",
-
-    pub const Kind = enum { note, help };
-};
-
-// What passes record
+// What a pass records
 
 pub const Tag = enum {
     redeclared,
@@ -71,21 +34,13 @@ pub const Tag = enum {
     used_after_release,
 };
 
-/// A secondary span with its own wording. Owned by the `List`.
-pub const Mark = struct {
-    token: Ast.TokenIndex,
-    /// Last token of the span. Null covers `token` alone.
-    last: ?Ast.TokenIndex = null,
-    text: []const u8 = "",
-};
-
-/// One recorded mistake. Most need only a tag and a token, which costs no allocation,
+/// One recorded mistake. Most need only a tag and a token, which costs no allocation;
 /// everything below `token` is owned by the `List` and usually empty.
 pub const Entry = struct {
     tag: Tag,
     /// The primary span: what the header points at, and what sorting orders on.
     token: Ast.TokenIndex,
-    /// Last token of the primary span. Null covers `token` alone.
+    /// Null covers `token` alone.
     last: ?Ast.TokenIndex = null,
     /// Overrides the tag's wording, for a headline naming something `token` does not.
     message: []const u8 = "",
@@ -127,8 +82,27 @@ pub const Entry = struct {
     }
 };
 
-/// Everything a diagnostic points at outlives the compilation and dies with it, so one
-/// arena owns the entries and every string they reach.
+/// A secondary span with its own wording.
+pub const Mark = struct {
+    token: Ast.TokenIndex,
+    last: ?Ast.TokenIndex = null,
+    text: []const u8 = "",
+};
+
+pub const Note = struct {
+    kind: Kind,
+    /// A newline starts a continuation line. Wrapping is the producer's.
+    text: []const u8,
+    /// Suggested code. With `at` set it is drawn as a diff of that line.
+    code: []const u8 = "",
+    /// Byte offset on the line `code` replaces.
+    at: ?u32 = null,
+
+    pub const Kind = enum { note, help };
+};
+
+/// Everything a diagnostic points at dies with the compilation, so one arena owns the
+/// entries and every string they reach.
 pub const List = struct {
     arena: std.heap.ArenaAllocator,
     items: std.ArrayList(Entry),
@@ -142,9 +116,17 @@ pub const List = struct {
         list.* = undefined;
     }
 
-    /// For the marks, notes and messages an `Entry` points at.
     pub fn allocator(list: *List) Allocator {
         return list.arena.allocator();
+    }
+
+    pub fn add(list: *List, entry: Entry) Allocator.Error!void {
+        @branchHint(.cold);
+        try list.items.append(list.allocator(), entry);
+    }
+
+    pub fn all(list: *const List) []const Entry {
+        return list.items.items;
     }
 
     pub fn print(list: *List, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
@@ -163,15 +145,6 @@ pub const List = struct {
         return list.allocator().dupe(Note, values);
     }
 
-    pub fn add(list: *List, entry: Entry) Allocator.Error!void {
-        @branchHint(.cold);
-        try list.items.append(list.allocator(), entry);
-    }
-
-    pub fn all(list: *const List) []const Entry {
-        return list.items.items;
-    }
-
     /// Neither collection nor resolution runs in the reader's order.
     pub fn sortBySource(list: *List) void {
         std.mem.sort(Entry, list.items.items, {}, struct {
@@ -182,29 +155,57 @@ pub const List = struct {
     }
 };
 
-// Rendering
+// What the renderer draws
+
+/// Says what is wrong, never where.
+message: []const u8,
+/// Any order; the renderer sorts. Exactly one `.primary`, which fixes the header.
+labels: []const Label,
+notes: []const Note = &.{},
 
 pub const Error = Allocator.Error || Io.Writer.Error;
 
-const Extras = struct {
-    message: []const u8 = "",
-    last: ?Ast.TokenIndex = null,
+pub const Label = struct {
+    /// Half-open. A span past its first line is drawn as if it stopped there, since a
+    /// marker only ever spans one row.
+    start: u32,
+    end: u32,
+    style: Style = .secondary,
     text: []const u8 = "",
-    marks: []const Mark = &.{},
-    notes: []const Note = &.{},
+
+    pub const Style = enum { primary, secondary };
 };
 
-/// An `Ast.Error` carries none of these; an `Entry` may.
-fn extrasOf(entry: anytype) Extras {
-    if (!@hasField(@TypeOf(entry), "marks")) return .{};
-    return .{
-        .message = entry.message,
-        .last = entry.last,
-        .text = entry.text,
-        .marks = entry.marks,
-        .notes = entry.notes,
+/// Four steps of loudness: the frame recedes furthest, annotations sit below the source
+/// they describe, source reads plain, and red marks what is wrong. `help:` shares its
+/// green with the `+` line it introduces.
+pub const Palette = struct {
+    reset: []const u8 = "",
+    fail: []const u8 = "",
+    bold: []const u8 = "",
+    frame: []const u8 = "",
+    primary: []const u8 = "",
+    secondary: []const u8 = "",
+    note: []const u8 = "",
+    help: []const u8 = "",
+    removed: []const u8 = "",
+    added: []const u8 = "",
+
+    pub const plain: Palette = .{};
+
+    pub const ansi: Palette = .{
+        .reset = "\x1b[0m",
+        .fail = "\x1b[1;31m",
+        .bold = "\x1b[1m",
+        .frame = "\x1b[90m",
+        .primary = "\x1b[31m",
+        .secondary = "\x1b[34m",
+        .note = "\x1b[1;36m",
+        .help = "\x1b[1;32m",
+        .removed = "\x1b[31m",
+        .added = "\x1b[32m",
     };
-}
+};
 
 /// Takes `Ast.Error`s as readily as `Entry`s: both word themselves with `render` and
 /// point at a `token`, which is why a parse error and a type error look the same.
@@ -214,13 +215,21 @@ pub fn renderAll(
     tree: Ast,
     src: *Source,
     w: *Io.Writer,
+    palette: Palette,
 ) Error!void {
     var wording: Io.Writer.Allocating = .init(gpa);
     defer wording.deinit();
 
     for (entries, 0..) |entry, at| {
         if (at > 0) try w.writeByte('\n');
-        const extras = extrasOf(entry);
+        // An `Ast.Error` carries none of these; an `Entry` may.
+        const extras: Extras = if (@hasField(@TypeOf(entry), "marks")) .{
+            .message = entry.message,
+            .last = entry.last,
+            .text = entry.text,
+            .marks = entry.marks,
+            .notes = entry.notes,
+        } else .{};
 
         const message = if (extras.message.len > 0) extras.message else blk: {
             wording.clearRetainingCapacity();
@@ -231,26 +240,28 @@ pub fn renderAll(
         const labels = try gpa.alloc(Label, 1 + extras.marks.len);
         defer gpa.free(labels);
         labels[0] = spanOf(tree, entry.token, extras.last, .primary, extras.text);
-        for (extras.marks, labels[1..]) |mark, *label| {
-            label.* = spanOf(tree, mark.token, mark.last, .secondary, mark.text);
+        for (extras.marks, labels[1..]) |m, *label| {
+            label.* = spanOf(tree, m.token, m.last, .secondary, m.text);
         }
 
         const d: Diagnostic = .{ .message = message, .labels = labels, .notes = extras.notes };
-        try d.render(gpa, src, w);
+        try d.render(gpa, src, w, palette);
     }
 }
 
-fn spanOf(
-    tree: Ast,
-    token: Ast.TokenIndex,
-    last: ?Ast.TokenIndex,
-    style: Label.Style,
-    text: []const u8,
-) Label {
-    const end_token = last orelse token;
+const Extras = struct {
+    message: []const u8 = "",
+    last: ?Ast.TokenIndex = null,
+    text: []const u8 = "",
+    marks: []const Mark = &.{},
+    notes: []const Note = &.{},
+};
+
+fn spanOf(tree: Ast, token: Ast.TokenIndex, last: ?Ast.TokenIndex, style: Label.Style, text: []const u8) Label {
+    const end = last orelse token;
     return .{
         .start = tree.tokenStart(token),
-        .end = tree.tokenStart(end_token) + @as(u32, @intCast(tree.tokenSlice(end_token).len)),
+        .end = tree.tokenStart(end) + @as(u32, @intCast(tree.tokenSlice(end).len)),
         .style = style,
         .text = text,
     };
@@ -258,25 +269,31 @@ fn spanOf(
 
 /// Columns are 1-based bytes; `end_col` is exclusive and always past `col`, so every
 /// label draws at least one marker.
-const PlacedLabel = struct {
+const Placed = struct {
     line: u32,
     col: u32,
     end_col: u32,
     style: Label.Style,
     text: []const u8,
 
-    fn sortsBefore(_: void, a: PlacedLabel, b: PlacedLabel) bool {
+    fn before(_: void, a: Placed, b: Placed) bool {
         return if (a.line != b.line) a.line < b.line else a.col < b.col;
     }
 };
 
-pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!void {
+pub fn render(
+    d: Diagnostic,
+    gpa: Allocator,
+    src: *Source,
+    w: *Io.Writer,
+    palette: Palette,
+) Error!void {
     assert(d.labels.len > 0);
 
-    const placed = try gpa.alloc(PlacedLabel, d.labels.len);
+    const placed = try gpa.alloc(Placed, d.labels.len);
     defer gpa.free(placed);
 
-    var header: ?PlacedLabel = null;
+    var header: ?Placed = null;
     var last_line: u32 = 0;
     for (d.labels, placed) |l, *p| {
         const lc = try src.lineCol(gpa, l.start);
@@ -296,35 +313,47 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
     }
     assert(header != null); // nothing to point at
 
-    std.mem.sort(PlacedLabel, placed, {}, PlacedLabel.sortsBefore);
+    // A suggested line shares the snippet's gutter, so it counts toward the width.
+    for (d.notes) |n| if (n.at) |offset| {
+        last_line = @max(last_line, (try src.lineCol(gpa, offset)).line);
+    };
 
-    const gutter = digitCount(last_line);
+    std.mem.sort(Placed, placed, {}, Placed.before);
 
-    try w.print("error: {s}\n\n", .{d.message});
+    var r: Render = .{
+        .w = w,
+        .gpa = gpa,
+        .src = src,
+        .palette = palette,
+        .gutter = digitCount(last_line),
+    };
 
-    try w.splatByteAll(' ', gutter + 1);
-    try w.print("┌─ {s}:{d}:{d}\n", .{ src.path, header.?.line, header.?.col });
-    try writeGutterLine(w, gutter, "│");
+    try r.tint(palette.fail, "error");
+    try r.tint(palette.bold, ": ");
+    try r.tint(palette.bold, d.message);
+    try w.writeAll("\n\n");
+
+    try w.splatByteAll(' ', r.gutter + 1);
+    try r.tint(palette.frame, "┌─ ");
+    try r.print(palette.frame, "{s}:{d}:{d}\n", .{ src.path, header.?.line, header.?.col });
+    try r.frame("│");
 
     var i: usize = 0;
-    var prev_line: u32 = 0;
+    var prev: u32 = 0;
     while (i < placed.len) {
         const line = placed[i].line;
         var j = i;
         while (j < placed.len and placed[j].line == line) j += 1;
         const group = placed[i..j];
 
-        // Skipped lines collapse to one mark.
-        if (prev_line != 0 and line > prev_line + 1) try writeGutterLine(w, gutter, "·");
-
-        try w.splatByteAll(' ', gutter - digitCount(line));
-        try w.print("{d} │ {s}\n", .{ line, try src.lineText(gpa, line) });
-
-        try writeMarkerRow(w, gutter, group);
+        if (prev != 0 and line > prev + 1) try r.frame("·");
+        try r.numbered(line);
+        try r.print("", "{s}\n", .{try src.lineText(gpa, line)});
+        try r.markerRow(group);
 
         // The rightmost label spoke on the marker row. Of the rest, only those with
-        // something to say need a connector, and they are drawn from the right so no
-        // connector crosses another's text.
+        // something to say need a connector, drawn from the right so none crosses
+        // another's text.
         var speaking: usize = 0;
         for (group[0 .. group.len - 1]) |label| {
             if (label.text.len == 0) continue;
@@ -333,94 +362,165 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
         }
         const queued = group[0..speaking];
         if (queued.len > 0) {
-            try writeConnectorRow(w, gutter, queued, queued.len, "");
+            try r.connectorRow(queued, queued.len, "", .secondary);
             var k = queued.len;
             while (k > 0) {
                 k -= 1;
-                try writeConnectorRow(w, gutter, queued, k, queued[k].text);
+                try r.connectorRow(queued, k, queued[k].text, queued[k].style);
             }
         }
 
-        prev_line = line;
+        prev = line;
         i = j;
     }
 
-    try writeGutterLine(w, gutter, "│");
-
+    // Each note gets its own air, so a wall of prose does not follow the snippet.
     for (d.notes) |n| {
-        try w.splatByteAll(' ', gutter + 1);
-        try w.print("= {s}: ", .{@tagName(n.kind)});
-        try writeIndented(w, n.text, gutter + 9, false);
-        if (n.code.len > 0) try writeIndented(w, n.code, gutter + 11, true);
+        try r.frame("│");
+        try r.note(n);
     }
+    try r.frame("│");
 }
 
-/// `│` between snippet rows, `·` where lines were skipped.
-fn writeGutterLine(w: *Io.Writer, gutter: u32, mark: []const u8) Io.Writer.Error!void {
-    try w.splatByteAll(' ', gutter + 1);
-    try w.writeAll(mark);
-    try w.writeByte('\n');
-}
-
-/// The `^^^` and `───` under a source line, plus the rightmost label's text.
-fn writeMarkerRow(w: *Io.Writer, gutter: u32, group: []const PlacedLabel) Io.Writer.Error!void {
-    try w.splatByteAll(' ', gutter + 1);
-    try w.writeAll("│ ");
-
-    var col: u32 = 1;
-    for (group) |g| {
-        try w.splatByteAll(' ', g.col -| col);
-        var c = @max(g.col, col);
-        while (c < g.end_col) : (c += 1) try w.writeAll(g.style.marker());
-        col = @max(col, g.end_col);
-    }
-
-    const last = group[group.len - 1];
-    if (last.text.len > 0) try w.print("  {s}", .{last.text});
-    try w.writeByte('\n');
-}
-
-/// `│` under the first `connected_count` queued labels, then `text` at the next one.
-fn writeConnectorRow(
+/// Holds what every row needs, so no helper takes the palette as a parameter.
+const Render = struct {
     w: *Io.Writer,
+    gpa: Allocator,
+    src: *Source,
+    palette: Palette,
     gutter: u32,
-    queued: []const PlacedLabel,
-    connected_count: usize,
-    text: []const u8,
-) Io.Writer.Error!void {
-    try w.splatByteAll(' ', gutter + 1);
-    try w.writeAll("│");
-    if (connected_count == 0 and text.len == 0) return w.writeByte('\n');
-    try w.writeByte(' ');
 
-    var col: u32 = 1;
-    for (queued[0..connected_count]) |label| {
-        try w.splatByteAll(' ', label.col -| col);
-        try w.writeAll("│");
-        col = label.col + 1;
+    fn tint(r: Render, color: []const u8, text: []const u8) Io.Writer.Error!void {
+        return r.print(color, "{s}", .{text});
     }
-    if (text.len > 0) {
-        try w.splatByteAll(' ', queued[connected_count].col -| col);
-        try w.writeAll(text);
-    }
-    try w.writeByte('\n');
-}
 
-/// Indents every line after the first, suggested code wants the first indented too.
-fn writeIndented(
-    w: *Io.Writer,
-    text: []const u8,
-    indent: u32,
-    indent_first_line: bool,
-) Io.Writer.Error!void {
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    var is_first = true;
-    while (lines.next()) |line| : (is_first = false) {
-        if (indent_first_line or !is_first) try w.splatByteAll(' ', indent);
-        try w.writeAll(line);
-        try w.writeByte('\n');
+    fn print(r: Render, color: []const u8, comptime fmt: []const u8, args: anytype) Io.Writer.Error!void {
+        try r.w.writeAll(color);
+        try r.w.print(fmt, args);
+        try r.untint(color);
     }
-}
+
+    fn untint(r: Render, color: []const u8) Io.Writer.Error!void {
+        if (color.len > 0) try r.w.writeAll(r.palette.reset);
+    }
+
+    fn styleOf(r: Render, style: Label.Style) []const u8 {
+        return switch (style) {
+            .primary => r.palette.primary,
+            .secondary => r.palette.secondary,
+        };
+    }
+
+    /// `│` between rows, `·` where lines were skipped.
+    fn frame(r: Render, glyph: []const u8) Io.Writer.Error!void {
+        try r.w.splatByteAll(' ', r.gutter + 1);
+        try r.tint(r.palette.frame, glyph);
+        try r.w.writeByte('\n');
+    }
+
+    fn numbered(r: Render, line: u32) Io.Writer.Error!void {
+        try r.w.splatByteAll(' ', r.gutter - digitCount(line));
+        try r.print(r.palette.frame, "{d} │ ", .{line});
+    }
+
+    /// Opens a row under the source line.
+    fn bar(r: Render) Io.Writer.Error!void {
+        try r.w.splatByteAll(' ', r.gutter + 1);
+        try r.tint(r.palette.frame, "│");
+        try r.w.writeByte(' ');
+    }
+
+    /// The `^^^` and `───` under a source line, plus the rightmost label's text.
+    fn markerRow(r: Render, group: []const Placed) Io.Writer.Error!void {
+        try r.bar();
+        var col: u32 = 1;
+        for (group) |g| {
+            try r.w.splatByteAll(' ', g.col -| col);
+            const color = r.styleOf(g.style);
+            try r.w.writeAll(color);
+            var c = @max(g.col, col);
+            while (c < g.end_col) : (c += 1) {
+                try r.w.writeAll(if (g.style == .primary) "^" else "─");
+            }
+            try r.untint(color);
+            col = @max(col, g.end_col);
+        }
+
+        const last = group[group.len - 1];
+        if (last.text.len > 0) {
+            try r.w.writeAll("  ");
+            try r.tint(r.styleOf(last.style), last.text);
+        }
+        try r.w.writeByte('\n');
+    }
+
+    /// `│` under the first `connected` queued labels, then `text` on an elbow at the next.
+    fn connectorRow(
+        r: Render,
+        queued: []const Placed,
+        connected: usize,
+        text: []const u8,
+        style: Label.Style,
+    ) Io.Writer.Error!void {
+        try r.bar();
+        var col: u32 = 1;
+        for (queued[0..connected]) |label| {
+            try r.w.splatByteAll(' ', label.col -| col);
+            try r.tint(r.styleOf(label.style), "│");
+            col = label.col + 1;
+        }
+        if (text.len > 0) {
+            try r.w.splatByteAll(' ', queued[connected].col -| col);
+            const color = r.styleOf(style);
+            try r.w.writeAll(color);
+            try r.w.writeAll("└─ ");
+            try r.w.writeAll(text);
+            try r.untint(color);
+        }
+        try r.w.writeByte('\n');
+    }
+
+    fn note(r: Render, n: Note) Error!void {
+        try r.w.splatByteAll(' ', r.gutter + 1);
+        try r.tint(r.palette.frame, "= ");
+        try r.print(switch (n.kind) {
+            .note => r.palette.note,
+            .help => r.palette.help,
+        }, "{s}: ", .{@tagName(n.kind)});
+        try r.wrapped(n.text, r.gutter + 9, false);
+
+        if (n.code.len == 0) return;
+        if (n.at) |offset| return r.diff(offset, n.code);
+        try r.wrapped(n.code, r.gutter + 11, true);
+    }
+
+    /// The line as it is, then as it would be. Indentation comes from the original, so
+    /// the two read as one edit.
+    fn diff(r: Render, offset: u32, code: []const u8) Error!void {
+        const line = (try r.src.lineCol(r.gpa, offset)).line;
+        const original = try r.src.lineText(r.gpa, line);
+        var lead: usize = 0;
+        while (lead < original.len and (original[lead] == ' ' or original[lead] == '\t')) lead += 1;
+
+        try r.frame("│");
+        try r.numbered(line);
+        try r.print(r.palette.removed, "- {s}\n", .{original});
+
+        try r.numbered(line);
+        try r.print(r.palette.added, "+ {s}{s}\n", .{ original[0..lead], code });
+    }
+
+    /// Indents every line after the first; suggested code wants the first indented too.
+    fn wrapped(r: Render, text: []const u8, indent: u32, indent_first: bool) Io.Writer.Error!void {
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        var first = true;
+        while (lines.next()) |line| : (first = false) {
+            if (indent_first or !first) try r.w.splatByteAll(' ', indent);
+            try r.w.writeAll(line);
+            try r.w.writeByte('\n');
+        }
+    }
+};
 
 fn digitCount(n: u32) u32 {
     var count: u32 = 1;
@@ -465,7 +565,7 @@ test "renders several labels and notes" {
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    try d.render(gpa, &src, &out.writer);
+    try d.render(gpa, &src, &out.writer, .plain);
 
     try std.testing.expectEqualStrings(
         \\error: 'temp' does not live long enough
@@ -481,12 +581,60 @@ test "renders several labels and notes" {
         \\4 │ box.item = temp
         \\  │ ────────   ^^^^  this points into 'scratch'
         \\  │ │
-        \\  │ this memory lives in 'arena'
+        \\  │ └─ this memory lives in 'arena'
         \\  │
         \\  = note: 'scratch' is a child of 'arena', and a child dies
         \\          before its parent.
+        \\  │
         \\  = help: copy the value into the arena that outlives it
         \\            box.item = arena.copy(temp)
+        \\  │
+        \\
+    , out.written());
+}
+
+test "renders a suggestion as a diff of the line it replaces" {
+    const gpa = std.testing.allocator;
+    const text =
+        \\fn build(arena: Arena) *Span {
+        \\    var probe = makeSpan(scratch, 0, pos)
+        \\    return probe
+        \\
+    ;
+    var src: Source = .{ .path = "build.nul", .bytes = text };
+    defer if (src.line_starts) |starts| gpa.free(starts);
+
+    const start: u32 = @intCast(std.mem.indexOf(u8, text, "probe =").?);
+    const d: Diagnostic = .{
+        .message = "'probe' does not live long enough",
+        .labels = &.{
+            .{ .start = start, .end = start + 5, .style = .primary, .text = "this lives in 'scratch'" },
+        },
+        .notes = &.{.{
+            .kind = .help,
+            .text = "allocate it from 'arena' instead of 'scratch'",
+            .code = "var probe = makeSpan(arena, 0, pos)",
+            .at = start,
+        }},
+    };
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try d.render(gpa, &src, &out.writer, .plain);
+
+    try std.testing.expectEqualStrings(
+        \\error: 'probe' does not live long enough
+        \\
+        \\  ┌─ build.nul:2:9
+        \\  │
+        \\2 │     var probe = makeSpan(scratch, 0, pos)
+        \\  │         ^^^^^  this lives in 'scratch'
+        \\  │
+        \\  = help: allocate it from 'arena' instead of 'scratch'
+        \\  │
+        \\2 │ -     var probe = makeSpan(scratch, 0, pos)
+        \\2 │ +     var probe = makeSpan(arena, 0, pos)
+        \\  │
         \\
     , out.written());
 }

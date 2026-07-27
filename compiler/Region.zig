@@ -456,6 +456,7 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
             arena, region.regionName(src),
         }),
         .code = try region.print("var {s} = {s}", .{ value, try region.allocatedFrom(inst.rhs, arena) }),
+        .at = region.anchor(inst.rhs),
     };
 }
 
@@ -471,6 +472,7 @@ fn howToReturn(region: *Region, value: u32) Allocator.Error!Diagnostic.Note {
                 region.name(value) orelse "result",
                 try region.allocatedFrom(value, region.tree.tokenSlice(it.token)),
             }),
+            .at = region.anchor(value),
         };
     }
     return .{
@@ -505,6 +507,11 @@ fn allocatedFrom(region: *Region, inst: u32, arena: []const u8) Allocator.Error!
     }
     try out.append(gpa, ')');
     return out.items;
+}
+
+/// The line a fix replaces: the one that declared the value.
+fn anchor(region: *const Region, inst: u32) ?u32 {
+    return region.tree.tokenStart(region.nir.nameOf(inst) orelse return null);
 }
 
 /// What an argument was written as: its name, or the token it came from.

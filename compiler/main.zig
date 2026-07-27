@@ -24,6 +24,10 @@ pub fn main(init: std.process.Init) !u8 {
     const w = &out_file.interface;
     defer w.flush() catch {};
 
+    // Colour only when a person is reading; a pipe gets plain bytes.
+    const tty = Io.File.stdout().isTty(io) catch false;
+    const palette: Diagnostic.Palette = if (tty) .ansi else .plain;
+
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) {
         try w.writeAll("usage: nul <file.nul>\n");
@@ -41,7 +45,7 @@ pub fn main(init: std.process.Init) !u8 {
     defer tree.deinit(gpa);
 
     if (tree.errors.len > 0) {
-        try Diagnostic.renderAll(gpa, tree.errors, tree, &src, w);
+        try Diagnostic.renderAll(gpa, tree.errors, tree, &src, w, palette);
         return 1;
     }
 
@@ -122,7 +126,7 @@ pub fn main(init: std.process.Init) !u8 {
 
     // try w.writeByte('\n');
     // try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
-    try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
+    try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w, palette);
     return 1;
 }
 
