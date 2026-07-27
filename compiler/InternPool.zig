@@ -16,8 +16,9 @@ strings: std.ArrayList(u8),
 /// Kept in lockstep with `entries`, so map position N describes type N.
 dedup: std.AutoArrayHashMapUnmanaged(void, void),
 
-/// Minted by whoever owns the declaration table, the pool never interprets it.
-pub const DeclIndex = enum(u32) { _ };
+/// A nominal type's declaration site, minted by the caller. The pool never interprets
+/// it, it only uses it to keep nominal types apart.
+pub const NominalId = enum(u32) { _ };
 
 /// Not deduplicated, so a repeated name costs its bytes twice.
 pub const String = enum(u32) { empty = 0, _ };
@@ -58,6 +59,13 @@ pub fn builtinName(index: Index) ?[]const u8 {
     return null;
 }
 
+pub fn builtinNamed(name: []const u8) ?Index {
+    inline for (@typeInfo(Index).@"enum".fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return @enumFromInt(field.value);
+    }
+    return null;
+}
+
 // Keys
 
 /// What makes a type distinct, and so what `intern` looks it up by. Never stored, and
@@ -69,7 +77,7 @@ pub const Key = union(enum) {
     /// Nominal: keyed on the declaration, never the shape. So two identical `struct`
     /// bodies are two types, and the body can arrive later, which
     /// `let Node = struct { next: *Node }` needs.
-    struct_type: DeclIndex,
+    struct_type: NominalId,
     func: Func,
 
     pub const Pointer = struct { pointee: Index, is_mutable: bool };
@@ -135,7 +143,7 @@ const Tag = enum(u8) {
 /// Four consecutive slots in `extra`. `fields_start_slot` holds the position of the
 /// field data, which is `field_count` names followed by `field_count` types.
 const StructRecord = struct {
-    const decl_slot = 0;
+    const id_slot = 0;
     const name_slot = 1;
     const field_count_slot = 2;
     const fields_start_slot = 3;
@@ -213,10 +221,10 @@ pub fn intern(pool: *InternPool, gpa: Allocator, key: Key) Allocator.Error!Index
             .payload = @intFromEnum(pointer.pointee),
             .is_flat = false,
         },
-        .struct_type => |decl| blk: {
+        .struct_type => |id| blk: {
             const at: u32 = @intCast(pool.extra.items.len);
             var record: [StructRecord.slot_count]u32 = undefined;
-            record[StructRecord.decl_slot] = @intFromEnum(decl);
+            record[StructRecord.id_slot] = @intFromEnum(id);
             record[StructRecord.name_slot] = @intFromEnum(String.empty);
             record[StructRecord.field_count_slot] = 0;
             record[StructRecord.fields_start_slot] = StructRecord.body_undefined;
@@ -250,7 +258,7 @@ pub fn keyOf(pool: *const InternPool, index: Index) Key {
             .is_mutable = entry.tag == .pointer_mut,
         } },
         .struct_type => .{
-            .struct_type = @enumFromInt(pool.extra.items[entry.payload + StructRecord.decl_slot]),
+            .struct_type = @enumFromInt(pool.extra.items[entry.payload + StructRecord.id_slot]),
         },
         .func => blk: {
             const count = pool.extra.items[entry.payload + FuncRecord.param_count_slot];
@@ -280,10 +288,10 @@ pub fn isFlat(pool: *const InternPool, index: Index) bool {
 pub fn declareStruct(
     pool: *InternPool,
     gpa: Allocator,
-    decl: DeclIndex,
+    id: NominalId,
     name: String,
 ) Allocator.Error!Index {
-    const index = try pool.intern(gpa, .{ .struct_type = decl });
+    const index = try pool.intern(gpa, .{ .struct_type = id });
     pool.extra.items[pool.structRecordAt(index) + StructRecord.name_slot] = @intFromEnum(name);
     return index;
 }

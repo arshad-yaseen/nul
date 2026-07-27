@@ -6,6 +6,11 @@ const Io = std.Io;
 const Source = @import("Source.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Ast = @import("Ast.zig");
+const Error = @import("Error.zig");
+const InternPool = @import("InternPool.zig");
+const Namespace = @import("Namespace.zig");
+const Sema = @import("Sema.zig");
+const Type = @import("Type.zig");
 
 pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
@@ -48,14 +53,54 @@ pub fn main(init: std.process.Init) !u8 {
     try w.writeAll("\nnodes\n");
     try dumpNode(tree, w, .root, 0);
 
-    if (tree.errors.len == 0) return 0;
+    if (tree.errors.len > 0) {
+        try w.writeByte('\n');
+        for (tree.errors) |err| {
+            const lc = try src.lineCol(gpa, tree.tokenStart(err.token));
+            try w.print("{s}:{d}:{d}: error: ", .{ path, lc.line, lc.col });
+            try err.render(tree, w);
+            try w.writeByte('\n');
+        }
+        return 1;
+    }
+
+    var pool = try InternPool.init(gpa);
+    defer pool.deinit(gpa);
+
+    var errors: Error.List = .empty;
+    defer errors.deinit(gpa);
+
+    var namespace = try Namespace.collect(gpa, &tree, &errors);
+    defer namespace.deinit(gpa);
+
+    var sema: Sema = .init(gpa, &pool, &tree, &namespace, &errors);
+    defer sema.deinit();
+    try sema.resolveDeclarations();
+
+    try w.writeAll("\ndeclarations\n");
+    for (namespace.all()) |decl| {
+        try w.print("  {s} : ", .{tree.tokenSlice(decl.name_token)});
+        // An import the module resolver has yet to settle has no type to show, rather
+        // than the `never` its placeholder would print as.
+        if (tree.nodeTag(decl.node) == .use_decl and decl.ty == .never) {
+            try w.writeAll("(unresolved import)\n");
+            continue;
+        }
+        try Type.write(&pool, decl.ty, w);
+        if (decl.ty == .type) {
+            try w.writeAll(" = ");
+            try Type.write(&pool, decl.value, w);
+        }
+        try w.writeByte('\n');
+    }
+
+    if (errors.all().len == 0) return 0;
 
     try w.writeByte('\n');
-
-    for (tree.errors) |err| {
+    for (errors.all()) |err| {
         const lc = try src.lineCol(gpa, tree.tokenStart(err.token));
         try w.print("{s}:{d}:{d}: error: ", .{ path, lc.line, lc.col });
-        try err.render(tree, w);
+        try err.render(&tree, w);
         try w.writeByte('\n');
     }
     return 1;
