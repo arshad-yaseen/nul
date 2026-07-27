@@ -6,6 +6,11 @@ const Io = std.Io;
 const Source = @import("Source.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Ast = @import("Ast.zig");
+const Diagnostic = @import("Diagnostic.zig");
+const InternPool = @import("InternPool.zig");
+const Namespace = @import("Namespace.zig");
+const Sema = @import("Sema.zig");
+const Type = @import("Type.zig");
 
 pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
@@ -48,16 +53,51 @@ pub fn main(init: std.process.Init) !u8 {
     try w.writeAll("\nnodes\n");
     try dumpNode(tree, w, .root, 0);
 
-    if (tree.errors.len == 0) return 0;
+    if (tree.errors.len > 0) {
+        try w.writeByte('\n');
+        try Diagnostic.renderAll(gpa, tree.errors, tree, &src, w);
+        return 1;
+    }
 
-    try w.writeByte('\n');
+    var pool = try InternPool.init(gpa);
+    defer pool.deinit(gpa);
 
-    for (tree.errors) |err| {
-        const lc = try src.lineCol(gpa, tree.tokenStart(err.token));
-        try w.print("{s}:{d}:{d}: error: ", .{ path, lc.line, lc.col });
-        try err.render(tree, w);
+    var diagnostics: Diagnostic.List = .empty;
+    defer diagnostics.deinit(gpa);
+
+    var namespace = try Namespace.collect(gpa, &tree, &diagnostics);
+    defer namespace.deinit(gpa);
+
+    var sema: Sema = .{
+        .gpa = gpa,
+        .pool = &pool,
+        .tree = &tree,
+        .namespace = &namespace,
+        .diagnostics = &diagnostics,
+    };
+    defer sema.deinit();
+    try sema.resolveDeclarations();
+
+    try w.writeAll("\ndeclarations\n");
+    for (namespace.all()) |decl| {
+        try w.print("  {s} : ", .{tree.tokenSlice(decl.name_token)});
+        // An unsettled import has no type to show, rather than the poison it holds.
+        if (tree.nodeTag(decl.node) == .use_decl and decl.ty == .poisoned) {
+            try w.writeAll("(unresolved import)\n");
+            continue;
+        }
+        try Type.write(&pool, decl.ty, w);
+        if (decl.ty == .type) {
+            try w.writeAll(" = ");
+            try Type.write(&pool, decl.value, w);
+        }
         try w.writeByte('\n');
     }
+
+    if (diagnostics.all().len == 0) return 0;
+
+    try w.writeByte('\n');
+    try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
     return 1;
 }
 

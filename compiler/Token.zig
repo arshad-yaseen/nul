@@ -43,8 +43,7 @@ pub const Tag = enum(u8) {
     comma,
     dot,
     colon,
-    /// Written by the programmer or inserted by the tokenizer at a newline. The
-    /// parser cannot tell the difference, and that is the point.
+    /// Written, or inserted at a newline. The parser cannot tell, and that is the point.
     semi,
 
     eq,
@@ -120,8 +119,7 @@ pub const Tag = enum(u8) {
 pub const tag_count = @typeInfo(Tag).@"enum".fields.len;
 
 pub const Traits = packed struct(u8) {
-    /// A newline after this token ends a statement, so the tokenizer emits a
-    /// synthetic `.semi`.
+    /// A newline after this token ends a statement, so a synthetic `.semi` is emitted.
     ends_stmt: bool = false,
     /// Lexeme length, 0 means variable-length and the end must be rescanned.
     lexeme_len: u7 = 0,
@@ -158,7 +156,7 @@ const keyword_list = [_]struct { []const u8, Tag }{
 
 comptime {
     for (keyword_list) |kw| {
-        // A 9-character keyword would break single-compare matching. Say so loudly.
+        // A 9-character keyword would break single-compare matching.
         if (kw[0].len > 8) @compileError("keyword '" ++ kw[0] ++ "' exceeds 8 bytes");
         if (!std.mem.eql(u8, kw[1].lexeme().?, kw[0]))
             @compileError("keyword '" ++ kw[0] ++ "' disagrees with Tag.lexeme");

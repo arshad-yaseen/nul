@@ -10,12 +10,11 @@ const Parse = @import("Parse.zig");
 
 const Ast = @This();
 
-/// Borrowed, the caller's `Source` must outlive the tree.
+/// Borrowed; the caller's `Source` must outlive the tree.
 source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
 nodes: NodeList.Slice,
-/// Variable-length children, referenced by `ExtraRange`. A node's children appear here
-/// in source order.
+/// Variable-length children, in source order, referenced by `ExtraRange`.
 extra: []u32,
 errors: []const Error,
 
@@ -39,8 +38,8 @@ pub fn deinit(tree: *Ast, gpa: Allocator) void {
 
 pub const Node = struct {
     tag: Tag,
-    /// The token that names this node, an operator, a declaration's keyword, a call's
-    /// `(`. Every other position derives from it.
+    /// Names this node: an operator, a keyword, a call's `(`. Every other position
+    /// derives from it.
     main_token: TokenIndex,
     data: Data,
 
@@ -56,8 +55,8 @@ pub const Node = struct {
         }
     };
 
-    /// `?Index` would be 8 bytes and blow the payload budget. Stealing one value out
-    /// of the `u32` keeps it at 4 while still forcing an `unwrap()` at every use.
+    /// `?Index` would be 8 bytes and blow the payload budget. Stealing one `u32` value
+    /// keeps it at 4 and still forces an `unwrap()`.
     pub const OptionalIndex = enum(u32) {
         root = 0,
         none = std.math.maxInt(u32),
@@ -77,7 +76,7 @@ pub const Node = struct {
         fn_decl,
         param,
         block,
-        /// Both `let` and `var`. `main_token` is the keyword, which says which.
+        /// Both `let` and `var`; `main_token` is the keyword.
         var_decl,
         return_stmt,
         assign,
@@ -91,7 +90,7 @@ pub const Node = struct {
         /// `*T`. `main_token` is `*`, `data` is `node`: the pointee type.
         pointer_type,
 
-        /// `main_token` is the operator, which is what says which operator it is.
+        /// `main_token` is the operator.
         binary,
         unary,
 
@@ -104,8 +103,7 @@ pub const Node = struct {
         err,
     };
 
-    /// Eight bytes reinterpreted by `tag`. Only `full` reads this, everything else
-    /// goes through the view.
+    /// Eight bytes reinterpreted by `tag`. Only `viewOf` reads it.
     pub const Data = union {
         none: void,
         node: Index,
@@ -166,8 +164,8 @@ pub const OperInfo = packed struct(u16) {
     _pad: u6 = 0,
 };
 
-/// The one place a token is mapped to the operator it means. `Parse` reads `prec` and
-/// `assoc` to shape the tree, `full` reads `op` back off the operator token.
+/// The one place a token maps to the operator it means. `Parse` reads `prec` and
+/// `assoc`; `viewOf` reads `op` back off the token.
 pub const oper_table: [Token.tag_count]OperInfo = blk: {
     var t: [Token.tag_count]OperInfo = @splat(.{});
     for (.{
@@ -188,7 +186,7 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
     break :blk t;
 };
 
-/// A node widened into named fields. Materialized on demand, never stored.
+/// A node widened into named fields. On demand, never stored.
 pub const View = union(enum) {
     root: []const Node.Index,
     block: []const Node.Index,
@@ -204,9 +202,8 @@ pub const View = union(enum) {
     call: Call,
     binary: Binary,
     unary: Unary,
-    /// A name bound to a type. Same shape in both places.
-    param: Binding,
-    field: Binding,
+    param: TypedName,
+    field: TypedName,
     field_access: struct { lhs: Node.Index, name_token: TokenIndex },
     assign: struct { lhs: Node.Index, rhs: Node.Index },
 
@@ -231,9 +228,9 @@ pub const View = union(enum) {
         type_expr: Node.OptionalIndex,
         init_expr: Node.Index,
     };
-    /// `*T` reads, `*var T` writes. Mutability is a token, never a stored bit.
+    /// Mutability is a token, never a stored bit.
     pub const Pointer = struct { is_mutable: bool, child: Node.Index };
-    pub const Binding = struct { name_token: TokenIndex, type_expr: Node.Index };
+    pub const TypedName = struct { name_token: TokenIndex, type_expr: Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     pub const Binary = struct { op: BinaryOp, op_token: TokenIndex, lhs: Node.Index, rhs: Node.Index };
     pub const Unary = struct { op: UnaryOp, op_token: TokenIndex, operand: Node.Index };
@@ -347,7 +344,6 @@ pub fn tokenStart(tree: Ast, i: TokenIndex) u32 {
     return tree.tokens.items(.start)[i];
 }
 
-/// The source text of a token.
 pub fn tokenSlice(tree: Ast, i: TokenIndex) []const u8 {
     const tag = tree.tokenTag(i);
     const start = tree.tokenStart(i);

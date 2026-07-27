@@ -38,12 +38,12 @@ fn isFloat(ty: Index) bool {
     return ty == .f32 or ty == .f64;
 }
 
-/// Sema needs which one, not just whether, some change representation and must emit an
-/// instruction, others are a relabelling that must not.
+/// Which one, not just whether: some change representation and must emit an instruction,
+/// others are a relabelling that must not.
 pub const Coercion = enum {
     identity,
     int_widen,
-    /// Whether the *value* fits is Sema's to check, it holds the value, this does not.
+    /// Whether the *value* fits is for whoever holds it.
     comptime_literal,
     from_never,
     pointer_to_readonly,
@@ -53,7 +53,7 @@ pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coerc
     if (source == destination) return .identity;
     if (source == .never) return .from_never;
 
-    // A literal has no type of its own yet, so the destination decides.
+    // A literal has no type of its own, so the destination decides.
     if (source == .comptime_int and (isInteger(destination) or isFloat(destination)))
         return .comptime_literal;
     if (source == .comptime_float and isFloat(destination)) return .comptime_literal;
@@ -82,12 +82,51 @@ pub fn coerce(pool: *const InternPool, source: Index, destination: Index) ?Coerc
     }
 }
 
+// Literals
+
+pub const Number = union(enum) { int: i128, float: f64 };
+
+/// The tokenizer accepts more than is valid, so a bad literal is caught here.
+pub fn parseNumber(text: []const u8) error{ InvalidDigit, TooLarge }!Number {
+    if (isFloatLiteral(text)) {
+        const value = std.fmt.parseFloat(f64, text) catch return error.InvalidDigit;
+        return .{ .float = value };
+    }
+    const value = std.fmt.parseInt(i128, text, 0) catch |err| return switch (err) {
+        error.Overflow => error.TooLarge,
+        error.InvalidCharacter => error.InvalidDigit,
+    };
+    return .{ .int = value };
+}
+
+/// The one place a literal's shape becomes a type.
+pub fn numberType(number: Number) Index {
+    return switch (number) {
+        .int => .comptime_int,
+        .float => .comptime_float,
+    };
+}
+
+/// Base dependent: `e` is an exponent in decimal but a digit in hex, where `p` marks it.
+fn isFloatLiteral(text: []const u8) bool {
+    if (text.len > 1 and text[0] == '0') switch (text[1]) {
+        'x', 'X' => return containsAny(text, ".pP"),
+        'b', 'B', 'o', 'O' => return false,
+        else => {},
+    };
+    return containsAny(text, ".eE");
+}
+
+fn containsAny(text: []const u8, set: []const u8) bool {
+    return std.mem.indexOfAny(u8, text, set) != null;
+}
+
 /// Writes `ty` as a programmer would read it back.
 pub fn write(pool: *const InternPool, ty: Index, out: *Io.Writer) Io.Writer.Error!void {
     if (InternPool.builtinName(ty)) |name| return out.writeAll(name);
 
     switch (pool.keyOf(ty)) {
-        .builtin => unreachable, // a builtin always has a name, so it never reaches here
+        .builtin => unreachable, // always has a name
         .pointer => |pointer| {
             try out.writeAll(if (pointer.is_mutable) "*var " else "*");
             try write(pool, pointer.pointee, out);

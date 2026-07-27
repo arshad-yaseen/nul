@@ -8,8 +8,8 @@ const Tokenizer = @This();
 
 src: [:0]const u8,
 index: u32,
-/// The last significant tag emitted, for the automatic-semicolon rule. Comments do
-/// not update it, so a newline after `x // note` still ends the statement.
+/// Last significant tag, for the automatic-semicolon rule. Comments do not update it,
+/// so a newline after `x // note` still ends the statement.
 prev: Token.Tag,
 
 pub fn init(src: [:0]const u8) Tokenizer {
@@ -246,8 +246,8 @@ inline fn pairOrSingle(
     return if_paired;
 }
 
-/// The byte just past a token. Fixed-length tags answer from the table, the four
-/// variable-length tags rescan. Nothing on the parser's hot path calls this.
+/// The byte just past a token. Fixed-length tags answer from the table; the four
+/// variable-length ones rescan.
 pub fn tokenEnd(src: [:0]const u8, tag: Token.Tag, start: u32) u32 {
     const fixed = Token.traits[@intFromEnum(tag)].lexeme_len;
     if (fixed != 0) return start + fixed;
@@ -268,7 +268,7 @@ pub fn estimatedTokenCount(len: usize) usize {
     return len / 4 + len / 16 + 16;
 }
 
-/// Tokenizes a whole buffer into struct-of-arrays form.
+/// Tokenizes a buffer into struct-of-arrays form.
 pub fn tokenizeAll(gpa: Allocator, src: [:0]const u8, tokens: *TokenList) Allocator.Error!void {
     try tokens.ensureTotalCapacity(gpa, estimatedTokenCount(src.len));
 
