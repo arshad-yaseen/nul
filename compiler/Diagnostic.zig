@@ -304,6 +304,9 @@ pub fn render(d: Diagnostic, gpa: Allocator, src: *Source, w: *Io.Writer) Error!
 
         try writeMarkerRow(w, gutter, group);
 
+        // The rightmost label spoke on the marker row. Of the rest, only those with
+        // something to say need a connector, and they are drawn from the right so no
+        // connector crosses another's text.
         var speaking: usize = 0;
         for (group[0 .. group.len - 1]) |label| {
             if (label.text.len == 0) continue;

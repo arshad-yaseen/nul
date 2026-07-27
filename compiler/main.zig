@@ -39,27 +39,27 @@ pub fn main(init: std.process.Init) !u8 {
     var tree = try Ast.parse(gpa, src.bytes);
     defer tree.deinit(gpa);
 
-    try w.writeAll("tokens\n");
-    for (tree.tokens.items(.tag), tree.tokens.items(.start)) |tag, start| {
-        const lc = try src.lineCol(gpa, start);
-        try w.print("{d:>4}:{d:<3} {s}", .{ lc.line, lc.col, @tagName(tag) });
-        const end = Tokenizer.tokenEnd(src.bytes, tag, start);
-        if (tag == .semi and src.bytes[start] != ';') {
-            try w.writeAll(" (inserted)");
-        } else if (end > start) {
-            try w.print(" '{f}'", .{std.zig.fmtString(src.bytes[start..end])});
-        }
-        try w.writeByte('\n');
-    }
+    // try w.writeAll("tokens\n");
+    // for (tree.tokens.items(.tag), tree.tokens.items(.start)) |tag, start| {
+    //     const lc = try src.lineCol(gpa, start);
+    //     try w.print("{d:>4}:{d:<3} {s}", .{ lc.line, lc.col, @tagName(tag) });
+    //     const end = Tokenizer.tokenEnd(src.bytes, tag, start);
+    //     if (tag == .semi and src.bytes[start] != ';') {
+    //         try w.writeAll(" (inserted)");
+    //     } else if (end > start) {
+    //         try w.print(" '{f}'", .{std.zig.fmtString(src.bytes[start..end])});
+    //     }
+    //     try w.writeByte('\n');
+    // }
 
-    try w.writeAll("\nnodes\n");
-    try dumpNode(tree, w, .root, 0);
+    // try w.writeAll("\nnodes\n");
+    // try dumpNode(tree, w, .root, 0);
 
-    if (tree.errors.len > 0) {
-        try w.writeByte('\n');
-        try Diagnostic.renderAll(gpa, tree.errors, tree, &src, w);
-        return 1;
-    }
+    // if (tree.errors.len > 0) {
+    //     try w.writeByte('\n');
+    //     try Diagnostic.renderAll(gpa, tree.errors, tree, &src, w);
+    //     return 1;
+    // }
 
     var pool = try InternPool.init(gpa);
     defer pool.deinit(gpa);
@@ -80,36 +80,69 @@ pub fn main(init: std.process.Init) !u8 {
     defer sema.deinit();
     try sema.resolveDeclarations();
 
-    try w.writeAll("\ndeclarations\n");
-    for (namespace.all()) |decl| {
-        try w.print("  {s} : ", .{tree.tokenSlice(decl.name_token)});
-        // An unsettled import has no type to show, rather than the poison it holds.
-        if (tree.nodeTag(decl.node) == .use_decl and decl.ty == .poisoned) {
-            try w.writeAll("(unresolved import)\n");
-            continue;
-        }
-        try Type.write(&pool, decl.ty, w);
-        if (decl.ty == .type) {
-            try w.writeAll(" = ");
-            try Type.write(&pool, decl.value, w);
-        }
-        try w.writeByte('\n');
-    }
+    // try w.writeAll("\ndeclarations\n");
+    // for (namespace.all()) |decl| {
+    //     try w.print("  {s} : ", .{tree.tokenSlice(decl.name_token)});
+    //     // An unsettled import has no type to show, rather than the poison it holds.
+    //     if (tree.nodeTag(decl.node) == .use_decl and decl.ty == .poisoned) {
+    //         try w.writeAll("(unresolved import)\n");
+    //         continue;
+    //     }
+    //     try Type.write(&pool, decl.ty, w);
+    //     if (decl.ty == .type) {
+    //         try w.writeAll(" = ");
+    //         try Type.write(&pool, decl.value, w);
+    //     }
+    //     try w.writeByte('\n');
+    // }
 
-    try w.writeAll("\nbodies\n");
-    for (namespace.all()) |decl| {
-        if (tree.nodeTag(decl.node) != .fn_decl) continue;
-        try w.print("  {s}\n", .{tree.tokenSlice(decl.name_token)});
-        var body = try Lower.run(&sema, decl);
-        defer body.deinit(gpa);
-        try body.write(&pool, tree, w);
-    }
+    // try w.writeAll("\nbodies\n");
+    // for (namespace.all()) |decl| {
+    //     if (tree.nodeTag(decl.node) != .fn_decl) continue;
+    //     try w.print("  {s}\n", .{tree.tokenSlice(decl.name_token)});
+    //     var body = try Lower.run(&sema, decl);
+    //     defer body.deinit(gpa);
+    //     try dumpBody(body, &pool, tree, w);
+    // }
 
     if (diagnostics.all().len == 0) return 0;
 
-    try w.writeByte('\n');
-    try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
+    // try w.writeByte('\n');
+    // try Diagnostic.renderAll(gpa, diagnostics.all(), tree, &src, w);
     return 1;
+}
+
+fn dumpBody(nir: Nir, pool: *const InternPool, tree: Ast, w: *Io.Writer) Io.Writer.Error!void {
+    for (nir.insts, 0..) |inst, at| {
+        try w.print("    %{d:<3} {s}", .{ at, @tagName(inst.tag) });
+        switch (inst.tag) {
+            .arg => try w.print(" {d}", .{inst.lhs}),
+            .decl, .int, .float, .str, .bool => try w.print(" '{s}'", .{tree.tokenSlice(inst.token)}),
+            .binary, .unary => try w.print(" {s} %{d}", .{ tree.tokenSlice(inst.token), inst.lhs }),
+            .field => try w.print(" %{d}.{d}", .{ inst.lhs, inst.rhs }),
+            .store_field, .arena_copy => try w.print(" %{d} %{d}", .{ inst.lhs, inst.rhs }),
+            .arena_child, .arena_create, .arena_reset, .arena_destroy => {
+                try w.print(" %{d}", .{inst.lhs});
+            },
+            .call => {
+                try w.print(" %{d}(", .{inst.lhs});
+                for (nir.callArgs(inst), 0..) |arg, i| {
+                    if (i > 0) try w.writeAll(", ");
+                    try w.print("%{d}", .{arg});
+                }
+                try w.writeByte(')');
+            },
+            .ret => if (@as(Nir.OptionalIndex, @enumFromInt(inst.lhs)).unwrap()) |v| {
+                try w.print(" %{d}", .{@intFromEnum(v)});
+            },
+            .arena_init, .todo => {},
+        }
+        if (inst.ty != .void) {
+            try w.writeAll(" : ");
+            try Type.write(pool, inst.ty, w);
+        }
+        try w.writeByte('\n');
+    }
 }
 
 fn dumpNode(tree: Ast, w: *Io.Writer, n: Ast.Node.Index, depth: u32) Io.Writer.Error!void {

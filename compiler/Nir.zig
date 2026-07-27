@@ -1,18 +1,14 @@
-//! A function body as a flat list of typed instructions. `Lower` builds it.
+//! Nul Intermediate Representation: a function body as a flat list of typed instructions.
+//! `Lower` builds it.
 //!
 //! Built once per function, since a generic body is checked at its definition rather than
 //! per instantiation. There is no control flow yet, so an instruction's position is its
 //! execution order.
-//!
-//! Types live here; regions do not. The region checker keeps its own table alongside, so
-//! no region is ever part of a type.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Io = std.Io;
 
 const Ast = @import("Ast.zig");
-const InternPool = @import("InternPool.zig");
 const Type = @import("Type.zig");
 
 const Nir = @This();
@@ -88,39 +84,4 @@ pub fn deinit(nir: *Nir, gpa: Allocator) void {
 pub fn callArgs(nir: Nir, inst: Inst) []const u32 {
     const len = nir.extra[inst.rhs];
     return nir.extra[inst.rhs + 1 ..][0..len];
-}
-
-/// One line per instruction, for the dump.
-pub fn write(nir: Nir, pool: *const InternPool, tree: Ast, w: *Io.Writer) Io.Writer.Error!void {
-    for (nir.insts, 0..) |inst, at| {
-        try w.print("    %{d:<3} {s}", .{ at, @tagName(inst.tag) });
-        switch (inst.tag) {
-            .arg => try w.print(" {d}", .{inst.lhs}),
-            .decl => try w.print(" '{s}'", .{tree.tokenSlice(inst.token)}),
-            .int, .float, .str, .bool => try w.print(" '{s}'", .{tree.tokenSlice(inst.token)}),
-            .binary, .unary => try w.print(" {s} %{d}", .{ tree.tokenSlice(inst.token), inst.lhs }),
-            .field => try w.print(" %{d}.{d}", .{ inst.lhs, inst.rhs }),
-            .store_field, .arena_copy => try w.print(" %{d} %{d}", .{ inst.lhs, inst.rhs }),
-            .arena_child, .arena_create, .arena_reset, .arena_destroy => {
-                try w.print(" %{d}", .{inst.lhs});
-            },
-            .call => {
-                try w.print(" %{d}(", .{inst.lhs});
-                for (nir.callArgs(inst), 0..) |arg, i| {
-                    if (i > 0) try w.writeAll(", ");
-                    try w.print("%{d}", .{arg});
-                }
-                try w.writeByte(')');
-            },
-            .ret => if (@as(OptionalIndex, @enumFromInt(inst.lhs)).unwrap()) |v| {
-                try w.print(" %{d}", .{@intFromEnum(v)});
-            },
-            .arena_init, .todo => {},
-        }
-        if (inst.ty != .void) {
-            try w.writeAll(" : ");
-            try Type.write(pool, inst.ty, w);
-        }
-        try w.writeByte('\n');
-    }
 }
