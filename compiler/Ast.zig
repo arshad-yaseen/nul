@@ -224,8 +224,9 @@ pub fn full(tree: Ast, n: Node.Index) Full {
     const data = tree.nodes.items(.data)[@intFromEnum(n)];
     return switch (tree.nodeTag(n)) {
         .root => .{ .root = tree.list(data.extra_range) },
-        .block => .{ .block = tree.list(data.extra_range) },
-        .struct_type => .{ .struct_type = tree.list(data.extra_range) },
+        // Both of these park their `}` at the end of the range, see `lastToken`.
+        .block => .{ .block = tree.listExceptLast(data.extra_range) },
+        .struct_type => .{ .struct_type = tree.listExceptLast(data.extra_range) },
         .use_decl => .{ .use_decl = data.node },
         .grouped => .{ .grouped = data.node },
         .pointer_type => .{ .pointer_type = .{
@@ -310,6 +311,106 @@ pub fn full(tree: Ast, n: Node.Index) Full {
 
 fn list(tree: Ast, range: Node.SubRange) []const Node.Index {
     return @ptrCast(tree.extra[@intFromEnum(range.start)..@intFromEnum(range.end)]);
+}
+
+/// For the ranges whose last entry is a trailing token rather than a child.
+fn listExceptLast(tree: Ast, range: Node.SubRange) []const Node.Index {
+    return @ptrCast(tree.extra[@intFromEnum(range.start) .. @intFromEnum(range.end) - 1]);
+}
+
+fn trailingToken(tree: Ast, range: Node.SubRange) TokenIndex {
+    return tree.extra[@intFromEnum(range.end) - 1];
+}
+
+// Spans
+//
+// A diagnostic points at source, so every node has to be able to say where it
+// starts and stops. Both walk to a leaf rather than storing anything, which keeps
+// `Node` at its size. Callers are `Sema` and later passes, never the parser.
+
+pub const Span = struct { start: u32, end: u32 };
+
+pub fn nodeSpan(tree: Ast, n: Node.Index) Span {
+    return .{
+        .start = tree.tokenStart(tree.firstToken(n)),
+        .end = tree.tokenSpan(tree.lastToken(n)).end,
+    };
+}
+
+pub fn tokenSpan(tree: Ast, i: TokenIndex) Span {
+    const start = tree.tokenStart(i);
+    return .{ .start = start, .end = Tokenizer.tokenEnd(tree.source, tree.tokenTag(i), start) };
+}
+
+pub fn firstToken(tree: Ast, n: Node.Index) TokenIndex {
+    const main = tree.nodeMainToken(n);
+    return switch (tree.full(n)) {
+        .root => 0,
+        .fn_decl => |f| if (f.is_pub) main - 1 else main,
+        .assign => |a| tree.firstToken(a.lhs),
+        .binary => |b| tree.firstToken(b.lhs),
+        .call => |c| tree.firstToken(c.callee),
+        .field_access => |f| tree.firstToken(f.lhs),
+
+        .use_decl,
+        .block,
+        .struct_type,
+        .grouped,
+        .pointer_type,
+        .return_stmt,
+        .var_decl,
+        .param,
+        .field,
+        .unary,
+        .ident,
+        .int_literal,
+        .str_literal,
+        .bool_literal,
+        .err,
+        => main,
+    };
+}
+
+pub fn lastToken(tree: Ast, n: Node.Index) TokenIndex {
+    const main = tree.nodeMainToken(n);
+    const data = tree.nodes.items(.data)[@intFromEnum(n)];
+    switch (tree.nodeTag(n)) {
+        .root => {
+            const children = tree.list(data.extra_range);
+            return if (children.len == 0) 0 else tree.lastToken(children[children.len - 1]);
+        },
+        // These two recorded their `}`, because a trailing `;` sits between the last
+        // child and the brace and there is no way to walk back over it.
+        .block, .struct_type => return tree.trailingToken(data.extra_range),
+        else => {},
+    }
+    return switch (tree.full(n)) {
+        .use_decl => |child| tree.lastToken(child),
+        .pointer_type => |p| tree.lastToken(p.child),
+        .fn_decl => |f| tree.lastToken(f.body),
+        .var_decl => |v| tree.lastToken(v.init_expr),
+        .param, .field => |b| tree.lastToken(b.type_expr),
+        .assign => |a| tree.lastToken(a.rhs),
+        .binary => |b| tree.lastToken(b.rhs),
+        .unary => |u| tree.lastToken(u.operand),
+        .field_access => |f| f.name_token,
+        .return_stmt => |o| if (o.unwrap()) |x| tree.lastToken(x) else main,
+        .bool_literal => |b| b.token,
+        .ident, .int_literal, .str_literal => |t| t,
+        .err => main,
+
+        // The closing bracket follows the last thing inside it, give or take the
+        // trailing comma an argument list is allowed. That holds because `Sema` only
+        // ever runs on a tree that parsed without errors.
+        .grouped => |child| tree.lastToken(child) + 1,
+        .call => |c| blk: {
+            const inner = if (c.args.len == 0) c.callee else c.args[c.args.len - 1];
+            const after = tree.lastToken(inner) + 1;
+            break :blk if (tree.tokenTag(after) == .comma) after + 1 else after;
+        },
+
+        .root, .block, .struct_type => unreachable, // handled above
+    };
 }
 
 // Access

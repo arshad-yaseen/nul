@@ -261,7 +261,11 @@ fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
         }
         p.ensureProgress(before);
     }
+    const rbrace = p.tok_i;
     try p.expectToken(.r_brace);
+
+    // `extra` is the fields, then the `}`, the same way a block records its own.
+    try p.scratch.append(p.gpa, @enumFromInt(rbrace));
 
     return p.addNode(.{
         .tag = .struct_type,
@@ -313,7 +317,12 @@ fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
         }
         p.ensureProgress(before);
     }
+    const rbrace = p.tok_i;
     try p.expectToken(.r_brace);
+
+    // `extra` is the statements, then the `}`. Recording it is what lets a block
+    // report an exact source span, which every diagnostic over one depends on.
+    try p.scratch.append(p.gpa, @enumFromInt(rbrace));
 
     const span = try p.listToSpan(p.scratch.items[top..]);
     return p.addNode(.{ .tag = .block, .main_token = lbrace, .data = .{ .extra_range = span } });
