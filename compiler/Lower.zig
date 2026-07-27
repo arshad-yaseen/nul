@@ -173,7 +173,7 @@ fn localDecl(lower: *Lower, binding: Ast.View.VarDecl) Allocator.Error!void {
     var ty = lower.typeOf(inst);
 
     if (binding.type_expr.unwrap()) |annotation| {
-        const declared = try lower.sema.evalTypeExpr(annotation, binding.name_token);
+        const declared = try lower.sema.evalTypeExpr(annotation);
         if (!lower.fits(ty, declared)) inst = try lower.fail(.{
             .tag = .type_mismatch,
             .token = lower.mainToken(binding.init_expr),
@@ -489,7 +489,8 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
 
     return lower.add(.{
         .tag = .call,
-        .token = token,
+        .token = span[0],
+        .last = span[1],
         .ty = signature.return_type,
         .lhs = callee,
         .rhs = start,
@@ -559,7 +560,7 @@ fn arenaMethod(
             .lhs = receiver,
         }),
         .create => blk: {
-            const of = try lower.sema.evalTypeExpr(args[0], name_token);
+            const of = try lower.sema.evalTypeExpr(args[0]);
             const ty = if (of == .poisoned) .poisoned else try lower.pool.intern(
                 lower.gpa,
                 .{ .pointer = .{ .pointee = of, .is_mutable = true } },

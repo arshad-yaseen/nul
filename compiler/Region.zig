@@ -574,7 +574,6 @@ fn print(region: *Region, comptime fmt: []const u8, args: anytype) Allocator.Err
 }
 
 fn operands(region: *const Region, inst: Nir.Inst, buf: *[2]u32) []const u32 {
-    _ = region;
     return switch (inst.tag) {
         .store_field, .binary => blk: {
             buf[0] = inst.lhs;
@@ -591,6 +590,8 @@ fn operands(region: *const Region, inst: Nir.Inst, buf: *[2]u32) []const u32 {
             buf[0] = @intFromEnum(value);
             break :blk buf[0..1];
         },
+        // Already contiguous in `extra`, so no buffer is needed.
+        .call => region.nir.callArgs(inst),
         else => buf[0..0],
     };
 }

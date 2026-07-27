@@ -61,9 +61,7 @@ pub const Entry = struct {
             .depends_on_itself => try w.print("'{s}' depends on itself", .{name}),
             .not_a_type => try w.print("'{s}' is not a type", .{name}),
             .type_mismatch => try w.writeAll("the declared type does not match the value"),
-            .unsupported_value => try w.writeAll(
-                "evaluating this at compile time is not implemented yet",
-            ),
+            .unsupported_value => try w.writeAll("this expression is not supported yet"),
             .invalid_digit => try w.print("'{s}' is not a valid number", .{name}),
             .literal_too_large => try w.print("'{s}' does not fit any integer type", .{name}),
             .multiple_arenas => try w.writeAll(

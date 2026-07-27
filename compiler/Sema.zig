@@ -85,7 +85,7 @@ fn bindInitializer(
         .str_literal => decl.ty = .str,
         .bool_literal => decl.ty = .bool,
         .struct_type => |fields| decl.setType(try sema.evalStructType(fields, decl)),
-        else => decl.setType(try sema.evalTypeExpr(init_expr, decl.name_token)),
+        else => decl.setType(try sema.evalTypeExpr(init_expr)),
     }
 }
 
@@ -96,7 +96,7 @@ fn applyAnnotation(
     annotation: Ast.Node.Index,
     binding_init: Ast.Node.Index,
 ) Allocator.Error!void {
-    const declared = try sema.evalTypeExpr(annotation, decl.name_token);
+    const declared = try sema.evalTypeExpr(annotation);
     // `coerce` answers for the type, not the value: whether `300` fits a `u8` needs the
     // literal. Poison on either side already reported.
     if (declared != .poisoned and decl.ty != .poisoned and
@@ -130,16 +130,12 @@ fn resolveImport(sema: *Sema, decl: *Decl) void {
 
 /// `blame` is where an unevaluable expression is reported, since its own token is often
 /// punctuation, for a call it is the `(`.
-pub fn evalTypeExpr(
-    sema: *Sema,
-    node: Ast.Node.Index,
-    blame: Token,
-) Allocator.Error!Type.Index {
+pub fn evalTypeExpr(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Type.Index {
     switch (sema.tree.viewOf(node)) {
         .ident => |token| return sema.evalNamedType(token),
         .pointer_type => |pointer| {
             // Identity is enough, which is what lets two structs refer to each other.
-            const pointee = try sema.evalTypeExpr(pointer.child, blame);
+            const pointee = try sema.evalTypeExpr(pointer.child);
             if (pointee == .poisoned) return .poisoned;
             return sema.pool.intern(sema.gpa, .{ .pointer = .{
                 .pointee = pointee,
@@ -147,10 +143,26 @@ pub fn evalTypeExpr(
             } });
         },
         .struct_type => |fields| return sema.evalStructType(fields, null),
-        .grouped => |inner| return sema.evalTypeExpr(inner, blame),
+        .grouped => |inner| return sema.evalTypeExpr(inner),
         .err => return .poisoned,
-        else => return sema.fail(.unsupported_value, blame),
+        else => return sema.failAt(node, .{}),
     }
+}
+
+/// Blames the whole type expression, which is what the reader wrote.
+fn failAt(
+    sema: *Sema,
+    node: Ast.Node.Index,
+    extra: struct { message: []const u8 = "", text: []const u8 = "" },
+) Allocator.Error!Type.Index {
+    try sema.diagnostics.add(.{
+        .tag = .unsupported_value,
+        .token = sema.tree.firstToken(node),
+        .last = sema.tree.lastToken(node),
+        .message = extra.message,
+        .text = extra.text,
+    });
+    return .poisoned;
 }
 
 /// The edge that makes resolution order independent.
@@ -245,7 +257,7 @@ fn resolveStructFields(
     for (0..fields.len) |at| {
         const field = (try sema.typedNameIn(fields, at)) orelse continue;
 
-        var field_ty = try sema.evalTypeExpr(field.type_expr, field.name_token);
+        var field_ty = try sema.evalTypeExpr(field.type_expr);
         // A field held by value needs a size where a pointer to one does not.
         if (!sema.pool.isDefined(field_ty))
             field_ty = try sema.fail(.depends_on_itself, blame orelse field.name_token);
@@ -270,7 +282,7 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
 
     for (0..function.params.len) |at| {
         const param = (try sema.typedNameIn(function.params, at)) orelse continue;
-        const param_ty = try sema.evalTypeExpr(param.type_expr, param.name_token);
+        const param_ty = try sema.evalTypeExpr(param.type_expr);
         if (param_ty == .Arena and arena_count < arenas.len) {
             arenas[arena_count] = param;
             arena_count += 1;
@@ -281,7 +293,7 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
     if (arena_count == arenas.len) try sema.tooManyArenas(function, arenas[0], arenas[1]);
 
     const return_type = if (function.return_type.unwrap()) |node|
-        try sema.evalTypeExpr(node, function.name_token)
+        try sema.evalTypeExpr(node)
     else
         .void;
 
