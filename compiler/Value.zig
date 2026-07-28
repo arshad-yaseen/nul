@@ -4,6 +4,7 @@
 const std = @import("std");
 
 const Ast = @import("Ast.zig");
+const Namespace = @import("Namespace.zig");
 const Type = @import("Type.zig");
 
 const Value = @This();
@@ -18,6 +19,8 @@ pub const Known = union(enum) {
     float: f64,
     bool: bool,
     type: Type.Index,
+    /// A named function. Identity, so a call's callee survives any binding.
+    func: Namespace.Index,
 };
 
 /// What analysis yields once it has reported why it has no answer.

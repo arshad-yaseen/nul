@@ -27,6 +27,9 @@ pub const Decl = struct {
     pub const State = enum { unresolved, in_progress, resolved };
 };
 
+/// A declaration's identity, stable for the life of the compilation.
+pub const Index = enum(u32) { _ };
+
 pub const empty: Namespace = .{ .decls = .empty, .by_name = .empty };
 
 /// Binds every name the container declares, keeping the first of any that collide.
@@ -78,8 +81,8 @@ pub fn collect(
 
 fn declaredName(tree: *const Ast, node: Ast.Node.Index) ?Ast.TokenIndex {
     return switch (tree.viewOf(node)) {
-        .var_decl => |decl| decl.name_token,
-        .fn_decl => |decl| decl.name_token,
+        .var_decl => |it| it.name_token,
+        .fn_decl => |it| it.name_token,
         // An import binds the last segment, so `use std.mem.Arena` is `Arena`.
         .use_decl => |path| switch (tree.viewOf(path)) {
             .field_access => |access| access.name_token,
@@ -96,9 +99,13 @@ pub fn deinit(ns: *Namespace, gpa: Allocator) void {
     ns.* = undefined;
 }
 
-pub fn find(ns: *Namespace, name: []const u8) ?*Decl {
+pub fn find(ns: *const Namespace, name: []const u8) ?Index {
     const at = ns.by_name.get(name) orelse return null;
-    return &ns.decls.items[at];
+    return @enumFromInt(at);
+}
+
+pub fn decl(ns: *Namespace, index: Index) *Decl {
+    return &ns.decls.items[@intFromEnum(index)];
 }
 
 pub fn all(ns: *Namespace) []Decl {

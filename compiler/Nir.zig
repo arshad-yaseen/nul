@@ -25,7 +25,7 @@ blocks: []const Block,
 extra: []const Ref,
 
 pub const Function = struct {
-    decl: Namespace.Decl,
+    decl: Namespace.Index,
     body: Nir,
 };
 

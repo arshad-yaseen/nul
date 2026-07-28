@@ -82,13 +82,13 @@ fn analyze(
         functions.deinit(gpa);
     }
 
-    for (namespace.all()) |decl| {
+    for (namespace.all(), 0..) |decl, at| {
         if (tree.nodeTag(decl.node) != .fn_decl) continue;
         const body = try Lower.run(&sema, decl);
-        try functions.append(gpa, .{ .decl = decl, .body = body });
+        try functions.append(gpa, .{ .decl = @enumFromInt(at), .body = body });
     }
 
-    if (out) |w| try dump_nir.write(gpa, &types, tree, functions.items, w);
+    if (out) |w| try dump_nir.write(gpa, &types, tree, &namespace, functions.items, w);
 }
 
 pub fn deinit(c: *Compilation, gpa: Allocator) void {

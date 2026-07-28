@@ -504,10 +504,10 @@ fn name(lower: *Lower, token: Token) Allocator.Error!Ref {
         .token = token,
     });
 
-    const decl = lower.sema.namespace.find(text) orelse
+    const index = lower.sema.namespace.find(text) orelse
         return lower.fail(undefinedName(token));
-    try lower.sema.resolveDecl(decl);
-    return lower.add(.{ .data = .decl, .val = decl.value, .token = token });
+    try lower.sema.resolveDecl(index);
+    return lower.add(.{ .data = .decl, .val = lower.sema.namespace.decl(index).value, .token = token });
 }
 
 fn binary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Binary) Allocator.Error!Ref {
@@ -718,8 +718,8 @@ fn declaredMark(
     const text = lower.tree.tokenSlice(token);
     const at = if (lower.find(text)) |local|
         local.token
-    else if (lower.sema.namespace.find(text)) |decl|
-        decl.name_token
+    else if (lower.sema.namespace.find(text)) |index|
+        lower.sema.namespace.decl(index).name_token
     else
         return &.{};
 
@@ -733,8 +733,8 @@ fn paramSite(lower: *Lower, callee_node: Ast.Node.Index, at: usize) ?Token {
         .ident => |t| t,
         else => return null,
     };
-    const decl = lower.sema.namespace.find(lower.tree.tokenSlice(token)) orelse return null;
-    const function = switch (lower.tree.viewOf(decl.node)) {
+    const index = lower.sema.namespace.find(lower.tree.tokenSlice(token)) orelse return null;
+    const function = switch (lower.tree.viewOf(lower.sema.namespace.decl(index).node)) {
         .fn_decl => |f| f,
         else => return null,
     };

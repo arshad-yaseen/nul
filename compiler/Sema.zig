@@ -34,12 +34,13 @@ pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
 // Declarations
 
 pub fn resolveDeclarations(sema: *Sema) Allocator.Error!void {
-    for (sema.namespace.all()) |*decl| try sema.resolveDecl(decl);
+    for (0..sema.namespace.all().len) |at| try sema.resolveDecl(@enumFromInt(at));
     sema.diagnostics.sortBySource();
 }
 
 /// Reentrant, so `in_progress` means the declaration needs itself.
-pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
+pub fn resolveDecl(sema: *Sema, index: Namespace.Index) Allocator.Error!void {
+    const decl = sema.namespace.decl(index);
     switch (decl.state) {
         .resolved => return,
         .in_progress => {
@@ -62,7 +63,10 @@ pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
     decl.state = .in_progress;
     switch (sema.tree.viewOf(decl.node)) {
         .var_decl => |binding| try sema.resolveBinding(decl, binding),
-        .fn_decl => |function| decl.value = .{ .ty = try sema.evalFuncType(function) },
+        .fn_decl => |function| decl.value = .{
+            .ty = try sema.evalFuncType(function),
+            .known = .{ .func = index },
+        },
         .use_decl => sema.resolveImport(decl),
         else => unreachable, // `Namespace.collect` binds only these three
     }
@@ -164,7 +168,7 @@ fn evalName(sema: *Sema, token: Token) Allocator.Error!Value {
     const name = sema.tree.tokenSlice(token);
     if (Type.builtinNamed(name)) |builtin| return .ofType(builtin); // nothing can rebind `i64`
 
-    const decl = sema.namespace.find(name) orelse {
+    const index = sema.namespace.find(name) orelse {
         try sema.diagnostics.add(.{
             .tag = .undefined_name,
             .token = token,
@@ -172,8 +176,8 @@ fn evalName(sema: *Sema, token: Token) Allocator.Error!Value {
         });
         return .poisoned;
     };
-    try sema.resolveDecl(decl);
-    return decl.value;
+    try sema.resolveDecl(index);
+    return sema.namespace.decl(index).value;
 }
 
 pub fn evalTypeExpr(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Type.Index {
@@ -199,9 +203,9 @@ fn declaredMark(sema: *Sema, node: Ast.Node.Index) Allocator.Error![]const Diagn
         else => return &.{},
     };
     const text = sema.tree.tokenSlice(token);
-    const decl = sema.namespace.find(text) orelse return &.{};
+    const index = sema.namespace.find(text) orelse return &.{};
     return sema.diagnostics.mark(
-        decl.name_token,
+        sema.namespace.decl(index).name_token,
         try sema.diagnostics.print("'{s}' is a value, declared here", .{text}),
     );
 }

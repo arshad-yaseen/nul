@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const Ast = @import("Ast.zig");
+const Namespace = @import("Namespace.zig");
 const Nir = @import("Nir.zig");
 const Type = @import("Type.zig");
 
@@ -15,6 +16,7 @@ pub fn write(
     gpa: Allocator,
     types: *const Type,
     tree: *const Ast,
+    ns: *Namespace,
     functions: []const Nir.Function,
     w: *Io.Writer,
 ) Error!void {
@@ -24,7 +26,7 @@ pub fn write(
 
     for (functions, 0..) |f, at| {
         if (at > 0) try w.writeByte('\n');
-        try function(arena, types, tree, f, w);
+        try function(arena, types, tree, ns, f, w);
     }
 }
 
@@ -32,12 +34,14 @@ fn function(
     arena: Allocator,
     types: *const Type,
     tree: *const Ast,
+    ns: *Namespace,
     f: Nir.Function,
     w: *Io.Writer,
 ) Error!void {
+    const decl = ns.decl(f.decl);
     try w.print("fn {s}: {s}\n", .{
-        tree.tokenSlice(f.decl.name_token),
-        try types.spell(f.decl.value.ty, arena),
+        tree.tokenSlice(decl.name_token),
+        try types.spell(decl.value.ty, arena),
     });
 
     const nir = f.body;
@@ -45,7 +49,7 @@ fn function(
     for (nir.blocks, 0..) |blk, b| {
         try w.print("b{d}:{s}\n", .{ b, if (reach[b]) "" else " unreachable" });
         for (blk.first..blk.end()) |i| {
-            try instruction(arena, types, tree, nir, @intCast(i), w);
+            try instruction(arena, types, tree, ns, nir, @intCast(i), w);
         }
         try terminator(blk.term, w);
     }
@@ -55,6 +59,7 @@ fn instruction(
     arena: Allocator,
     types: *const Type,
     tree: *const Ast,
+    ns: *Namespace,
     nir: Nir,
     at: u32,
     w: *Io.Writer,
@@ -84,7 +89,12 @@ fn instruction(
             it.place.i(), it.value.i(),
         }),
         .call => |it| {
-            try w.print("call %{d}(", .{it.callee.i()});
+            switch (nir.get(it.callee).val.known) {
+                .func => |index| try w.print("call {s}(", .{
+                    tree.tokenSlice(ns.decl(index).name_token),
+                }),
+                else => try w.print("call %{d}(", .{it.callee.i()}),
+            }
             for (nir.refs(it.args), 0..) |ref, position| {
                 if (position > 0) try w.writeAll(", ");
                 try w.print("%{d}", .{ref.i()});
@@ -108,6 +118,7 @@ fn instruction(
         .float => |x| try w.print(" = {d}", .{x}),
         .bool => |x| try w.print(" = {}", .{x}),
         .type => |ty| try w.print(" = {s}", .{try types.spell(ty, arena)}),
+        .func => |index| try w.print(" = {s}", .{tree.tokenSlice(ns.decl(index).name_token)}),
     }
     if (nir.nameOf(@enumFromInt(at))) |token| {
         try w.print("  ; {s}", .{tree.tokenSlice(token)});
