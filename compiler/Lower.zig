@@ -1,6 +1,4 @@
-//! Lowers one function body to `Nir`, typing and folding every value as it goes.
-//! Signatures are already resolved, so nothing here reads another body. A local name is
-//! the instruction that produced it, which is how a comptime value flows through a name.
+//! Lowers one function body to `Nir`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
