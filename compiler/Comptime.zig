@@ -1,5 +1,5 @@
 //! The compile-time value system. A `Value` is what the compiler knows about a value
-//! before the program runs; it is parsed here, folded here, and carried on instructions
+//! before the program runs, it is parsed here, folded here, and carried on instructions
 //! and declarations so that knowledge flows wherever the value does.
 
 const std = @import("std");
