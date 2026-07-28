@@ -1,0 +1,5 @@
+/// A known value coerces to any integer that holds it, whatever type it started as.
+fn fits() u8 {
+    let small: i64 = 200
+    return small
+}

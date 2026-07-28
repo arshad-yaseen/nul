@@ -7,6 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
+const Comptime = @import("Comptime.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const InternPool = @import("InternPool.zig");
 const Type = @import("Type.zig");
@@ -24,15 +25,20 @@ pub const Decl = struct {
     state: State = .unresolved,
     /// `let Node = struct {...}` has type `type` and value the struct type itself.
     ty: Type.Index = .poisoned,
-    value: InternPool.Index = .poisoned,
+    val: Comptime.Value = .unknown,
 
     /// `in_progress` turns a self-dependency into a report instead of a hang.
     pub const State = enum { unresolved, in_progress, resolved };
 
     /// Poison stays poison, so a failed declaration is never mistaken for a type.
     pub fn setType(decl: *Decl, ty: Type.Index) void {
-        decl.ty = if (ty == .poisoned) .poisoned else .type;
-        decl.value = ty;
+        if (ty == .poisoned) {
+            decl.ty = .poisoned;
+            decl.val = .unknown;
+        } else {
+            decl.ty = .type;
+            decl.val = .{ .type = ty };
+        }
     }
 };
 
@@ -88,7 +94,7 @@ pub fn deinit(ns: *Namespace, gpa: Allocator) void {
     ns.* = undefined;
 }
 
-/// Stays valid: the table stops growing before anything resolves.
+/// Stays valid, the table stops growing before anything resolves.
 pub fn find(ns: *Namespace, name: []const u8) ?*Decl {
     const at = ns.by_name.get(name) orelse return null;
     return &ns.decls.items[at];

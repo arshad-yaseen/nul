@@ -1,0 +1,14 @@
+use std.mem.Arena
+
+let limit = 90 + 10
+
+/// Comptime values cross declarations and names, folding as they go, and are
+/// judged only where they meet a runtime type.
+fn main(arena: Arena) i64 {
+    let base = limit * 2
+    let mixed = 1 + 2.5
+    var count: i64 = base
+    count = count + 55
+    let ok = mixed > 3.0 and true
+    return count
+}

@@ -1,7 +1,9 @@
-error: 'temp' does not live long enough
+error[E0017]: 'temp' does not live long enough
 
    ┌─ test/fail/01_store_scratch_in_arena.nul:14:16
    │
+ 8 │ fn leak(arena: Arena) *Box {
+   │         ─────  'arena' comes from the caller
  9 │     var scratch = arena.child()
    │         ───────  'scratch' is created here, as a child of 'arena'
    ·
@@ -11,14 +13,14 @@ error: 'temp' does not live long enough
    │         ────  'temp' lives in 'scratch'
    ·
 14 │     box.item = temp
-   │     ────────   ^^^^  this points into 'scratch'
+   │     ────────   ^^^^  this lives in 'scratch'
    │     │
-   │     this memory lives in 'arena'
-   ·
-16 │     return box
-   │            ───  'box' escapes here, so it outlives 'scratch'
+   │     └─ this lives in 'arena'
    │
    = note: 'scratch' is a child of 'arena', and a child dies before its parent.
-           'box.item' would still point into it after line 17.
-   = help: copy the value into the arena that outlives it
-             box.item = arena.copy(temp)
+   │
+   = help: 'temp' has to outlive 'box'. One way, allocating it from 'arena':
+   │
+12 │ -     var temp = scratch.create(i64)
+12 │ +     var temp = arena.create(i64)
+   │

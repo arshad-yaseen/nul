@@ -49,23 +49,31 @@ const Emit = struct {
     /// point at each other.
     fn structs(e: Emit) Io.Writer.Error!void {
         for (e.namespace.all()) |decl| {
-            if (decl.ty != .type or e.pool.keyOf(decl.value) != .struct_type) continue;
-            const name = e.pool.stringBytes(e.pool.structName(decl.value));
+            const ty = e.structOf(decl) orelse continue;
+            const name = e.pool.stringBytes(e.pool.structName(ty));
             try e.w.print("typedef struct {s} {s};\n", .{ name, name });
         }
         for (e.namespace.all()) |decl| {
-            if (decl.ty != .type or e.pool.keyOf(decl.value) != .struct_type) continue;
-            if (!e.pool.isDefined(decl.value)) continue;
+            const ty = e.structOf(decl) orelse continue;
+            if (!e.pool.isDefined(ty)) continue;
 
-            try e.w.print("\nstruct {s} {{\n", .{e.pool.stringBytes(e.pool.structName(decl.value))});
-            const names = e.pool.structFieldNames(decl.value);
-            for (names, e.pool.structFieldTypes(decl.value)) |field, ty| {
+            try e.w.print("\nstruct {s} {{\n", .{e.pool.stringBytes(e.pool.structName(ty))});
+            const names = e.pool.structFieldNames(ty);
+            for (names, e.pool.structFieldTypes(ty)) |field, field_ty| {
                 try e.w.writeAll("    ");
-                try e.writeType(ty);
+                try e.writeType(field_ty);
                 try e.w.print(" {s};\n", .{e.pool.stringBytes(field)});
             }
             try e.w.writeAll("};\n");
         }
+    }
+
+    fn structOf(e: Emit, decl: Namespace.Decl) ?Type.Index {
+        const ty = switch (decl.val) {
+            .type => |ty| ty,
+            else => return null,
+        };
+        return if (e.pool.keyOf(ty) == .struct_type) ty else null;
     }
 
     fn signature(e: Emit, b: Nir.Function) Io.Writer.Error!void {
@@ -131,21 +139,27 @@ const Emit = struct {
     // Instructions
 
     fn instruction(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
+        // A known value never materializes: `ref` spells it at each use instead.
+        if (inst.val != .unknown) return;
         switch (inst.tag) {
             // Parameters are named by the signature, and a declaration is spelled where it is
             // used. Neither needs a local of its own.
-            .arg, .decl => return,
+            .arg, .decl, .constant => return,
             .ret => {
                 const value = (@as(Nir.OptionalIndex, @enumFromInt(inst.lhs))).unwrap() orelse {
                     return e.w.writeAll("    return;\n");
                 };
-                return e.w.print("    return t{d};\n", .{@intFromEnum(value)});
+                try e.w.writeAll("    return ");
+                try e.ref(nir, @intFromEnum(value));
+                return e.w.writeAll(";\n");
             },
             // A store is the one instruction that names a place rather than making a value.
             .store_field => {
                 try e.w.writeAll("    ");
                 try e.place(nir, inst.lhs);
-                return e.w.print(" = t{d};\n", .{inst.rhs});
+                try e.w.writeAll(" = ");
+                try e.ref(nir, inst.rhs);
+                return e.w.writeAll(";\n");
             },
             // No value, so nothing to bind.
             .arena_reset => return e.w.print("    nul_arena_reset(t{d});\n", .{inst.lhs}),
@@ -168,18 +182,24 @@ const Emit = struct {
     fn expression(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
         const text = e.tree.tokenSlice(inst.token);
         switch (inst.tag) {
-            .int, .float, .bool => try e.w.writeAll(text),
             // The token still has its quotes, and the length is what is inside them.
             .str => try e.w.print("(nul_str){{ {s}, {d} }}", .{ text, text.len - 2 }),
-            .decl => try e.w.writeAll(symbol(text)),
-            .binary => try e.w.print("t{d} {s} t{d}", .{ inst.lhs, cOperator(text), inst.rhs }),
-            .unary => try e.w.print("{s}t{d}", .{ cOperator(text), inst.lhs }),
+            .binary => {
+                try e.ref(nir, inst.lhs);
+                try e.w.print(" {s} ", .{cOperator(text)});
+                try e.ref(nir, inst.rhs);
+            },
+            .unary => {
+                try e.w.writeAll(cOperator(text));
+                try e.ref(nir, inst.lhs);
+            },
+            .coerce => try e.ref(nir, inst.lhs),
             .field => try e.place(nir, at),
             .call => {
                 try e.w.print("{s}(", .{symbol(e.tree.tokenSlice(nir.insts[inst.lhs].token))});
                 for (nir.callArgs(inst), 0..) |arg, i| {
                     if (i > 0) try e.w.writeAll(", ");
-                    try e.w.print("t{d}", .{arg});
+                    try e.ref(nir, arg);
                 }
                 try e.w.writeByte(')');
             },
@@ -194,10 +214,23 @@ const Emit = struct {
             .arena_copy => if (inst.ty == .str) {
                 try e.w.print("nul_arena_copy_str(t{d}, t{d})", .{ inst.lhs, inst.rhs });
             } else {
-                try e.w.print("t{d}", .{inst.rhs});
+                try e.ref(nir, inst.rhs);
             },
-            .arg, .ret, .store_field, .arena_reset, .arena_destroy, .arena_end => unreachable,
+            .arg, .decl, .constant => unreachable, // never bound to a local
+            .ret, .store_field, .arena_reset, .arena_destroy, .arena_end => unreachable,
             .todo => try e.w.writeAll("0 /* not lowered */"),
+        }
+    }
+
+    /// How an operand is spelled: its value when the compiler knows it, its local when
+    /// only the program does.
+    fn ref(e: Emit, nir: Nir, at: u32) Io.Writer.Error!void {
+        switch (nir.insts[at].val) {
+            .unknown => try e.w.print("t{d}", .{at}),
+            .int => |x| try e.w.print("{d}", .{x}),
+            .float => |x| try e.w.print("{d}", .{x}),
+            .bool => |x| try e.w.writeAll(if (x) "true" else "false"),
+            .type => try e.w.writeAll("0"), // a type has no runtime spelling
         }
     }
 

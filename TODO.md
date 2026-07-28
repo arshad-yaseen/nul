@@ -31,11 +31,12 @@ everything below them is easier to design once they exist.
 - [ ] Generics with constraints, checked once at the definition (`spec.md`)
 - [ ] Decide and write down: nested functions (recommend no), closures (need a decision
       before anything depends on them)
-- [ ] `usize` and `isize` are not range checked, because `intInfo` has no width for
-      them. Giving them one makes `usize` and `u64` the same type, which is a decision
-      about the language rather than a fix, and it wants a target concept first
-- [ ] `10 / 0` folds to nothing and reaches the backend as a runtime division. Constant
-      division by zero should be reported where it is written
+- [ ] `usize` and `isize` have no width, so only what every width shares is checked: a
+      known negative value cannot enter either unsigned one. Giving them a width makes
+      `usize` and `u64` the same type, which is a decision about the language rather
+      than a fix, and it wants a target concept first
+- [x] Constant division by zero is reported where it is written (`E0021`), and comptime
+      folds that leave `i128` report rather than wrap (`E0022`)
 - [ ] Does `create` zero its memory? The C backend hands back whatever `malloc` gave, so
       an unset field is garbage today. Decide the semantics, then enforce them
 
@@ -75,14 +76,16 @@ everything below them is easier to design once they exist.
 
 ## Tooling
 
+- [x] File tests run in `zig build test`: `test/pass` must check clean, `test/fail` must
+      match its `.expected` snapshot, and `zig build test-update` rewrites the snapshots
 - [ ] `nul dump <file>` for token, AST and NIR inspection, dropped when `main.zig` went
 - [ ] `nul build` could invoke the C compiler rather than printing a path
 
 ## Documentation
 
 - [ ] `README.md`'s example uses `!*Node` and does not compile
-- [ ] `spec.md` is one line. Everything the language has settled lives in commit messages
-      and in this file instead
+- [ ] `spec.md` covers signature sufficiency and comptime; everything else the language
+      has settled still lives in commit messages and in this file instead
 - [ ] Write down the direction: phase-structured programs, Go-shaped surface, systems
       semantics. It is the reason to choose Nul and it is stated nowhere
 

@@ -1,11 +1,11 @@
-error: 'payload' does not live long enough
+error[E0017]: 'payload' does not live long enough
 
    ┌─ test/fail/07_sibling_arenas.nul:20:15
    │
 14 │     var first = arena.child()
-   │         ─────  'first' is a child of 'arena'
+   │         ─────  'first' is created here, as a child of 'arena'
 15 │     var second = arena.child()
-   │         ──────  'second' is a child of 'arena' too
+   │         ──────  'second' is created here, as a child of 'arena'
    ·
 17 │     var link = first.create(Link)
    │         ────  'link' lives in 'first'
@@ -13,11 +13,15 @@ error: 'payload' does not live long enough
    │         ───────  'payload' lives in 'second'
    ·
 20 │     link.to = payload
-   │     ───────   ^^^^^^^  this points into 'second'
+   │     ───────   ^^^^^^^  this lives in 'second'
    │     │
-   │     this memory lives in 'first'
+   │     └─ this lives in 'first'
    │
-   = note: 'first' and 'second' are siblings, so neither is guaranteed to
-           outlive the other. A pointer in either direction can dangle.
-   = help: allocate both from the same arena, or keep an index instead of a
-           pointer if they have to stay separate
+   = note: 'second' and 'first' are siblings.
+           Neither outlives the other, so a pointer either way can dangle.
+   │
+   = help: 'payload' has to outlive 'link'. One way, allocating it from 'first':
+   │
+18 │ -     var payload = second.create(Payload)
+18 │ +     var payload = first.create(Payload)
+   │

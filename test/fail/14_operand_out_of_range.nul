@@ -1,0 +1,4 @@
+/// The operands settle on 'u8', so a literal operand has to fit 'u8' too.
+fn bump(x: u8) u8 {
+    return x + 300
+}

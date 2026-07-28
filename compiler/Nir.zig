@@ -9,6 +9,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
+const Comptime = @import("Comptime.zig");
 const Namespace = @import("Namespace.zig");
 const Type = @import("Type.zig");
 
@@ -50,23 +51,27 @@ pub const Inst = struct {
     last: Ast.TokenIndex = 0,
     /// The type of the value produced, `.void` when there is none.
     ty: Type.Index,
+    /// What is known about the value at compile time. Known values never materialize,
+    /// a backend spells them at each use instead of binding them.
+    val: Comptime.Value = .unknown,
     lhs: u32 = 0,
     rhs: u32 = 0,
 
     pub const Tag = enum(u8) {
         /// `lhs` is the parameter's position in the signature.
         arg,
-        /// The value is not needed yet, only its type.
-        int,
-        float,
+        /// A value `val` knows entirely: a literal, or a reference that resolved to one.
+        constant,
         str,
-        bool,
-        /// `rhs` is the interned value, when there is one.
+        /// A reference to a container declaration; `val` is its value when known.
         decl,
         /// `lhs` and `rhs` are operands, `token` is the operator.
         binary,
         /// `lhs` is the operand, `token` is the operator.
         unary,
+        /// Retypes `lhs`, which is what a type annotation does. A `var` also passes
+        /// through here to shed comptime knownness, since a mutable slot is runtime.
+        coerce,
         /// Loads field `rhs` of `lhs`.
         field,
         /// Stores `rhs` into the field named by the `field` instruction `lhs`.

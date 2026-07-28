@@ -1,0 +1,5 @@
+/// The declared type wins, and the value has to fit it.
+fn label() str {
+    let name: str = 42
+    return name
+}

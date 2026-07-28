@@ -1,0 +1,4 @@
+/// An unsigned runtime value has no negative to become.
+fn flip(x: u8) u8 {
+    return -x
+}

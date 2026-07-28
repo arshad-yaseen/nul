@@ -1,23 +1,24 @@
-error: 'sample' does not live long enough
+error[E0017]: 'sample' does not live long enough
 
    ┌─ test/fail/04_escape_borrowed_param.nul:15:16
    │
 12 │ fn remember(arena: Arena, sample: *Reading) *Cache {
-   │                           ──────  'sample' is borrowed for this call only
+   │             ─────         ──────  the caller owns what 'sample' points at
+   │             │
+   │             └─ 'arena' comes from the caller
 13 │     var c = arena.create(Cache)
    │         ─  'c' lives in 'arena'
    ·
 15 │     c.latest = sample
-   │     ────────   ^^^^^^  this pointer belongs to the caller
+   │     ────────   ^^^^^^  this is borrowed from the caller
    │     │
-   │     this memory lives in 'arena'
-   ·
-17 │     return c
-   │            ─  'c' escapes here, still holding 'sample'
+   │     └─ this lives in 'arena'
    │
-   = note: 'sample' belongs to the caller, and nothing inside 'remember' can
-           prove it outlives 'arena'. Borrowing needs no thought anywhere else,
-           because a borrow cannot outlive its call. Keeping one is the
-           exception.
-   = help: copy what you need into 'arena'
-             c.latest = arena.copy(sample)
+   = note: 'sample' is borrowed. The caller decides how long it lives, so nothing here may
+           keep a pointer to it.
+   │
+   = help: 'c' has to own what it keeps. One way, copying into 'arena':
+   │
+15 │ -     c.latest = sample
+15 │ +     c.latest = arena.create(Reading)
+   │

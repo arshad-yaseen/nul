@@ -1,21 +1,19 @@
-error: 's' does not live long enough
+error[E0017]: 's' does not live long enough to be returned
 
-   ┌─ test/fail/03_return_local_arena.nul:15:12
+   ┌─ test/fail/03_return_local_arena.nul:15:5
    │
- 9 │ fn open() *Session {
-   │           ────────  the caller receives this pointer
 10 │     var local = Arena.init()
-   │         ─────  'local' is created here, and dies at line 16
+   │         ─────  'local' is made here, and dies at the end of this function
    ·
 12 │     var s = local.create(Session)
    │         ─  's' lives in 'local'
    ·
 15 │     return s
-   │            ^  returned to a scope that does not own 'local'
+   │     ^^^^^^^^  returned here, but 'local' dies first
    │
-   = note: 'local' is created inside 'open', so it dies before the caller can
-           look at what it was given. Nothing allocated from it is still there
-           when the caller looks.
-   = help: take the arena as a parameter, so the caller decides how long the
-           result lives
-             fn open(arena: Arena) *Session {
+   = note: a result is stored into the caller, so it has to live in an arena the caller
+           already has. 'local' is made in this function, and dies with it.
+   │
+   = help: take an arena parameter, and allocate the result from it
+             fn f(arena: Arena) ...
+   │

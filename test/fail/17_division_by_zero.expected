@@ -1,0 +1,7 @@
+error[E0021]: division by zero
+
+  ┌─ test/fail/17_division_by_zero.nul:3:14
+  │
+3 │     return 1 / 0
+  │              ^  the divisor is 0
+  │

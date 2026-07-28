@@ -117,7 +117,7 @@ fn visit(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
         .call => region.callRegion(inst),
         // A tag is a lower bound on everything inside, so a field is at least its base
         // when it can reach memory at all. A number read out of an arena is a number.
-        .field, .binary, .unary => if (region.holdsPointer(inst.ty))
+        .field, .binary, .unary, .coerce => if (region.holdsPointer(inst.ty))
             region.of[inst.lhs]
         else
             .static,
@@ -580,7 +580,7 @@ fn operands(region: *const Region, inst: Nir.Inst, buf: *[2]u32) []const u32 {
             buf[1] = inst.rhs;
             break :blk buf[0..2];
         },
-        .field, .unary, .arena_copy => blk: {
+        .field, .unary, .coerce, .arena_copy => blk: {
             buf[0] = if (inst.tag == .arena_copy) inst.rhs else inst.lhs;
             break :blk buf[0..1];
         },

@@ -1,10 +1,7 @@
-error: 'item' is read after 'scratch' was released
+error[E0019]: 'item' is used after 'scratch' was released
 
    ┌─ test/fail/06_use_after_reset.nul:17:12
    │
-10 │     var scratch = arena.child()
-   │         ───────  'scratch' is created here
-   ·
 12 │     var item = scratch.create(Item)
    │         ────  'item' lives in 'scratch'
    ·
@@ -14,9 +11,5 @@ error: 'item' is read after 'scratch' was released
 17 │     return item.weight
    │            ^^^^^^^^^^^  read after its memory was released
    │
-   = note: You chose where the cleanup happens and the compiler checked the
-           placement. It did not move it, and it did not insert one of its own.
-   = help: read the value before the reset
-             let weight = item.weight
-             scratch.reset()
-             return weight
+   = help: read what you need before releasing 'scratch', and keep that
+   │

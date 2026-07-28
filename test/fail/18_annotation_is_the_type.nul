@@ -1,0 +1,6 @@
+/// The annotation is the variable's type. 500 fits 'u8's check only if the
+/// annotation were ignored, and it is not.
+fn narrow() u8 {
+    var wide: i64 = 500
+    return wide
+}

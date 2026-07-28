@@ -1,0 +1,9 @@
+error[E0022]: this computation is too large to represent
+
+  ┌─ test/fail/19_comptime_overflow.nul:3:52
+  │
+3 │     return 170141183460469231731687303715884105727 + 1
+  │                                                    ^
+  │
+  = note: comptime integers hold up to 128 bits
+  │

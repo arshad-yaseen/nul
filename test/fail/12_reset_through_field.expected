@@ -1,15 +1,13 @@
-error: an arena can only be reset where it is named
+error[E0018]: 'b.arena' is not a name here, so the arena it reaches cannot be released
 
    ┌─ test/fail/12_reset_through_field.nul:11:5
    │
-10 │ fn clear(b: *var Box) {
-   │          ───────────  'b' is borrowed, so the arena inside it has no name here
 11 │     b.arena.reset()
-   │     ^^^^^^^^^^^^^^^  this releases an arena this function cannot name
+   │     ^^^^^^^^^^^^^^^  'b.arena' is reached through a pointer, so it has no name here
    │
-   = note: 'reset' proves that nothing in the arena is used afterward, and that
-           proof compares names inside one function. Values in 'b.arena' live
-           wherever the arena has been passed, and 'clear' can see almost none
-           of them.
-   = help: reset the arena where it was created, and leave 'clear' to do the work
-           that does not release memory
+   = note: every value in an arena dies the instant it is released, and this
+           function can see almost none of them. Allocating through a pointer
+           stays safe; releasing does not.
+   │
+   = help: release it in the function that made it, where it has a name
+   │

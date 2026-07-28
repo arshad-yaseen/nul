@@ -1,13 +1,15 @@
-//! Lowers one function body to `Nir`, typing every value as it goes.
+//! Lowers one function body to `Nir`, typing and folding every value as it goes.
 //!
 //! Signatures are already resolved, so nothing here reads another body. Local names are
 //! resolved here and never reach the checker: an identifier becomes the index of the
-//! instruction that produced it.
+//! instruction that produced it, which is also how a comptime value flows through a
+//! name without being recomputed.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
+const Comptime = @import("Comptime.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const InternPool = @import("InternPool.zig");
 const Namespace = @import("Namespace.zig");
@@ -18,9 +20,10 @@ const Type = @import("Type.zig");
 const Lower = @This();
 const Token = Ast.TokenIndex;
 const Inst = Nir.Inst;
-const Mark = Diagnostic.Mark;
-const Span = struct { Token, Token };
 const Note = Diagnostic.Note;
+const Span = struct { Token, Token };
+const TypedValue = Comptime.TypedValue;
+const Value = Comptime.Value;
 
 sema: *Sema,
 gpa: Allocator,
@@ -36,13 +39,13 @@ names: std.ArrayList(Ast.TokenIndex) = .empty,
 /// to the length it entered with.
 locals: std.ArrayList(Local) = .empty,
 
-/// Rebinding a `var` points the name at a new instruction, which is why no storage slot
-/// is needed. That holds only while bodies are straight line.
+/// A name is the instruction that last produced its value, the instruction's type and
+/// value are the name's. Rebinding points at a new instruction, which is why no storage
+/// slot is needed while bodies are straight line.
 const Local = struct {
     name: []const u8,
     token: Token,
     inst: u32,
-    ty: Type.Index,
     is_mutable: bool,
 };
 
@@ -92,7 +95,7 @@ fn bindParams(lower: *Lower, params: []const Type.Index) Allocator.Error!void {
             .ty = params[at],
             .lhs = at,
         });
-        try lower.declare(param.name_token, inst, params[at], false);
+        try lower.declare(param.name_token, inst, false);
         at += 1;
     }
 }
@@ -124,13 +127,17 @@ fn typeOf(lower: *const Lower, inst: u32) Type.Index {
     return lower.insts.items[inst].ty;
 }
 
-fn declare(lower: *Lower, token: Token, inst: u32, ty: Type.Index, is_mutable: bool) Allocator.Error!void {
+fn typedValue(lower: *const Lower, inst: u32) TypedValue {
+    const it = lower.insts.items[inst];
+    return .{ .ty = it.ty, .val = it.val };
+}
+
+fn declare(lower: *Lower, token: Token, inst: u32, is_mutable: bool) Allocator.Error!void {
     lower.names.items[inst] = token;
     try lower.locals.append(lower.gpa, .{
         .name = lower.tree.tokenSlice(token),
         .token = token,
         .inst = inst,
-        .ty = ty,
         .is_mutable = is_mutable,
     });
 }
@@ -143,6 +150,15 @@ fn find(lower: *Lower, text: []const u8) ?*Local {
         if (std.mem.eql(u8, local.name, text)) return local;
     }
     return null;
+}
+
+/// Gives a value the type a binding assigns it. `keep_value` is false for a `var`,
+/// since a mutable slot is a runtime value whatever initialized it.
+fn coerced(lower: *Lower, inst: u32, into: Type.Index, token: Token, keep_value: bool) Allocator.Error!u32 {
+    const val: Value = if (keep_value) lower.insts.items[inst].val else .unknown;
+    const same_type = lower.typeOf(inst) == into;
+    if (same_type and std.meta.eql(val, lower.insts.items[inst].val)) return inst;
+    return lower.add(.{ .tag = .coerce, .token = token, .ty = into, .val = val, .lhs = inst });
 }
 
 // Statements
@@ -200,60 +216,42 @@ fn statement(lower: *Lower, node: Ast.Node.Index) Allocator.Error!void {
     }
 }
 
+/// A `let` stays comptime when its value is known, like the literal it names. A `var`
+/// is a runtime slot: an untyped comptime initializer decides its type as `i64`/`f64`,
+/// and its knownness ends here, so nothing folds through a mutable name.
 fn localDecl(lower: *Lower, binding: Ast.View.VarDecl) Allocator.Error!void {
     var inst = try lower.expr(binding.init_expr);
-    var ty = lower.typeOf(inst);
 
     if (binding.type_expr.unwrap()) |annotation| {
         const declared = try lower.sema.evalTypeExpr(annotation);
-        if (!try lower.fits(binding.init_expr, ty, declared)) inst = try lower.fail(.{
-            .tag = .type_mismatch,
-            .token = lower.mainToken(binding.init_expr),
-            .message = try lower.print("'{s}' is declared '{s}', but its value is '{s}'", .{
-                lower.tree.tokenSlice(binding.name_token),
-                try lower.typeName(declared),
-                try lower.typeName(ty),
-            }),
-            .text = try lower.thisIs(ty),
-            .marks = try lower.mark(
-                lower.mainToken(annotation),
-                try lower.print("declared '{s}' here", .{try lower.typeName(declared)}),
-            ),
+        const fits = try lower.sema.expect(declared, lower.typedValue(inst), binding.init_expr, .{
+            .annotation = .{ .name = binding.name_token, .site = lower.mainToken(annotation) },
         });
-        ty = declared;
+        inst = try lower.coerced(inst, declared, binding.name_token, fits and !binding.is_mutable);
+    } else if (binding.is_mutable) {
+        const runtime = Type.runtime(lower.typeOf(inst));
+        inst = try lower.coerced(inst, runtime, binding.name_token, false);
     }
 
-    try lower.declare(binding.name_token, inst, ty, binding.is_mutable);
+    try lower.declare(binding.name_token, inst, binding.is_mutable);
 }
 
 fn returnStmt(lower: *Lower, node: Ast.Node.Index, value: Ast.Node.OptionalIndex) Allocator.Error!void {
-    const fn_name = lower.tree.tokenSlice(lower.function.name_token);
     var operand: Nir.OptionalIndex = .none;
+    var tv: TypedValue = .{ .ty = .void };
+    var blame = node;
 
     if (value.unwrap()) |expr_node| {
         const inst = try lower.expr(expr_node);
         operand = @enumFromInt(inst);
-        const got = lower.typeOf(inst);
-        if (!try lower.fits(expr_node, got, lower.returns)) try lower.report(.{
-            .tag = .type_mismatch,
-            .token = lower.mainToken(expr_node),
-            .message = try lower.print("'{s}' returns '{s}', but this is '{s}'", .{
-                fn_name, try lower.typeName(lower.returns), try lower.typeName(got),
-            }),
-            .text = try lower.thisIs(got),
-            .marks = try lower.returnTypeMark(),
-        });
-    } else if (lower.returns != .void and lower.returns != .poisoned) {
-        try lower.report(.{
-            .tag = .type_mismatch,
-            .token = lower.mainToken(node),
-            .message = try lower.print("'{s}' returns '{s}', but this 'return' has no value", .{
-                fn_name, try lower.typeName(lower.returns),
-            }),
-            .text = "nothing is returned here",
-            .marks = try lower.returnTypeMark(),
-        });
+        tv = lower.typedValue(inst);
+        blame = expr_node;
     }
+
+    _ = try lower.sema.expect(lower.returns, tv, blame, .{ .returned = .{
+        .fn_name = lower.function.name_token,
+        .site = if (lower.function.return_type.unwrap()) |n| lower.mainToken(n) else null,
+    } });
 
     try lower.endScope(0);
 
@@ -284,7 +282,6 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
     const local = lower.find(text) orelse
         return lower.fail(.{ .tag = .undefined_name, .token = token });
 
-    const held = local.ty;
     const declared_at = local.token;
     if (!local.is_mutable) return lower.fail(.{
         .tag = .not_mutable,
@@ -297,39 +294,24 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
         }}),
     });
 
-    const got = lower.typeOf(value);
-    if (!try lower.fits(rhs, got, held)) try lower.report(.{
-        .tag = .type_mismatch,
-        .token = lower.mainToken(rhs),
-        .message = try lower.print("'{s}' holds '{s}', but this is '{s}'", .{
-            text, try lower.typeName(held), try lower.typeName(got),
-        }),
-        .text = try lower.thisIs(got),
-        .marks = try lower.mark(declared_at, try lower.print("'{s}' was declared here", .{text})),
-    });
+    const held = lower.typeOf(local.inst);
+    _ = try lower.sema.expect(held, lower.typedValue(value), rhs, .{ .assigned = .{
+        .name = token,
+        .site = declared_at,
+    } });
 
-    lower.names.items[value] = token;
-    local.inst = value;
-    return value;
+    const rebound = try lower.coerced(value, held, token, false);
+    lower.names.items[rebound] = token;
+    local.inst = rebound;
+    return rebound;
 }
 
 fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAccess) Allocator.Error!u32 {
     const target = try lower.expr(node.lhs);
     const value = try lower.expr(node.rhs);
-    const held = lower.typeOf(target);
-    const got = lower.typeOf(value);
-    const field_name = lower.tree.tokenSlice(access.name_token);
 
-    if (!try lower.fits(node.rhs, got, held)) try lower.report(.{
-        .tag = .type_mismatch,
-        .token = lower.mainToken(node.rhs),
-        .message = try lower.print("field '{s}' holds '{s}', but this is '{s}'", .{
-            field_name, try lower.typeName(held), try lower.typeName(got),
-        }),
-        .text = try lower.thisIs(got),
-        .marks = try lower.mark(access.name_token, try lower.print("'{s}' is '{s}'", .{
-            field_name, try lower.typeName(held),
-        })),
+    _ = try lower.sema.expect(lower.typeOf(target), lower.typedValue(value), node.rhs, .{
+        .field_store = .{ .name = access.name_token },
     });
 
     return lower.add(.{
@@ -347,24 +329,28 @@ fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAcces
 
 fn expr(lower: *Lower, node: Ast.Node.Index) Allocator.Error!u32 {
     switch (lower.tree.viewOf(node)) {
-        .number_literal => |token| {
-            const ty = try lower.sema.numberLiteralType(token);
-            const tag: Inst.Tag = if (ty == .comptime_float) .float else .int;
-            return lower.add(.{ .tag = tag, .token = token, .ty = ty });
+        .number_literal, .bool_literal => {
+            const tv = try lower.sema.evalComptime(node);
+            return lower.add(.{
+                .tag = .constant,
+                .token = lower.mainToken(node),
+                .ty = tv.ty,
+                .val = tv.val,
+            });
         },
         .str_literal => |token| return lower.add(.{ .tag = .str, .token = token, .ty = .str }),
-        .bool_literal => |it| return lower.add(.{ .tag = .bool, .token = it.token, .ty = .bool }),
         .ident => |token| return lower.name(token),
         .grouped => |inner| return lower.expr(inner),
-        .binary => |it| return lower.binary(it),
-        .unary => |it| return lower.unary(it),
+        .binary => |it| return lower.binary(node, it),
+        .unary => |it| return lower.unary(node, it),
         .field_access => |it| return lower.fieldOf(try lower.expr(it.lhs), it, node),
         .call => |it| return lower.call(node, it),
         else => return lower.todo(lower.mainToken(node)),
     }
 }
 
-/// A local first, then a builtin, then a container declaration.
+/// A local first, then a builtin, then a container declaration. A declaration's value
+/// arrives with it, which is how a comptime constant crosses declarations.
 fn name(lower: *Lower, token: Token) Allocator.Error!u32 {
     const text = lower.tree.tokenSlice(token);
     if (lower.find(text)) |local| return local.inst;
@@ -373,7 +359,7 @@ fn name(lower: *Lower, token: Token) Allocator.Error!u32 {
         .tag = .decl,
         .token = token,
         .ty = .type,
-        .rhs = @intFromEnum(builtin),
+        .val = .{ .type = builtin },
     });
 
     const decl = lower.sema.namespace.find(text) orelse
@@ -383,40 +369,34 @@ fn name(lower: *Lower, token: Token) Allocator.Error!u32 {
         .tag = .decl,
         .token = token,
         .ty = decl.ty,
-        .rhs = @intFromEnum(decl.value),
+        .val = decl.val,
     });
 }
 
-fn binary(lower: *Lower, node: Ast.View.Binary) Allocator.Error!u32 {
-    const lhs = try lower.expr(node.lhs);
-    const rhs = try lower.expr(node.rhs);
-    const a = lower.typeOf(lhs);
-    const b = lower.typeOf(rhs);
-
-    const ty: Type.Index = switch (node.op) {
-        .bool_and, .bool_or => blk: {
-            try lower.needsBool(node.lhs, a, lower.tree.tokenSlice(node.op_token));
-            try lower.needsBool(node.rhs, b, lower.tree.tokenSlice(node.op_token));
-            break :blk .bool;
-        },
-        .equal, .not_equal, .less_than, .less_or_equal, .greater_than, .greater_or_equal => blk: {
-            if (lower.unify(a, b) == null) try lower.reportOperands(node, a, b);
-            break :blk .bool;
-        },
-        else => lower.unify(a, b) orelse blk: {
-            try lower.reportOperands(node, a, b);
-            break :blk .poisoned;
-        },
-    };
-
-    return lower.add(.{ .tag = .binary, .token = node.op_token, .ty = ty, .lhs = lhs, .rhs = rhs });
+fn binary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Binary) Allocator.Error!u32 {
+    const lhs = try lower.expr(it.lhs);
+    const rhs = try lower.expr(it.rhs);
+    const out = try lower.sema.binOp(node, it, lower.typedValue(lhs), lower.typedValue(rhs));
+    return lower.add(.{
+        .tag = .binary,
+        .token = it.op_token,
+        .ty = out.ty,
+        .val = out.val,
+        .lhs = lhs,
+        .rhs = rhs,
+    });
 }
 
-fn unary(lower: *Lower, node: Ast.View.Unary) Allocator.Error!u32 {
-    const operand = try lower.expr(node.operand);
-    const ty = lower.typeOf(operand);
-    if (node.op == .bool_not) try lower.needsBool(node.operand, ty, "!");
-    return lower.add(.{ .tag = .unary, .token = node.op_token, .ty = ty, .lhs = operand });
+fn unary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Unary) Allocator.Error!u32 {
+    const operand = try lower.expr(it.operand);
+    const out = try lower.sema.unOp(node, it, lower.typedValue(operand));
+    return lower.add(.{
+        .tag = .unary,
+        .token = it.op_token,
+        .ty = out.ty,
+        .val = out.val,
+        .lhs = operand,
+    });
 }
 
 fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess, node: Ast.Node.Index) Allocator.Error!u32 {
@@ -492,16 +472,13 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
 
     for (it.args, 0..) |arg, at| {
         const value = try lower.expr(arg);
-        const got = lower.typeOf(value);
         if (at < signature.params.len) {
-            const want = signature.params[at];
-            if (!try lower.fits(arg, got, want)) try lower.report(.{
-                .tag = .type_mismatch,
-                .token = lower.mainToken(arg),
-                .message = try lower.print("argument {d} of '{s}' is '{s}', but this is '{s}'", .{
-                    at + 1, callee_name, try lower.typeName(want), try lower.typeName(got),
-                }),
-                .text = try lower.thisIs(got),
+            _ = try lower.sema.expect(signature.params[at], lower.typedValue(value), arg, .{
+                .argument = .{
+                    .position = at,
+                    .callee = callee_name,
+                    .site = lower.paramSite(it.callee, at),
+                },
             });
         }
         try lower.extra.append(lower.gpa, value);
@@ -532,11 +509,31 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
     });
 }
 
+/// The parameter's declaration site, when the callee names a function directly.
+fn paramSite(lower: *Lower, callee_node: Ast.Node.Index, at: usize) ?Token {
+    const token = switch (lower.tree.viewOf(callee_node)) {
+        .ident => |t| t,
+        else => return null,
+    };
+    const decl = lower.sema.namespace.find(lower.tree.tokenSlice(token)) orelse return null;
+    const function = switch (lower.tree.viewOf(decl.node)) {
+        .fn_decl => |f| f,
+        else => return null,
+    };
+    if (at >= function.params.len) return null;
+    return switch (lower.tree.viewOf(function.params[at])) {
+        .param => |p| p.name_token,
+        else => null,
+    };
+}
+
 /// Whether `inst` names the `Arena` type itself, as `Arena.init()` does.
 fn isArenaType(lower: *const Lower, inst: u32) bool {
     const it = lower.insts.items[inst];
-    return it.tag == .decl and it.ty == .type and
-        @as(Type.Index, @enumFromInt(it.rhs)) == .Arena;
+    return it.tag == .decl and switch (it.val) {
+        .type => |ty| ty == .Arena,
+        else => false,
+    };
 }
 
 const Method = enum { init, child, create, copy, reset, destroy };
@@ -619,7 +616,7 @@ fn arenaMethod(
                     .message = try lower.print("'{s}' holds a pointer, so it cannot be copied", .{
                         try lower.typeName(ty),
                     }),
-                    .text = try lower.thisIs(ty),
+                    .text = try lower.print("this is '{s}'", .{try lower.typeName(ty)}),
                     .notes = try lower.copyNotes(ty),
                 });
             }
@@ -635,62 +632,26 @@ fn arenaMethod(
     };
 }
 
-// Checking
+// Wording
 
-/// Whether `from` can become `into`, reporting a literal out of range on the way.
-fn fits(lower: *Lower, node: Ast.Node.Index, from: Type.Index, into: Type.Index) Allocator.Error!bool {
-    if (from == .poisoned or into == .poisoned) return true;
-    const value = lower.sema.comptimeInt(node);
-    _ = Type.coerce(lower.pool, from, into, value) catch |refusal| switch (refusal) {
-        error.OutOfRange => try lower.sema.reportRange(node, value.?, into),
-        error.WrongType => return false,
-    };
-    return true;
+fn mainToken(lower: *const Lower, node: Ast.Node.Index) Token {
+    return lower.tree.nodeMainToken(node);
 }
 
-/// The type both sides settle on, or null when neither reaches the other.
-fn unify(lower: *const Lower, a: Type.Index, b: Type.Index) ?Type.Index {
-    if (a == .poisoned or b == .poisoned) return .poisoned;
-    if (Type.coerce(lower.pool, a, b, null)) |_| return b else |_| {}
-    if (Type.coerce(lower.pool, b, a, null)) |_| return a else |_| {}
-    return null;
+fn typeName(lower: *Lower, ty: Type.Index) Allocator.Error![]const u8 {
+    return lower.sema.typeName(ty);
 }
 
-fn needsBool(lower: *Lower, node: Ast.Node.Index, ty: Type.Index, op: []const u8) Allocator.Error!void {
-    if (try lower.fits(node, ty, .bool)) return;
-    try lower.report(.{
-        .tag = .type_mismatch,
-        .token = lower.mainToken(node),
-        .message = try lower.print("'{s}' needs 'bool', but this is '{s}'", .{
-            op, try lower.typeName(ty),
-        }),
-        .text = try lower.thisIs(ty),
-    });
+fn print(lower: *Lower, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
+    return lower.sema.diagnostics.print(fmt, args);
 }
 
-fn reportOperands(lower: *Lower, node: Ast.View.Binary, a: Type.Index, b: Type.Index) Allocator.Error!void {
-    try lower.report(.{
-        .tag = .type_mismatch,
-        .token = node.op_token,
-        .message = try lower.print("'{s}' cannot combine '{s}' and '{s}'", .{
-            lower.tree.tokenSlice(node.op_token),
-            try lower.typeName(a),
-            try lower.typeName(b),
-        }),
-        .marks = try lower.marks(&.{
-            .{ .token = lower.mainToken(node.lhs), .text = try lower.thisIs(a) },
-            .{ .token = lower.mainToken(node.rhs), .text = try lower.thisIs(b) },
-        }),
-    });
+fn mark(lower: *Lower, token: Token, text: []const u8) Allocator.Error![]const Diagnostic.Mark {
+    return lower.sema.diagnostics.mark(token, text);
 }
 
-/// Points at the return type in the signature, which is what a `return` is judged by.
-fn returnTypeMark(lower: *Lower) Allocator.Error![]const Mark {
-    const node = lower.function.return_type.unwrap() orelse return &.{};
-    return lower.mark(
-        lower.mainToken(node),
-        try lower.print("declared to return '{s}'", .{try lower.typeName(lower.returns)}),
-    );
+fn notes(lower: *Lower, values: []const Note) Allocator.Error![]const Note {
+    return lower.sema.diagnostics.notes(values);
 }
 
 /// `fields 'value' and 'next'`, for a diagnostic that has to say what a type does have.
@@ -726,34 +687,4 @@ fn copyNotes(lower: *Lower, ty: Type.Index) Allocator.Error![]const Note {
         }, help });
     }
     return lower.notes(&.{help});
-}
-
-// Wording
-
-fn mainToken(lower: *const Lower, node: Ast.Node.Index) Token {
-    return lower.tree.nodeMainToken(node);
-}
-
-fn typeName(lower: *Lower, ty: Type.Index) Allocator.Error![]const u8 {
-    return lower.sema.typeName(ty);
-}
-
-fn thisIs(lower: *Lower, ty: Type.Index) Allocator.Error![]const u8 {
-    return lower.print("this is '{s}'", .{try lower.typeName(ty)});
-}
-
-fn print(lower: *Lower, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
-    return lower.sema.diagnostics.print(fmt, args);
-}
-
-fn mark(lower: *Lower, token: Token, text: []const u8) Allocator.Error![]const Mark {
-    return lower.sema.diagnostics.mark(token, text);
-}
-
-fn marks(lower: *Lower, values: []const Mark) Allocator.Error![]const Mark {
-    return lower.sema.diagnostics.marks(values);
-}
-
-fn notes(lower: *Lower, values: []const Note) Allocator.Error![]const Note {
-    return lower.sema.diagnostics.notes(values);
 }

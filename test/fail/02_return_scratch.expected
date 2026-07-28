@@ -1,9 +1,7 @@
-error: 'buf' does not live long enough
+error[E0017]: 'buf' does not live long enough to be returned
 
-   ┌─ test/fail/02_return_scratch.nul:14:12
+   ┌─ test/fail/02_return_scratch.nul:14:5
    │
- 8 │ fn build(arena: Arena) *Buffer {
-   │                        ───────  the result is returned into 'arena'
  9 │     var scratch = arena.child()
    │         ───────  'scratch' is created here, as a child of 'arena'
    ·
@@ -11,9 +9,13 @@ error: 'buf' does not live long enough
    │         ───  'buf' lives in 'scratch'
    ·
 14 │     return buf
-   │            ^^^  returned to a scope that outlives 'scratch'
+   │     ^^^^^^^^^^  returned here, but 'scratch' dies first
    │
-   = note: 'scratch' is a child of 'arena', and a child dies before its parent.
-           The caller would receive a pointer into memory released at line 15.
-   = help: allocate the result in 'arena' instead
-             var buf = arena.create(Buffer)
+   = note: a result is stored into the caller, so it has to live in an arena the caller
+           already has. 'scratch' is made in this function, and dies with it.
+   │
+   = help: 'buf' has to outlive this function. One way, allocating it from 'arena':
+   │
+11 │ -     var buf = scratch.create(Buffer)
+11 │ +     var buf = arena.create(Buffer)
+   │
