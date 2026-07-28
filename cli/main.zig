@@ -1,4 +1,5 @@
 //! The `nul` command. Parses arguments, drives the compiler, and chooses an exit code.
+//! Diagnostics go to stderr; what the command produces goes to stdout.
 
 const std = @import("std");
 const Io = std.Io;
@@ -27,49 +28,59 @@ const usage =
 ;
 
 pub fn main(init: std.process.Init) !u8 {
-    var buf: [4096]u8 = undefined;
-    var stdout = Io.File.stdout().writer(init.io, &buf);
-    const w = &stdout.interface;
-    defer w.flush() catch {};
+    var out_buf: [4096]u8 = undefined;
+    var err_buf: [4096]u8 = undefined;
+    var stdout = Io.File.stdout().writer(init.io, &out_buf);
+    var stderr = Io.File.stderr().writer(init.io, &err_buf);
+    const out = &stdout.interface;
+    const err = &stderr.interface;
+    defer out.flush() catch {};
+    defer err.flush() catch {};
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    return @intFromEnum(try run(init, args[1..], w));
+    return @intFromEnum(try run(init, args[1..], out, err));
 }
 
-fn run(init: std.process.Init, args: []const []const u8, w: *Io.Writer) !Exit {
+fn run(init: std.process.Init, args: []const []const u8, out: *Io.Writer, err: *Io.Writer) !Exit {
     if (args.len == 0) {
-        try w.writeAll(usage);
+        try err.writeAll(usage);
         return .misused;
     }
     const command = args[0];
 
-    if (is(command, "check")) return compile(init, args[1..], w, .check);
-    if (is(command, "build")) return compile(init, args[1..], w, .build);
+    if (is(command, "check")) return compile(init, args[1..], out, err, .check);
+    if (is(command, "build")) return compile(init, args[1..], out, err, .build);
     if (is(command, "version")) {
-        try w.print("nul {s}\n", .{version});
+        try out.print("nul {s}\n", .{version});
         return .ok;
     }
     if (is(command, "help") or is(command, "-h") or is(command, "--help")) {
-        try w.writeAll(usage);
+        try out.writeAll(usage);
         return .ok;
     }
 
-    try w.print("nul: there is no '{s}' command\n", .{command});
+    try err.print("nul: there is no '{s}' command\n", .{command});
     // A path where a command belongs is the likeliest slip, so name the fix.
     if (std.mem.endsWith(u8, command, ".nul")) {
-        try w.print("did you mean 'nul check {s}'?\n", .{command});
+        try err.print("did you mean 'nul check {s}'?\n", .{command});
     } else {
-        try w.writeAll("run 'nul help' to see what there is\n");
+        try err.writeAll("run 'nul help' to see what there is\n");
     }
     return .misused;
 }
 
 const Mode = enum { check, build };
 
-fn compile(init: std.process.Init, args: []const []const u8, w: *Io.Writer, mode: Mode) !Exit {
+fn compile(
+    init: std.process.Init,
+    args: []const []const u8,
+    out: *Io.Writer,
+    err: *Io.Writer,
+    mode: Mode,
+) !Exit {
     const name = @tagName(mode);
     var color: ?bool = null;
-    var out: ?[]const u8 = null;
+    var emit_path: ?[]const u8 = null;
     var path: ?[]const u8 = null;
 
     var at: usize = 0;
@@ -82,15 +93,15 @@ fn compile(init: std.process.Init, args: []const []const u8, w: *Io.Writer, mode
         } else if (is(arg, "-o")) {
             at += 1;
             if (at == args.len) {
-                try w.print("nul {s}: -o wants a file after it\n", .{name});
+                try err.print("nul {s}: -o wants a file after it\n", .{name});
                 return .misused;
             }
-            out = args[at];
+            emit_path = args[at];
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            try w.print("nul {s}: there is no '{s}' option\n", .{ name, arg });
+            try err.print("nul {s}: there is no '{s}' option\n", .{ name, arg });
             return .misused;
         } else if (path != null) {
-            try w.writeAll("nul: one file at a time, for now\n");
+            try err.writeAll("nul: one file at a time, for now\n");
             return .misused;
         } else {
             path = arg;
@@ -98,11 +109,11 @@ fn compile(init: std.process.Init, args: []const []const u8, w: *Io.Writer, mode
     }
 
     const file = path orelse {
-        try w.print("nul {s}: expected a file\n", .{name});
+        try err.print("nul {s}: expected a file\n", .{name});
         return .misused;
     };
-    if (mode == .check and out != null) {
-        try w.writeAll("nul check: -o belongs to build, which is the one that writes C\n");
+    if (mode == .check and emit_path != null) {
+        try err.writeAll("nul check: -o belongs to build, which is the one that writes C\n");
         return .misused;
     }
 
@@ -115,30 +126,30 @@ fn compile(init: std.process.Init, args: []const []const u8, w: *Io.Writer, mode
     const emit: ?*Io.Writer = if (mode == .build) &c.writer else null;
 
     var result = Compilation.build(gpa, init.io, cwd, file, emit) catch |e| {
-        try w.print("nul: cannot read '{s}': {s}\n", .{ file, @errorName(e) });
+        try err.print("nul: cannot read '{s}': {s}\n", .{ file, @errorName(e) });
         return .misused;
     };
     defer result.deinit(gpa);
 
     const count = result.errorCount();
     if (count > 0) {
-        const tty = Io.File.stdout().isTty(init.io) catch false;
-        try result.render(gpa, w, if (color orelse tty) .ansi else .plain);
-        try w.print("\n{d} error{s} found\n", .{ count, if (count == 1) "" else "s" });
+        const tty = Io.File.stderr().isTty(init.io) catch false;
+        try result.render(gpa, err, if (color orelse tty) .ansi else .plain);
+        try err.print("\n{d} error{s} found\n", .{ count, if (count == 1) "" else "s" });
         return .failed;
     }
     if (mode == .check) return .ok;
 
-    const target = out orelse try cPath(init.arena.allocator(), file);
+    const target = emit_path orelse try cPath(init.arena.allocator(), file);
     if (is(target, "-")) {
-        try w.writeAll(c.written());
+        try out.writeAll(c.written());
         return .ok;
     }
     writeFile(init.io, cwd, target, c.written()) catch |e| {
-        try w.print("nul: cannot write '{s}': {s}\n", .{ target, @errorName(e) });
+        try err.print("nul: cannot write '{s}': {s}\n", .{ target, @errorName(e) });
         return .misused;
     };
-    try w.print("{s}\n", .{target});
+    try out.print("{s}\n", .{target});
     return .ok;
 }
 

@@ -13,7 +13,8 @@ const Diagnostic = @This();
 // What a pass records
 
 /// Codes are explicit and permanent: a kind may be reordered or retired, never
-/// renumbered, so `E0007` means one thing forever.
+/// renumbered, so `E0007` means one thing forever. Semantic errors own E00xx,
+/// `Ast.Error.Tag` owns E01xx.
 pub const Tag = enum(u16) {
     redeclared = 1,
     shadows_builtin = 2,
@@ -165,7 +166,7 @@ pub const List = struct {
 
 /// Says what is wrong, never where.
 message: []const u8,
-/// Rendered as `error[E0007]`. Parse errors carry none yet.
+/// Rendered as `error[E0007]`.
 code: ?u16 = null,
 /// Any order; the renderer sorts. Exactly one `.primary`, which fixes the header.
 labels: []const Label,
@@ -254,7 +255,7 @@ pub fn renderAll(
 
         const d: Diagnostic = .{
             .message = message,
-            .code = if (@TypeOf(entry.tag) == Tag) @intFromEnum(entry.tag) else null,
+            .code = @intFromEnum(entry.tag),
             .labels = labels,
             .notes = extras.notes,
         };

@@ -70,8 +70,8 @@ everything below them is easier to design once they exist.
 
 ## Diagnostics
 
-- [ ] Parse errors carry no code. `Ast.Error` has its own tag type, so the range wants
-      assigning deliberately rather than by accident
+- [x] Parse errors carry permanent codes: `Ast.Error.Tag` owns `E01xx`, semantic errors
+      own `E00xx`
 - [ ] `nul explain E0007`, now that codes are stable
 
 ## Tooling

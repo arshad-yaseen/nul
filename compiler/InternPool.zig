@@ -57,24 +57,24 @@ pub const Index = enum(u32) {
 
 /// Null once `index` is past the builtins.
 pub fn builtinName(index: Index) ?[]const u8 {
-    inline for (@typeInfo(Index).@"enum".fields) |field| {
-        if (@intFromEnum(index) == field.value) return field.name;
-    }
-    return null;
+    return std.enums.tagName(Index, index);
 }
 
-const aliases = std.StaticStringMap(Index).initComptime(.{
-    .{ "int", Index.i64 },
-    .{ "uint", Index.u64 },
+/// Every spelling that names a builtin: the types themselves, and the aliases.
+const builtin_map = std.StaticStringMap(Index).initComptime(blk: {
+    const fields = @typeInfo(Index).@"enum".fields;
+    const count = @intFromEnum(Index.poisoned); // everything before it is spellable
+    var kvs: [count + 2]struct { []const u8, Index } = undefined;
+    for (kvs[0..count], fields[0..count]) |*kv, field| {
+        kv.* = .{ field.name, @enumFromInt(field.value) };
+    }
+    kvs[count] = .{ "int", .i64 };
+    kvs[count + 1] = .{ "uint", .u64 };
+    break :blk kvs;
 });
 
 pub fn builtinNamed(name: []const u8) ?Index {
-    if (aliases.get(name)) |alias| return alias;
-    inline for (@typeInfo(Index).@"enum".fields) |field| {
-        if (field.value < @intFromEnum(Index.poisoned) and std.mem.eql(u8, field.name, name))
-            return @enumFromInt(field.value);
-    }
-    return null;
+    return builtin_map.get(name);
 }
 
 // Keys

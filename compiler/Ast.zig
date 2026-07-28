@@ -403,17 +403,19 @@ pub const Error = struct {
     token: TokenIndex,
     expected: ?Token.Tag = null,
 
-    pub const Tag = enum {
-        expected_token,
-        expected_expr,
-        expected_statement,
-        expected_top_level_decl,
-        expected_param,
-        expected_field,
-        chained_comparison,
-        invalid_assign_target,
-        nesting_too_deep,
-        invalid_bytes,
+    /// Codes are explicit and permanent, like `Diagnostic.Tag`'s. Parse errors own the
+    /// E01xx range.
+    pub const Tag = enum(u16) {
+        expected_token = 101,
+        expected_expr = 102,
+        expected_statement = 103,
+        expected_top_level_decl = 104,
+        expected_param = 105,
+        expected_field = 106,
+        chained_comparison = 107,
+        invalid_assign_target = 108,
+        nesting_too_deep = 109,
+        invalid_bytes = 110,
     };
 
     pub fn render(err: Error, tree: Ast, w: *std.Io.Writer) std.Io.Writer.Error!void {

@@ -1,8 +1,3 @@
-//! Resolves declarations, and hosts the checks every pass shares: `expect` is the one
-//! door a value walks through to become another type, and `binOp`/`unOp` are the one
-//! statement of what each operator means. `Lower` calls both, so a function body and a
-//! container declaration are judged by the same rules and report in the same words.
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -37,9 +32,13 @@ pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
     return Type.spell(sema.pool, ty, sema.diagnostics.allocator());
 }
 
+fn report(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!void {
+    try sema.diagnostics.add(.{ .tag = tag, .token = token });
+}
+
 /// Analysis never stops at the first mistake, so what has no answer becomes poison.
 fn fail(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!Type.Index {
-    try sema.diagnostics.add(.{ .tag = tag, .token = token });
+    try sema.report(tag, token);
     return .poisoned;
 }
 
@@ -110,7 +109,7 @@ pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!TypedValu
     switch (sema.tree.viewOf(node)) {
         .number_literal => |token| {
             const val = Comptime.parse(sema.tree.tokenSlice(token)) catch |err| {
-                _ = try sema.fail(switch (err) {
+                try sema.report(switch (err) {
                     error.InvalidDigit => .invalid_digit,
                     error.TooLarge => .literal_too_large,
                 }, token);
@@ -159,7 +158,7 @@ fn evalName(sema: *Sema, token: Token) Allocator.Error!TypedValue {
         return .{ .ty = .type, .val = .{ .type = builtin } };
 
     const decl = sema.namespace.find(name) orelse {
-        _ = try sema.fail(.undefined_name, token);
+        try sema.report(.undefined_name, token);
         return .poisoned;
     };
     try sema.resolveDecl(decl);
@@ -202,7 +201,7 @@ pub const Expect = union(enum) {
 };
 
 /// The one place a value meets the type something needs it to be. Reports a refusal in
-/// the words of `ctx`; true means it fits.
+/// the words of `ctx`, true means it fits.
 pub fn expect(
     sema: *Sema,
     into: Type.Index,
@@ -214,7 +213,7 @@ pub fn expect(
     Type.coerce(sema.pool, tv.ty, into, tv.val) catch |refusal| {
         switch (refusal) {
             error.OutOfRange => try sema.reportRange(node, tv.val.int, into, ctx),
-            error.WrongType => try sema.reportMismatch(into, tv.ty, node, ctx),
+            error.WrongType => try sema.reportMismatch(into, tv, node, ctx),
         }
         return false;
     };
@@ -224,10 +223,11 @@ pub fn expect(
 fn reportMismatch(
     sema: *Sema,
     into: Type.Index,
-    from: Type.Index,
+    tv: TypedValue,
     node: Ast.Node.Index,
     ctx: Expect,
 ) Allocator.Error!void {
+    const from = tv.ty;
     const d = sema.diagnostics;
     const wanted = try sema.typeName(into);
     const got = try sema.typeName(from);
@@ -264,8 +264,11 @@ fn reportMismatch(
         },
         .text = if (returns_nothing)
             "nothing is returned here"
-        else
-            try d.print("this is '{s}'", .{got}),
+        else switch (tv.val) {
+            .int => |x| try d.print("this is {d}", .{x}),
+            .float => |x| try d.print("this is {d}", .{x}),
+            else => try d.print("this is '{s}'", .{got}),
+        },
         .marks = try sema.expectMark(ctx, into),
     });
 }
@@ -399,15 +402,7 @@ pub fn unOp(
         .negate => {
             if (operand.ty == .poisoned) return .poisoned;
             if (!Type.isNumber(operand.ty) or Type.isUnsignedInt(operand.ty)) {
-                try sema.diagnostics.add(.{
-                    .tag = .type_mismatch,
-                    .token = sema.tree.firstToken(node),
-                    .last = sema.tree.lastToken(node),
-                    .message = try sema.diagnostics.print(
-                        "'-' works on signed numbers, but this is '{s}'",
-                        .{try sema.typeName(operand.ty)},
-                    ),
-                });
+                try sema.reportNotNegatable(node, operand.ty);
                 return .poisoned;
             }
             const val = Comptime.negate(operand.val) catch {
@@ -417,6 +412,18 @@ pub fn unOp(
             return .{ .ty = operand.ty, .val = val };
         },
     }
+}
+
+fn reportNotNegatable(sema: *Sema, node: Ast.Node.Index, ty: Type.Index) Allocator.Error!void {
+    try sema.diagnostics.add(.{
+        .tag = .type_mismatch,
+        .token = sema.tree.firstToken(node),
+        .last = sema.tree.lastToken(node),
+        .message = try sema.diagnostics.print(
+            "'-' works on signed numbers, but this is '{s}'",
+            .{try sema.typeName(ty)},
+        ),
+    });
 }
 
 fn reportUncombinable(
@@ -538,7 +545,7 @@ fn typedNameIn(
     for (nodes[0..at]) |earlier| {
         const seen = sema.typedNameOf(earlier) orelse continue;
         if (std.mem.eql(u8, sema.tree.tokenSlice(seen.name_token), name)) {
-            _ = try sema.fail(.redeclared, declared.name_token);
+            try sema.report(.redeclared, declared.name_token);
             return null;
         }
     }
