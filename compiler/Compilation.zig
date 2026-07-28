@@ -6,12 +6,11 @@ const Io = std.Io;
 
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
-const codegen_c = @import("codegen/c.zig");
+const dump_nir = @import("dump.zig");
 const Type = @import("Type.zig");
 const Lower = @import("Lower.zig");
 const Namespace = @import("Namespace.zig");
 const Nir = @import("Nir.zig");
-const Region = @import("Region.zig");
 const Sema = @import("Sema.zig");
 const Source = @import("Source.zig");
 
@@ -24,17 +23,20 @@ diagnostics: Diagnostic.List,
 pub const Error = Allocator.Error || Source.LoadError || Io.Writer.Error;
 
 pub fn check(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8) Error!Compilation {
-    return build(gpa, io, dir, path, null);
+    return run(gpa, io, dir, path, null);
 }
 
-/// Checks `path`, writing C to `emit` when nothing is wrong with it. Emission happens
-/// here because the types and bodies live only for the length of this call.
-pub fn build(
+/// Checks `path` and writes its IR to `out`.
+pub fn dump(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8, out: *Io.Writer) Error!Compilation {
+    return run(gpa, io, dir, path, out);
+}
+
+fn run(
     gpa: Allocator,
     io: Io,
     dir: Io.Dir,
     path: []const u8,
-    emit: ?*Io.Writer,
+    out: ?*Io.Writer,
 ) Error!Compilation {
     var src = try Source.load(gpa, io, dir, path);
     errdefer src.deinit(gpa);
@@ -46,7 +48,7 @@ pub fn build(
     errdefer diagnostics.deinit();
 
     // A tree with holes in it would only produce errors about the holes.
-    if (tree.errors.len == 0) try analyze(gpa, &tree, &diagnostics, emit);
+    if (tree.errors.len == 0) try analyze(gpa, &tree, &diagnostics, out);
     diagnostics.sortBySource();
 
     return .{ .src = src, .tree = tree, .diagnostics = diagnostics };
@@ -56,7 +58,7 @@ fn analyze(
     gpa: Allocator,
     tree: *Ast,
     diagnostics: *Diagnostic.List,
-    emit: ?*Io.Writer,
+    out: ?*Io.Writer,
 ) Error!void {
     var types = try Type.init(gpa);
     defer types.deinit(gpa);
@@ -84,15 +86,9 @@ fn analyze(
         if (tree.nodeTag(decl.node) != .fn_decl) continue;
         const body = try Lower.run(&sema, decl);
         try functions.append(gpa, .{ .decl = decl, .body = body });
-        try Region.run(gpa, &types, tree, diagnostics, body);
     }
 
-    // Emitting a program the checker rejected would only produce C that lies.
-    if (emit) |w| {
-        if (diagnostics.all().len == 0) {
-            try codegen_c.emit(gpa, &types, tree, &namespace, functions.items, w);
-        }
-    }
+    if (out) |w| try dump_nir.write(gpa, &types, tree, functions.items, w);
 }
 
 pub fn deinit(c: *Compilation, gpa: Allocator) void {

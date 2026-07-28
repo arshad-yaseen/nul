@@ -31,9 +31,7 @@ pub const Tag = enum(u16) {
     not_callable = 14,
     wrong_arg_count = 15,
     copy_holds_pointer = 16,
-    does_not_live_long_enough = 17,
-    release_needs_a_name = 18,
-    used_after_release = 19,
+    // 17, 18 and 19 retired, free slots.
     out_of_range = 20,
     division_by_zero = 21,
     comptime_overflow = 22,
@@ -80,9 +78,6 @@ pub const Entry = struct {
             .copy_holds_pointer => try w.writeAll(
                 "this type holds a pointer, so copying it would relabel memory it does not own",
             ),
-            .does_not_live_long_enough => try w.print("'{s}' does not live long enough", .{name}),
-            .release_needs_a_name => try w.writeAll("an arena can only be released by name"),
-            .used_after_release => try w.print("'{s}' is used after its arena was released", .{name}),
             .out_of_range => try w.writeAll("this value does not fit its type"),
             .division_by_zero => try w.writeAll("division by zero"),
             .comptime_overflow => try w.writeAll("this computation is too large to represent"),

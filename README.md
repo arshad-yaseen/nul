@@ -41,11 +41,12 @@ allocator you were already passing down, without a borrow checker to learn?
 
 ## What is real today
 
-The compiler checks a single file, and emits C for what passes.
+The compiler takes a single file through tokens, tree, types, and a control flow
+graph IR.
 
 ```sh
 nul check example.nul     # report anything it can prove wrong
-nul build example.nul     # write the C, but only for a program that checks
+nul dump example.nul      # print the IR the file lowers to
 ```
 
 The model is written up in [memory_model.md](memory_model.md), the language in

@@ -134,36 +134,6 @@ pub fn nameOf(nir: Nir, ref: Ref) ?Ast.TokenIndex {
     return if (token == no_name) null else token;
 }
 
-/// The source span, `last` defaulting to `token` for a one-token instruction.
-pub fn spanOf(nir: Nir, ref: Ref) struct { Ast.TokenIndex, Ast.TokenIndex } {
-    const inst = nir.get(ref);
-    return .{ inst.token, if (inst.last == 0) inst.token else inst.last };
-}
-
-/// Every instruction this one reads, straight off the payload type. A call's args
-/// live in `extra`; its callee is a function value, which never needs checking.
-pub fn operandsOf(nir: *const Nir, data: Data, buf: *[2]Ref) []const Ref {
-    switch (data) {
-        .call => |call| return nir.refs(call.args),
-        inline else => |payload| {
-            const T = @TypeOf(payload);
-            if (T == Ref) {
-                buf[0] = payload;
-                return buf[0..1];
-            }
-            if (@typeInfo(T) != .@"struct") return buf[0..0];
-            var len: usize = 0;
-            inline for (@typeInfo(T).@"struct".fields) |field| {
-                if (field.type == Ref) {
-                    buf[len] = @field(payload, field.name);
-                    len += 1;
-                }
-            }
-            return buf[0..len];
-        },
-    }
-}
-
 pub fn successorsOf(term: Term, buf: *[2]Block.Ref) []const Block.Ref {
     switch (term) {
         .ret => return buf[0..0],
