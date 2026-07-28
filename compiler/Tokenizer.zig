@@ -1,6 +1,5 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const assert = std.debug.assert;
 
 const Token = @import("Token.zig");
 
@@ -43,7 +42,7 @@ pub fn next(self: *Tokenizer) Token {
             0 => {
                 if (self.index != src.len) continue :state .invalid;
                 // A file ending without a newline still ends its last statement.
-                if (Token.traits[@intFromEnum(self.prev)].ends_stmt) break :state .semi;
+                if (Token.endsStatement(self.prev)) break :state .semi;
                 break :state .eof;
             },
             ' ', '\t', '\r' => {
@@ -52,7 +51,7 @@ pub fn next(self: *Tokenizer) Token {
                 continue :state .start;
             },
             '\n' => {
-                if (Token.traits[@intFromEnum(self.prev)].ends_stmt) {
+                if (Token.endsStatement(self.prev)) {
                     self.index += 1;
                     break :state .semi;
                 }
@@ -94,7 +93,7 @@ pub fn next(self: *Tokenizer) Token {
             self.index += 1;
             switch (src[self.index]) {
                 'a'...'z', 'A'...'Z', '_', '0'...'9' => continue :state .ident,
-                else => break :state Token.keywordOrIdent(src.ptr, start, self.index - start),
+                else => break :state Token.keywordOrIdent(src[start..self.index]),
             }
         },
 
@@ -233,7 +232,6 @@ inline fn singleChar(self: *Tokenizer, tag: Token.Tag) Token.Tag {
     return tag;
 }
 
-/// Longest-match for a two-character operator.
 inline fn pairOrSingle(
     self: *Tokenizer,
     second: u8,
@@ -246,16 +244,13 @@ inline fn pairOrSingle(
     return if_paired;
 }
 
-/// The byte just past a token. Fixed-length tags answer from the table, and the four
-/// variable-length ones rescan.
+/// The byte just past a token. Fixed text answers from the lexeme; the rest rescan.
 pub fn tokenEnd(src: [:0]const u8, tag: Token.Tag, start: u32) u32 {
-    const fixed = Token.traits[@intFromEnum(tag)].lexeme_len;
-    if (fixed != 0) return start + fixed;
+    if (tag.lexeme()) |text| return start + @as(u32, @intCast(text.len));
     if (tag == .eof) return start;
 
     var t: Tokenizer = .{ .src = src, .index = start, .prev = .semi };
-    const tok = t.next();
-    assert(tok.start == start);
+    _ = t.next();
     return t.index;
 }
 
@@ -264,22 +259,11 @@ pub const TokenList = std.MultiArrayList(struct {
     start: u32,
 });
 
-pub fn estimatedTokenCount(len: usize) usize {
-    return len / 4 + len / 16 + 16;
-}
-
-/// Tokenizes a buffer into struct-of-arrays form.
 pub fn tokenizeAll(gpa: Allocator, src: [:0]const u8, tokens: *TokenList) Allocator.Error!void {
-    try tokens.ensureTotalCapacity(gpa, estimatedTokenCount(src.len));
-
     var t: Tokenizer = .init(src);
     while (true) {
         const tok = t.next();
-        if (tokens.len == tokens.capacity) {
-            @branchHint(.cold);
-            try tokens.ensureTotalCapacity(gpa, tokens.capacity + tokens.capacity / 2 + 16);
-        }
-        tokens.appendAssumeCapacity(.{ .tag = tok.tag, .start = tok.start });
+        try tokens.append(gpa, .{ .tag = tok.tag, .start = tok.start });
         if (tok.tag == .eof) break;
     }
 }

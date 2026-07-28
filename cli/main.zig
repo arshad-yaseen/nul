@@ -153,7 +153,6 @@ fn compile(
     return .ok;
 }
 
-/// `hello.nul` becomes `hello.c`, next to where it came from.
 fn cPath(arena: std.mem.Allocator, file: []const u8) ![]const u8 {
     const stem = if (std.mem.lastIndexOfScalar(u8, file, '.')) |dot| file[0..dot] else file;
     return std.fmt.allocPrint(arena, "{s}.c", .{stem});

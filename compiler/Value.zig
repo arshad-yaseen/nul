@@ -1,5 +1,5 @@
-//! What an expression yields, the type it has, and what the compiler knows of it before
-//! the program runs.
+//! What an expression yields, its type, and what the compiler knows of it before the
+//! program runs.
 
 const std = @import("std");
 
@@ -23,13 +23,11 @@ pub const Known = union(enum) {
 /// What analysis yields once it has reported why it has no answer.
 pub const poisoned: Value = .{ .ty = .poisoned };
 
-/// A type used as a value, which is what a type declaration binds.
 pub fn ofType(ty: Type.Index) Value {
     if (ty == .poisoned) return .poisoned;
     return .{ .ty = .type, .known = .{ .type = ty } };
 }
 
-/// The type this value names, when it names one.
 pub fn asType(value: Value) ?Type.Index {
     return switch (value.known) {
         .type => |ty| ty,
@@ -73,8 +71,7 @@ fn isFloatLiteral(text: []const u8) bool {
 /// Comptime integers are `i128`, so a fold past that edge reports rather than wraps.
 pub const FoldError = error{ DivisionByZero, Overflow };
 
-/// Kinds are checked before folding, so a mismatch here was already reported and folds
-/// to `runtime`.
+/// Kinds are checked before folding, so a mismatch here was already reported.
 pub fn fold(op: Ast.BinaryOp, a: Known, b: Known) FoldError!Known {
     if (a == .runtime or b == .runtime) return .runtime;
 
@@ -112,10 +109,7 @@ pub fn fold(op: Ast.BinaryOp, a: Known, b: Known) FoldError!Known {
         .add => .{ .int = std.math.add(i128, x, y) catch return error.Overflow },
         .sub => .{ .int = std.math.sub(i128, x, y) catch return error.Overflow },
         .mul => .{ .int = std.math.mul(i128, x, y) catch return error.Overflow },
-        .div => .{ .int = std.math.divTrunc(i128, x, y) catch |err| return switch (err) {
-            error.DivisionByZero => error.DivisionByZero,
-            error.Overflow => error.Overflow,
-        } },
+        .div => .{ .int = try std.math.divTrunc(i128, x, y) },
         .mod => if (y == 0) error.DivisionByZero else .{ .int = if (y == -1) 0 else @rem(x, y) },
         .equal => .{ .bool = x == y },
         .not_equal => .{ .bool = x != y },

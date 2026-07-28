@@ -1,0 +1,22 @@
+/// Every arm returns, so the end of the body is unreachable, and an end nothing
+/// reaches is not a path that forgot to return.
+fn grade(n: i64) i64 {
+    if n > 90 {
+        return 4
+    } else if n > 80 {
+        return 3
+    } else {
+        return 1
+    }
+}
+
+/// A bare loop can only be left by the 'return', so the end is unreachable too.
+fn first_square_past(limit: i64) i64 {
+    var n: i64 = 1
+    for {
+        if n * n > limit {
+            return n * n
+        }
+        n = n + 1
+    }
+}

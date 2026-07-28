@@ -1,0 +1,9 @@
+/// The 'else' arm returns and the 'then' arm falls through, so the end of the body
+/// is reachable with nothing produced.
+fn sign(n: i64) i64 {
+    if n < 0 {
+        let flipped = 0 - n
+    } else {
+        return n
+    }
+}

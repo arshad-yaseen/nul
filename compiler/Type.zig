@@ -10,18 +10,17 @@ const Value = @import("Value.zig");
 
 const Type = @This();
 
-/// `Index` is a position here.
 entries: std.MultiArrayList(Entry),
-/// Variable-length records, meaning struct bodies and signatures.
+/// Struct bodies and signatures.
 extra: std.ArrayList(u32),
-/// NUL terminated. `String` is a position here.
+/// NUL terminated; `String` is a position here.
 strings: std.ArrayList(u8),
 /// In lockstep with `entries`, so map position N describes type N.
 dedup: std.AutoArrayHashMapUnmanaged(void, void),
 next_nominal_id: u32,
 
-/// The types that exist before any source is read, in seeding order. Every member up to
-/// `poisoned` is spelled the way Nul spells it.
+/// The types that exist before any source is read, in seeding order. Everything up
+/// to `poisoned` is spelled the way Nul spells it.
 pub const Index = enum(u32) {
     void,
     never,
@@ -56,27 +55,17 @@ pub const Func = struct { params: []const Index, return_type: Index };
 
 // Builtins
 
-/// Null once `index` is past the builtins.
 pub fn builtinName(index: Index) ?[]const u8 {
     return std.enums.tagName(Index, index);
 }
 
-/// Every spelling that names a builtin, the types themselves and the aliases.
-pub const builtin_names: [@intFromEnum(Index.poisoned) + 2][]const u8 = blk: {
-    const fields = @typeInfo(Index).@"enum".fields;
-    const count = @intFromEnum(Index.poisoned); // everything before it is spellable
-    var names: [count + 2][]const u8 = undefined;
-    for (names[0..count], fields[0..count]) |*slot, field| slot.* = field.name;
-    names[count] = "int";
-    names[count + 1] = "uint";
-    break :blk names;
-};
-
+/// Every spelling that names a builtin: everything before `poisoned`, plus aliases.
 const builtin_map = std.StaticStringMap(Index).initComptime(blk: {
+    const fields = @typeInfo(Index).@"enum".fields;
     const count = @intFromEnum(Index.poisoned);
     var kvs: [count + 2]struct { []const u8, Index } = undefined;
-    for (kvs[0..count], builtin_names[0..count], 0..) |*kv, name, at| {
-        kv.* = .{ name, @enumFromInt(at) };
+    for (kvs[0..count], fields[0..count]) |*kv, field| {
+        kv.* = .{ field.name, @enumFromInt(field.value) };
     }
     kvs[count] = .{ "int", .i64 };
     kvs[count + 1] = .{ "uint", .u64 };
@@ -168,11 +157,10 @@ pub fn runtime(ty: Index) Index {
 
 // Relations
 
-/// Why a coercion was refused. The two need different words, since kinds not agreeing
-/// is a mistake about types and a value not fitting is a mistake about one value.
+/// Kinds not agreeing is a mistake about types; a value not fitting is about one value.
 pub const Refusal = error{ WrongType, OutOfRange };
 
-/// Whether `value` reaches `destination` without changing meaning. Its type has to
+/// Whether `value` reaches `destination` without changing meaning: its type has to
 /// agree in kind, and what is known of it has to fit.
 pub fn coerce(types: *const Type, value: Value, destination: Index) Refusal!void {
     const source = value.ty;
@@ -210,8 +198,7 @@ pub fn coerce(types: *const Type, value: Value, destination: Index) Refusal!void
     }
 }
 
-/// `usize` and `isize` have no range yet, but an unsigned type of any width holds
-/// nothing negative.
+/// `usize` and `isize` have no range yet, but no unsigned type holds anything negative.
 fn knownFits(known: Value.Known, destination: Index) Refusal!void {
     if (known != .int) return;
     if (intRange(destination)) |range| {
@@ -221,8 +208,8 @@ fn knownFits(known: Value.Known, destination: Index) Refusal!void {
     }
 }
 
-/// The type two operands settle on, or null when neither reaches the other. Only kinds
-/// are consulted, since whether each side fits the peer is its own check.
+/// The type two operands settle on, or null when neither reaches the other. Whether
+/// each side fits the peer is its own check.
 pub fn peer(types: *const Type, a: Index, b: Index) ?Index {
     if (a == .poisoned or b == .poisoned) return .poisoned;
     if (types.coerce(.{ .ty = a }, b)) |_| return b else |_| {}
@@ -254,14 +241,14 @@ pub fn isStruct(types: *const Type, ty: Index) bool {
     return types.keyOf(ty) == .struct_type;
 }
 
-/// Whether a value can contain an access path to arena memory. `Arena.copy` requires it,
-/// since copying a pointer relabels its region without moving what it points at.
+/// Whether a value can contain an access path to arena memory. `Arena.copy` requires
+/// it, since copying a pointer relabels its region without moving what it points at.
 pub fn isFlat(types: *const Type, index: Index) bool {
     assert(types.isDefined(index));
     return types.entries.items(.is_flat)[@intFromEnum(index)];
 }
 
-/// Whether `Arena.copy` can duplicate everything the value owns, meaning a flat type or
+/// Whether `Arena.copy` can duplicate everything the value owns: a flat type, or
 /// `str`, whose characters it copies.
 pub fn isCopyable(types: *const Type, ty: Index) bool {
     return ty == .str or types.isFlat(ty);
@@ -269,9 +256,11 @@ pub fn isCopyable(types: *const Type, ty: Index) bool {
 
 /// False only between `declareStruct` and `defineStruct`.
 pub fn isDefined(types: *const Type, index: Index) bool {
-    const entry = types.entries.get(@intFromEnum(index));
-    if (entry.tag != .struct_type) return true;
-    return types.extraData(StructRecord, entry.payload).fields_start != StructRecord.body_undefined;
+    return switch (types.entries.items(.data)[@intFromEnum(index)]) {
+        .struct_type => |at| types.extraData(StructRecord, at).fields_start !=
+            StructRecord.body_undefined,
+        else => true,
+    };
 }
 
 // Construction
@@ -294,8 +283,8 @@ pub fn funcType(
     return types.intern(gpa, .{ .func = .{ .params = params, .return_type = return_type } });
 }
 
-/// Mints the index before the body is known, so `*Node` can be interned while `Node`'s
-/// fields still resolve. Pair with `defineStruct`.
+/// Mints the index before the body is known, so `*Node` interns while `Node`'s fields
+/// still resolve. Pair with `defineStruct`, which is also where flatness is decided.
 pub fn declareStruct(types: *Type, gpa: Allocator, name: String) Allocator.Error!Index {
     const id: NominalId = @enumFromInt(types.next_nominal_id);
     types.next_nominal_id += 1;
@@ -307,7 +296,6 @@ pub fn declareStruct(types: *Type, gpa: Allocator, name: String) Allocator.Error
     return index;
 }
 
-/// Also the moment flatness is decided.
 pub fn defineStruct(
     types: *Type,
     gpa: Allocator,
@@ -375,7 +363,6 @@ pub fn stringBytes(types: *const Type, name: String) [:0]const u8 {
 
 // Spelling
 
-/// Writes `ty` as a programmer would read it back.
 pub fn spell(types: *const Type, ty: Index, arena: Allocator) Allocator.Error![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     types.write(ty, &out.writer) catch return error.OutOfMemory;
@@ -404,16 +391,15 @@ fn write(types: *const Type, ty: Index, out: *Io.Writer) Io.Writer.Error!void {
     }
 }
 
-// Storage. Nothing below is visible outside this file. Identity is described by a
-// `Key`, stored as an `Entry`, and looked up through the deduplicating map.
+// Storage. Nothing below is visible outside this file: a `Key` describes identity,
+// an `Entry` stores it, and the deduplicating map looks it up.
 
-/// All that keeps one nominal type apart from another. Minted here, not derived from the
-/// declaration site, so two files cannot mint the same one.
+/// All that keeps one nominal type apart from another. Minted here rather than derived
+/// from the declaration site, so two files cannot mint the same one.
 const NominalId = enum(u32) { _ };
 
 /// What `intern` looks a type up by. Never stored, and excludes anything derived.
 const Key = union(enum) {
-    /// Its own index. A builtin has no structure to describe it by.
     builtin: Index,
     pointer: Pointer,
     /// Keyed on the declaration, never the shape, so the body can arrive later.
@@ -422,6 +408,7 @@ const Key = union(enum) {
 
     const Pointer = struct { pointee: Index, is_mutable: bool };
 
+    /// `std.meta.eql` would compare the params slice by pointer, so this stays by hand.
     fn eql(a: Key, b: Key) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
         return switch (a) {
@@ -434,46 +421,28 @@ const Key = union(enum) {
         };
     }
 
+    /// Deep, so `func.params` hashes by content, matching `eql`.
     fn hash(key: Key) u32 {
         var hasher: std.hash.Wyhash = .init(0);
-        hasher.update(std.mem.asBytes(&std.meta.activeTag(key)));
-        switch (key) {
-            .builtin => |x| hasher.update(std.mem.asBytes(&x)),
-            .pointer => |x| {
-                hasher.update(std.mem.asBytes(&x.pointee));
-                const mutable: u8 = @intFromBool(x.is_mutable);
-                hasher.update(std.mem.asBytes(&mutable));
-            },
-            .struct_type => |x| hasher.update(std.mem.asBytes(&x)),
-            .func => |x| {
-                hasher.update(std.mem.sliceAsBytes(x.params));
-                hasher.update(std.mem.asBytes(&x.return_type));
-            },
-        }
+        std.hash.autoHashStrat(&hasher, key, .Deep);
         return @truncate(hasher.final());
     }
 };
 
-/// A `Key` in stored form. A struct's name and fields live in `extra` rather than its
-/// key, so `defineStruct` can fill them in without changing the hash.
+/// A `Key` in stored form. A struct's name and fields live in `extra` rather than in
+/// its key, so `defineStruct` can fill them in without changing identity.
 const Entry = struct {
-    tag: Tag,
-    /// Read according to `tag`.
-    payload: u32,
+    data: Data,
     /// Decided when the entry becomes complete.
     is_flat: bool,
 };
 
-const Tag = enum(u8) {
-    /// `payload` unused, a builtin is its own index.
+const Data = union(enum) {
     builtin,
-    /// `payload` is the pointee. Mutability is the tag, not a payload bit.
-    pointer,
-    pointer_mut,
-    /// `payload` locates a `StructRecord`.
-    struct_type,
-    /// `payload` locates a `FuncRecord`, then `param_count` parameter types.
-    func,
+    pointer: Key.Pointer,
+    struct_type: u32,
+    /// Locates a `FuncRecord`, then its parameter types.
+    func: u32,
 };
 
 const StructRecord = struct {
@@ -491,7 +460,7 @@ const FuncRecord = struct {
     param_count: u32,
 };
 
-/// Reads a record whose fields were stored one `u32` each, in declaration order.
+/// Reads a record stored one `u32` per field, in declaration order.
 fn extraData(types: *const Type, comptime T: type, at: u32) T {
     var record: T = undefined;
     inline for (@typeInfo(T).@"struct".fields, at..) |field, i| {
@@ -517,9 +486,10 @@ fn addExtra(types: *Type, gpa: Allocator, record: anytype) Allocator.Error!u32 {
 }
 
 fn structPayload(types: *const Type, index: Index) u32 {
-    const entry = types.entries.get(@intFromEnum(index));
-    assert(entry.tag == .struct_type);
-    return entry.payload;
+    return switch (types.entries.items(.data)[@intFromEnum(index)]) {
+        .struct_type => |at| at,
+        else => unreachable, // asked of a type that is not a struct
+    };
 }
 
 const KeyAdapter = struct {
@@ -543,26 +513,20 @@ fn intern(types: *Type, gpa: Allocator, key: Key) Allocator.Error!Index {
 
     const entry: Entry = switch (key) {
         .builtin => |builtin| .{
-            .tag = .builtin,
-            .payload = 0,
+            .data = .builtin,
             .is_flat = switch (builtin) {
                 .str, .Arena => false,
                 else => true,
             },
         },
-        .pointer => |pointer| .{
-            .tag = if (pointer.is_mutable) .pointer_mut else .pointer,
-            .payload = @intFromEnum(pointer.pointee),
-            .is_flat = false,
-        },
+        .pointer => |pointer| .{ .data = .{ .pointer = pointer }, .is_flat = false },
         .struct_type => |id| .{
-            .tag = .struct_type,
-            .payload = try types.addExtra(gpa, StructRecord{
+            .data = .{ .struct_type = try types.addExtra(gpa, StructRecord{
                 .id = id,
                 .name = .empty,
                 .field_count = 0,
                 .fields_start = StructRecord.body_undefined,
-            }),
+            }) },
             // Unknowable until the body arrives.
             .is_flat = false,
         },
@@ -573,7 +537,7 @@ fn intern(types: *Type, gpa: Allocator, key: Key) Allocator.Error!Index {
             });
             try types.extra.appendSlice(gpa, @ptrCast(func.params));
             // Code outlives every arena.
-            break :blk .{ .tag = .func, .payload = at, .is_flat = true };
+            break :blk .{ .data = .{ .func = at }, .is_flat = true };
         },
     };
 
@@ -583,19 +547,15 @@ fn intern(types: *Type, gpa: Allocator, key: Key) Allocator.Error!Index {
 
 /// A nominal type's body is not part of this. See `fieldTypes`.
 fn keyOf(types: *const Type, index: Index) Key {
-    const entry = types.entries.get(@intFromEnum(index));
-    return switch (entry.tag) {
+    return switch (types.entries.items(.data)[@intFromEnum(index)]) {
         .builtin => .{ .builtin = index },
-        .pointer, .pointer_mut => .{ .pointer = .{
-            .pointee = @enumFromInt(entry.payload),
-            .is_mutable = entry.tag == .pointer_mut,
-        } },
-        .struct_type => .{
-            .struct_type = types.extraData(StructRecord, entry.payload).id,
+        .pointer => |pointer| .{ .pointer = pointer },
+        .struct_type => |at| .{
+            .struct_type = types.extraData(StructRecord, at).id,
         },
-        .func => blk: {
-            const record = types.extraData(FuncRecord, entry.payload);
-            const params_at = entry.payload + @typeInfo(FuncRecord).@"struct".fields.len;
+        .func => |at| blk: {
+            const record = types.extraData(FuncRecord, at);
+            const params_at = at + @typeInfo(FuncRecord).@"struct".fields.len;
             break :blk .{ .func = .{
                 .return_type = record.return_type,
                 .params = @ptrCast(types.extra.items[params_at..][0..record.param_count]),

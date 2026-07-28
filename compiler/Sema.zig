@@ -1,6 +1,4 @@
-//! Resolves declarations, and hosts the checks every pass shares. `expect` is the one
-//! door a value walks through to become another type, and `binOp` with `unOp` say what
-//! each operator means. `Lower` calls both, so every site is judged by the same rules.
+//! Resolves declarations.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -21,7 +19,7 @@ types: *Type,
 tree: *const Ast,
 namespace: *Namespace,
 diagnostics: *Diagnostic.List,
-/// Every type list under construction. Each user shrinks back to its entry length.
+/// Type lists under construction. Each user shrinks back to its entry length.
 scratch: std.ArrayList(Type.Index) = .empty,
 
 pub fn deinit(sema: *Sema) void {
@@ -31,69 +29,6 @@ pub fn deinit(sema: *Sema) void {
 
 pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
     return sema.types.spell(ty, sema.diagnostics.allocator());
-}
-
-// Suggestions
-
-/// Tracks the nearest spelling seen so far, for a did you mean note. Callers offer every
-/// name in scope, so `Lower` can add its locals to what `Sema` already knows.
-pub const Closest = struct {
-    wanted: []const u8,
-    best: ?[]const u8 = null,
-    distance: usize = std.math.maxInt(usize),
-
-    pub fn offer(closest: *Closest, candidate: []const u8) void {
-        const distance = editDistance(closest.wanted, candidate);
-        if (distance < closest.distance) {
-            closest.distance = distance;
-            closest.best = candidate;
-        }
-    }
-
-    /// Null unless the nearest name is nearer than it is different, so an unrelated
-    /// name is never suggested.
-    pub fn result(closest: Closest) ?[]const u8 {
-        return if (closest.distance <= @max(1, closest.wanted.len / 3)) closest.best else null;
-    }
-};
-
-/// Every name a container declaration or a builtin makes visible.
-pub fn closestTo(sema: *Sema, wanted: []const u8) Closest {
-    var closest: Closest = .{ .wanted = wanted };
-    for (sema.namespace.all()) |decl| closest.offer(sema.tree.tokenSlice(decl.name_token));
-    for (Type.builtin_names) |name| closest.offer(name);
-    return closest;
-}
-
-/// `did you mean 'limit'?`, when something near enough was declared.
-pub fn didYouMean(sema: *Sema, closest: Closest) Allocator.Error![]const Diagnostic.Note {
-    const near = closest.result() orelse return &.{};
-    return sema.diagnostics.notes(&.{.{
-        .kind = .help,
-        .text = try sema.diagnostics.print("did you mean '{s}'?", .{near}),
-    }});
-}
-
-const max_compared = 64;
-
-fn editDistance(a: []const u8, b: []const u8) usize {
-    if (a.len == 0) return b.len;
-    if (b.len == 0) return a.len;
-    if (a.len > max_compared or b.len > max_compared) return std.math.maxInt(usize);
-
-    var prev: [max_compared + 1]usize = undefined;
-    var curr: [max_compared + 1]usize = undefined;
-    for (prev[0 .. b.len + 1], 0..) |*slot, at| slot.* = at;
-
-    for (a, 1..) |from, row| {
-        curr[0] = row;
-        for (b, 1..) |into, col| {
-            const swap: usize = if (from == into) 0 else 1;
-            curr[col] = @min(@min(curr[col - 1] + 1, prev[col] + 1), prev[col - 1] + swap);
-        }
-        @memcpy(prev[0 .. b.len + 1], curr[0 .. b.len + 1]);
-    }
-    return prev[b.len];
 }
 
 // Declarations
@@ -162,8 +97,8 @@ fn resolveImport(sema: *Sema, decl: *Decl) void {
 
 // Comptime evaluation
 
-/// Evaluates an expression no running program computes, meaning a container
-/// initializer or a type position. Types are values, so one walk serves both.
+/// Evaluates an expression no running program computes: a container initializer or a
+/// type position. Types are values, so one walk serves both.
 pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Value {
     switch (sema.tree.viewOf(node)) {
         .number_literal => |token| {
@@ -225,7 +160,6 @@ fn reportBadLiteral(sema: *Sema, err: Value.ParseError, token: Token) Allocator.
     });
 }
 
-/// The edge that makes resolution order independent.
 fn evalName(sema: *Sema, token: Token) Allocator.Error!Value {
     const name = sema.tree.tokenSlice(token);
     if (Type.builtinNamed(name)) |builtin| return .ofType(builtin); // nothing can rebind `i64`
@@ -235,7 +169,6 @@ fn evalName(sema: *Sema, token: Token) Allocator.Error!Value {
             .tag = .undefined_name,
             .token = token,
             .text = "not found in this scope",
-            .notes = try sema.didYouMean(sema.closestTo(name)),
         });
         return .poisoned;
     };
@@ -260,7 +193,6 @@ pub fn evalTypeExpr(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Type.Inde
     };
 }
 
-/// Marks where a named value was declared, so a type position shows what it found.
 fn declaredMark(sema: *Sema, node: Ast.Node.Index) Allocator.Error![]const Diagnostic.Mark {
     const token = switch (sema.tree.viewOf(node)) {
         .ident => |it| it,
@@ -290,8 +222,8 @@ pub const Expect = union(enum) {
     operand: struct { op: Token },
 };
 
-/// The one place a value meets the type something needs it to be. Reports a refusal in
-/// the words of `ctx`, and returns whether it fits.
+/// The one place a value meets the type something needs it to be. Reports in the words
+/// of `ctx`, and returns whether it fits.
 pub fn expect(
     sema: *Sema,
     into: Type.Index,
@@ -351,8 +283,7 @@ fn reportMismatch(
                 sema.tree.tokenSlice(it.op), wanted, got,
             }),
         },
-        // A known value tells more than its type. `this is 3.5` explains what
-        // `this is 'comptime_float'` only classifies.
+        // A known value tells more than its type: `3.5` beats `comptime_float`.
         .text = if (returns_nothing)
             "nothing is returned here"
         else switch (value.known) {
@@ -417,7 +348,7 @@ fn reportRange(
 
 // Operators
 
-/// Types and folds one binary operation. The operands settle on a peer type, each side
+/// Types and folds one binary operation: the operands settle on a peer type, each side
 /// has to fit it, and what folding proves is reported here.
 pub fn binOp(
     sema: *Sema,
@@ -569,8 +500,7 @@ fn reportOperandKind(
     });
 }
 
-/// An overflowed fold points at where the operands settled, since that is the type that
-/// refused the result.
+/// An overflowed fold points at where the operands settled, the type that refused it.
 fn reportFoldRange(
     sema: *Sema,
     node: Ast.Node.Index,
@@ -628,8 +558,8 @@ fn reportFold(sema: *Sema, err: Value.FoldError, token: Token) Allocator.Error!v
 
 // Composite types
 
-/// Null when there is nothing to declare, the parser rejected it, or an earlier sibling
-/// took the name. A `param` and a `field` are the same shape, so one walk serves both.
+/// Null when there is nothing to declare, or an earlier sibling took the name. A `param`
+/// and a `field` are the same shape, so one walk serves both.
 fn typedNameIn(
     sema: *Sema,
     nodes: []const Ast.Node.Index,
@@ -685,8 +615,8 @@ fn evalStructType(
     return ty;
 }
 
-/// `blame` is the owning declaration when there is one, since a cycle belongs to the
-/// type rather than to whichever field happened to close it.
+/// `blame` is the owning declaration, since a cycle belongs to the type rather than to
+/// whichever field happened to close it.
 fn resolveStructFields(
     sema: *Sema,
     ty: Type.Index,
@@ -766,8 +696,8 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
     return sema.types.funcType(sema.gpa, sema.scratch.items[base..], return_type);
 }
 
-/// A function allocates its results into exactly one arena, which is what lets a caller
-/// know where a result lives without anyone writing a lifetime down.
+/// A function allocates into exactly one arena, which is what lets a caller know where
+/// a result lives without anyone writing a lifetime down.
 fn tooManyArenas(
     sema: *Sema,
     function: Ast.View.FnDecl,

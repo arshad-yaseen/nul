@@ -1,7 +1,13 @@
-//! Emits C from `Nir`. One C local per instruction, since an instruction's index already
-//! names its value and nothing is ever assigned twice.
+//! Emits C from `Nir`. One C local per instruction, since an instruction's index
+//! already names its value and nothing is assigned twice, except a slot, which is
+//! exactly the thing the source mutates.
+//!
+//! Control flow is labels and gotos, one label per block anything jumps to, and every
+//! declaration is hoisted, since a C local declared inside a branch is not visible
+//! after it.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const Ast = @import("../Ast.zig");
@@ -9,24 +15,30 @@ const Namespace = @import("../Namespace.zig");
 const Nir = @import("../Nir.zig");
 const Type = @import("../Type.zig");
 
+const Ref = Nir.Ref;
+
+pub const Error = Allocator.Error || Io.Writer.Error;
+
 pub fn emit(
+    gpa: Allocator,
     types: *const Type,
     tree: *const Ast,
     namespace: *Namespace,
     functions: []const Nir.Function,
     w: *Io.Writer,
-) Io.Writer.Error!void {
-    const e: Emit = .{ .types = types, .tree = tree, .namespace = namespace, .w = w };
+) Error!void {
+    const e: Emit = .{ .gpa = gpa, .types = types, .tree = tree, .namespace = namespace, .w = w };
     try e.run(functions);
 }
 
 const Emit = struct {
+    gpa: Allocator,
     types: *const Type,
     tree: *const Ast,
     namespace: *Namespace,
     w: *Io.Writer,
 
-    fn run(e: Emit, functions: []const Nir.Function) Io.Writer.Error!void {
+    fn run(e: Emit, functions: []const Nir.Function) Error!void {
         const w = e.w;
         try w.writeAll(prelude);
         try e.structs();
@@ -44,8 +56,7 @@ const Emit = struct {
 
     // Declarations
 
-    /// Every struct is forward declared before any is defined, which is what lets two of them
-    /// point at each other.
+    /// Every struct is forward declared before any is defined, so two can point at each other.
     fn structs(e: Emit) Io.Writer.Error!void {
         for (e.namespace.all()) |decl| {
             const ty = e.structOf(decl) orelse continue;
@@ -86,28 +97,124 @@ const Emit = struct {
         try e.w.writeByte(')');
     }
 
-    fn function(e: Emit, b: Nir.Function) Io.Writer.Error!void {
+    fn function(e: Emit, b: Nir.Function) Error!void {
+        const nir = b.body;
+        const reach = try Nir.reachableBlocks(e.gpa, nir.blocks);
+        defer e.gpa.free(reach);
+        const labeled = try e.labelTargets(nir, reach);
+        defer e.gpa.free(labeled);
+        const places = try e.storePlaces(nir);
+        defer e.gpa.free(places);
+
         try e.signature(b);
         try e.w.writeAll(" {\n");
-        for (b.body.insts, 0..) |inst, at| {
-            if (isPlace(b.body, @intCast(at))) continue;
-            try e.instruction(b.body, @intCast(at), inst);
+
+        // Hoisted, so a value born in one branch is still nameable after the join.
+        for (nir.blocks, 0..) |blk, at| {
+            if (!reach[at]) continue;
+            for (blk.first..blk.end()) |i| {
+                const inst = nir.insts[i];
+                if (!needsLocal(inst, places[i])) continue;
+                try e.w.writeAll("    ");
+                try e.writeType(inst.val.ty);
+                try e.w.print(" t{d};\n", .{i});
+            }
+        }
+
+        for (nir.blocks, 0..) |blk, at| {
+            if (!reach[at]) continue;
+            if (labeled[at]) try e.w.print("b{d}:;\n", .{at});
+            for (blk.first..blk.end()) |i| {
+                try e.instruction(nir, @intCast(i), nir.insts[i], places[i]);
+            }
+            try e.terminator(nir, blk.term, nextEmitted(reach, at));
         }
         try e.w.writeAll("}\n");
     }
 
-    /// Whether a `field` is only ever written through, in which case loading it would be a
-    /// dead read of the very memory about to be overwritten.
-    fn isPlace(nir: Nir, at: u32) bool {
-        if (nir.viewOf(nir.insts[at]) != .field) return false;
-        for (nir.insts) |inst| {
-            const store = switch (nir.viewOf(inst)) {
-                .store_field => |it| it,
-                else => continue,
-            };
-            if (store.place == at) return true;
+    /// Fields only ever written through. Loading one would be a dead read of the memory
+    /// about to be overwritten.
+    fn storePlaces(e: Emit, nir: Nir) Allocator.Error![]bool {
+        const places = try e.gpa.alloc(bool, nir.insts.len);
+        @memset(places, false);
+        for (nir.insts) |inst| switch (inst.data) {
+            .store_field => |it| places[it.place.i()] = true,
+            else => {},
+        };
+        return places;
+    }
+
+    /// Blocks some emitted goto targets. A jump onto the next block is a fallthrough.
+    fn labelTargets(e: Emit, nir: Nir, reach: []const bool) Allocator.Error![]bool {
+        const labeled = try e.gpa.alloc(bool, nir.blocks.len);
+        @memset(labeled, false);
+        for (nir.blocks, 0..) |blk, at| {
+            if (!reach[at]) continue;
+            const next = nextEmitted(reach, at);
+            switch (blk.term) {
+                .jump => |t| if (@intFromEnum(t) != next) {
+                    labeled[@intFromEnum(t)] = true;
+                },
+                .branch => |it| {
+                    const then = @intFromEnum(it.then);
+                    const els = @intFromEnum(it.els);
+                    if (then == next) {
+                        labeled[els] = true;
+                    } else {
+                        labeled[then] = true;
+                        if (els != next) labeled[els] = true;
+                    }
+                },
+                .ret => {},
+            }
         }
-        return false;
+        return labeled;
+    }
+
+    fn nextEmitted(reach: []const bool, at: usize) usize {
+        var next = at + 1;
+        while (next < reach.len and !reach[next]) next += 1;
+        return next;
+    }
+
+    fn terminator(e: Emit, nir: Nir, term: Nir.Term, next: usize) Io.Writer.Error!void {
+        switch (term) {
+            .jump => |t| {
+                if (@intFromEnum(t) == next) return; // fallthrough
+                try e.w.print("    goto b{d};\n", .{@intFromEnum(t)});
+            },
+            .branch => |it| {
+                const then = @intFromEnum(it.then);
+                const els = @intFromEnum(it.els);
+                if (then == next) {
+                    try e.w.writeAll("    if (!");
+                    try e.ref(nir, it.cond);
+                    try e.w.print(") goto b{d};\n", .{els});
+                } else {
+                    try e.w.writeAll("    if (");
+                    try e.ref(nir, it.cond);
+                    try e.w.print(") goto b{d};\n", .{then});
+                    if (els != next) try e.w.print("    goto b{d};\n", .{els});
+                }
+            },
+            .ret => |r| {
+                const value = r.value orelse return e.w.writeAll("    return;\n");
+                try e.w.writeAll("    return ");
+                try e.ref(nir, value);
+                try e.w.writeAll(";\n");
+            },
+        }
+    }
+
+    /// Whether an instruction owns a hoisted C local. Parameters are named by the
+    /// signature, and a declaration is spelled where it is used.
+    fn needsLocal(inst: Nir.Inst, is_place: bool) bool {
+        if (inst.val.ty == .void or inst.val.isKnown()) return false;
+        return switch (inst.data) {
+            .arg, .decl, .constant => false,
+            .field => !is_place,
+            else => true,
+        };
     }
 
     /// A `main` in the source becomes the C entry point, with a root arena around it.
@@ -131,94 +238,92 @@ const Emit = struct {
 
     // Instructions
 
-    fn instruction(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
+    fn instruction(e: Emit, nir: Nir, at: u32, inst: Nir.Inst, is_place: bool) Io.Writer.Error!void {
         // A known value never materializes, since `ref` spells it at each use.
         if (inst.val.isKnown()) return;
-        switch (nir.viewOf(inst)) {
-            // Parameters are named by the signature, and a declaration is spelled where it is
-            // used. Neither needs a local of its own.
-            .parameter, .decl, .constant => return,
-            .returned => |it| {
-                const value = it.value orelse return e.w.writeAll("    return;\n");
-                try e.w.writeAll("    return ");
-                try e.ref(nir, value);
+        switch (inst.data) {
+            // A slot is its hoisted declaration, and nothing more.
+            .arg, .decl, .constant, .alloc => return,
+            .store => |it| {
+                try e.w.print("    t{d} = ", .{it.slot.i()});
+                try e.ref(nir, it.value);
                 return e.w.writeAll(";\n");
             },
-            // A store is the one instruction that names a place rather than making a value.
+            // The one instruction naming a place rather than making a value.
             .store_field => |it| {
                 try e.w.writeAll("    ");
-                try e.place(nir, it.place);
+                try e.place(nir, it.place, .store);
                 try e.w.writeAll(" = ");
                 try e.ref(nir, it.value);
                 return e.w.writeAll(";\n");
             },
             // No value, so nothing to bind.
-            .arena_reset => |it| return e.w.print("    nul_arena_reset(t{d});\n", .{it.arena}),
-            .arena_destroy, .arena_end => |it| {
-                return e.w.print("    nul_arena_destroy(t{d});\n", .{it.arena});
+            .arena_reset => |arena| return e.w.print("    nul_arena_reset(t{d});\n", .{arena.i()}),
+            // Nulled after, so an explicit `destroy` and the scope's end never free twice.
+            .arena_destroy, .arena_end => |arena| {
+                return e.w.print("    nul_arena_destroy(t{d}); t{d} = NULL;\n", .{ arena.i(), arena.i() });
             },
+            .field => if (is_place) return,
             else => {},
         }
 
         try e.w.writeAll("    ");
         // A call for its effect has no value to bind, and C has no `void` variables.
-        if (inst.val.ty != .void) {
-            try e.writeType(inst.val.ty);
-            try e.w.print(" t{d} = ", .{at});
-        }
+        if (inst.val.ty != .void) try e.w.print("t{d} = ", .{at});
         try e.expression(nir, at, inst);
         try e.w.writeAll(";\n");
     }
 
     fn expression(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
         const text = e.tree.tokenSlice(inst.token);
-        switch (nir.viewOf(inst)) {
+        switch (inst.data) {
             // The token still has its quotes, and the length is what is inside them.
             .str => try e.w.print("(nul_str){{ {s}, {d} }}", .{ text, text.len - 2 }),
             .binary => |it| {
                 try e.ref(nir, it.lhs);
-                try e.w.print(" {s} ", .{cOperator(text)});
+                try e.w.print(" {s} ", .{text});
                 try e.ref(nir, it.rhs);
             },
-            .unary => |it| {
-                try e.w.writeAll(cOperator(text));
-                try e.ref(nir, it.operand);
+            .unary => |operand| {
+                try e.w.writeAll(text);
+                try e.ref(nir, operand);
             },
-            .coerce => |it| try e.ref(nir, it.operand),
-            .field => try e.place(nir, at),
-            .call => |it| {
-                try e.w.print("{s}(", .{symbol(e.tree.tokenSlice(nir.insts[it.callee].token))});
-                for (it.args, 0..) |arg, position| {
+            .coerce => |operand| try e.ref(nir, operand),
+            .load => |slot| try e.w.print("t{d}", .{slot.i()}),
+            .field => try e.place(nir, @enumFromInt(at), .read),
+            .call => |call| {
+                try e.w.print("{s}(", .{symbol(e.tree.tokenSlice(nir.get(call.callee).token))});
+                for (nir.refs(call.args), 0..) |arg, position| {
                     if (position > 0) try e.w.writeAll(", ");
                     try e.ref(nir, arg);
                 }
                 try e.w.writeByte(')');
             },
             .arena_init => try e.w.writeAll("nul_arena_init()"),
-            .arena_child => |it| try e.w.print("nul_arena_child(t{d})", .{it.parent}),
-            .arena_create => |it| {
-                try e.w.print("nul_arena_alloc(t{d}, sizeof(", .{it.arena});
+            .arena_child => |parent| try e.w.print("nul_arena_child(t{d})", .{parent.i()}),
+            .arena_create => |arena| {
+                try e.w.print("nul_arena_alloc(t{d}, sizeof(", .{arena.i()});
                 try e.writeType(e.types.pointeeOf(inst.val.ty) orelse inst.val.ty);
                 try e.w.writeAll("))");
             },
             // Only `str` owns bytes worth duplicating, and anything flat is already a copy.
             .arena_copy => |it| if (inst.val.ty == .str) {
-                try e.w.print("nul_arena_copy_str(t{d}, t{d})", .{ it.arena, it.value });
+                try e.w.print("nul_arena_copy_str(t{d}, t{d})", .{ it.arena.i(), it.value.i() });
             } else {
                 try e.ref(nir, it.value);
             },
             .todo => try e.w.writeAll("0 /* not lowered */"),
-            // Never bound to a local, so `instruction` returned before reaching here.
-            .parameter, .decl, .constant => unreachable,
-            .returned, .store_field, .arena_reset, .arena_destroy, .arena_end => unreachable,
+            // Handled in `instruction`, or never a value at all.
+            .arg, .decl, .constant, .alloc, .store => unreachable,
+            .store_field, .arena_reset, .arena_destroy, .arena_end => unreachable,
         }
     }
 
     /// How an operand is spelled, its value when the compiler knows it and its local
     /// when only the program does.
-    fn ref(e: Emit, nir: Nir, at: u32) Io.Writer.Error!void {
-        switch (nir.insts[at].val.known) {
-            .runtime => try e.w.print("t{d}", .{at}),
+    fn ref(e: Emit, nir: Nir, r: Ref) Io.Writer.Error!void {
+        switch (nir.get(r).val.known) {
+            .runtime => try e.w.print("t{d}", .{r.i()}),
             .int => |x| try e.w.print("{d}", .{x}),
             .float => |x| try e.w.print("{d}", .{x}),
             .bool => |x| try e.w.writeAll(if (x) "true" else "false"),
@@ -226,25 +331,35 @@ const Emit = struct {
         }
     }
 
-    /// `t3->next`, the lvalue a `field` instruction denotes.
-    fn place(e: Emit, nir: Nir, at: u32) Io.Writer.Error!void {
-        const it = nir.viewOf(nir.insts[at]).field;
-        const base = nir.insts[it.base].val.ty;
-        const owner = e.types.pointeeOf(base) orelse base;
-        const name = e.types.fieldNames(owner)[it.position];
-        const arrow = if (e.types.pointeeOf(base) == null) "." else "->";
-        try e.w.print("t{d}{s}{s}", .{ it.base, arrow, e.types.stringBytes(name) });
+    const Access = enum { read, store };
+
+    /// `t3->next`, the lvalue a `field` instruction denotes. Writing a field of a
+    /// value held in a slot goes through the slot itself, since a loaded copy would
+    /// take the write and throw it away.
+    fn place(e: Emit, nir: Nir, at: Ref, access: Access) Io.Writer.Error!void {
+        const it = switch (nir.get(at).data) {
+            .field => |f| f,
+            else => unreachable,
+        };
+        const base_ty = nir.get(it.base).val.ty;
+        const owner = e.types.pointeeOf(base_ty) orelse base_ty;
+        const name = e.types.fieldNames(owner)[it.index];
+        const through_pointer = e.types.pointeeOf(base_ty) != null;
+
+        var base = it.base;
+        if (access == .store and !through_pointer) switch (nir.get(it.base).data) {
+            .load => |slot| base = slot,
+            else => {},
+        };
+        try e.w.print("t{d}{s}{s}", .{
+            base.i(),
+            if (through_pointer) "->" else ".",
+            e.types.stringBytes(name),
+        });
     }
 
-    /// C owns `main`, so the source's own is spelled out of the way.
     fn symbol(name: []const u8) []const u8 {
         return if (std.mem.eql(u8, name, "main")) "nul_main" else name;
-    }
-
-    fn cOperator(text: []const u8) []const u8 {
-        if (std.mem.eql(u8, text, "and")) return "&&";
-        if (std.mem.eql(u8, text, "or")) return "||";
-        return text;
     }
 
     // Types
@@ -321,7 +436,13 @@ const Emit = struct {
         \\
         \\void nul_arena_reset(nul_arena *a) { a->used = 0; }
         \\
-        \\void nul_arena_destroy(nul_arena *a) { free(a->base); free(a); }
+        \\// NULL tolerant, so an early 'destroy' and the scope's own cleanup never
+        \\// free twice.
+        \\void nul_arena_destroy(nul_arena *a) {
+        \\    if (!a) return;
+        \\    free(a->base);
+        \\    free(a);
+        \\}
         \\
         \\nul_str nul_arena_copy_str(nul_arena *a, nul_str s) {
         \\    char *bytes = (char *)nul_arena_alloc(a, (size_t)s.len + 1);

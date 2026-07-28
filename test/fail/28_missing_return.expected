@@ -1,0 +1,12 @@
+error[E0023]: 'sign' returns 'i64', but its end is reachable
+
+  ┌─ test/fail/28_missing_return.nul:9:1
+  │
+3 │ fn sign(n: i64) i64 {
+  │                 ───  declared to return 'i64' here
+  ·
+9 │ }
+  │ ^  control can reach here with nothing returned
+  │
+  = help: end every path through the body in a 'return'
+  │

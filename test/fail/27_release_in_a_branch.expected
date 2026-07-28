@@ -1,0 +1,15 @@
+error[E0019]: 'item' may be used after 'scratch' is released
+
+   ┌─ test/fail/27_release_in_a_branch.nul:19:12
+   │
+12 │     var item = scratch.create(Item)
+   │         ────  'item' lives in 'scratch'
+   ·
+16 │         scratch.reset()
+   │         ───────────────  on this path, everything in 'scratch' dies here
+   ·
+19 │     return item.weight
+   │            ^^^^^^^^^^^  read here, on a path that released it
+   │
+   = help: read what you need before releasing 'scratch', and keep that
+   │

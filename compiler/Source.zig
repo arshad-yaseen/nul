@@ -5,7 +5,8 @@ const Allocator = std.mem.Allocator;
 
 const Source = @This();
 
-pub const padding = 16;
+/// One zero past the end is as far ahead as any scanner looks.
+pub const padding = 1;
 
 pub const max_bytes = std.math.maxInt(u32) - padding - 1;
 
@@ -41,7 +42,7 @@ pub fn deinit(src: *Source, gpa: Allocator) void {
 
 pub const LineCol = struct { line: u32, col: u32 };
 
-/// Where each line starts, so `line_starts[n]` begins line `n + 1`. Built on first use.
+/// Where each line starts, built on first use.
 fn lineStarts(src: *Source, gpa: Allocator) Allocator.Error![]u32 {
     return src.line_starts orelse blk: {
         var list: std.ArrayList(u32) = .empty;
@@ -56,7 +57,6 @@ fn lineStarts(src: *Source, gpa: Allocator) Allocator.Error![]u32 {
     };
 }
 
-/// A byte offset as a 1-based line and column.
 pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCol {
     const starts = try src.lineStarts(gpa);
     const line = std.sort.upperBound(u32, starts, offset, struct {

@@ -14,7 +14,7 @@ const Ast = @This();
 source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
 nodes: NodeList.Slice,
-/// Variable-length children, in source order, referenced by `ExtraRange`.
+/// Variable-length children, in source order.
 extra: []u32,
 errors: []const Error,
 
@@ -38,8 +38,7 @@ pub fn deinit(tree: *Ast, gpa: Allocator) void {
 
 pub const Node = struct {
     tag: Tag,
-    /// Names this node, so an operator, a keyword, or a call's `(`. Every other
-    /// position derives from it.
+    /// An operator, a keyword, or a call's `(`. Every other position derives from it.
     main_token: TokenIndex,
     data: Data,
 
@@ -55,7 +54,7 @@ pub const Node = struct {
         }
     };
 
-    /// `?Index` would be 8 bytes and blow the payload budget. Stealing one `u32` value
+    /// `?Index` would be 8 bytes and blow the payload budget. One stolen `u32` value
     /// keeps it at 4 and still forces an `unwrap()`.
     pub const OptionalIndex = enum(u32) {
         root = 0,
@@ -79,6 +78,13 @@ pub const Node = struct {
         /// Both `let` and `var`, where `main_token` is the keyword.
         var_decl,
         return_stmt,
+        /// `extra_range` is the condition, the then block, and the else node when there
+        /// is one, itself a block or another `if_stmt`.
+        if_stmt,
+        /// `for { }` and `for cond { }`.
+        for_stmt,
+        break_stmt,
+        continue_stmt,
         assign,
         call,
         field_access,
@@ -116,22 +122,9 @@ pub const Node = struct {
 
 comptime {
     assert(@sizeOf(Node.Tag) == 1);
-
+    // Eight bytes of indexes, never pointers, so a payload means the same thing
+    // wherever the tree is.
     if (!std.debug.runtime_safety) assert(@sizeOf(Node.Data) == 8);
-
-    assertPositionIndependent(Node.Data);
-}
-
-fn assertPositionIndependent(comptime T: type) void {
-    switch (@typeInfo(T)) {
-        .int, .bool, .void, .float, .@"enum" => {},
-        .@"struct" => |s| for (s.fields) |f| assertPositionIndependent(f.type),
-        .@"union" => |u| for (u.fields) |f| assertPositionIndependent(f.type),
-        .array => |a| assertPositionIndependent(a.child),
-        .pointer => @compileError(@typeName(T) ++ " is a pointer, use a u32 index"),
-        .optional => @compileError(@typeName(T) ++ " is optional, use OptionalIndex"),
-        else => @compileError("unsupported Ast payload: " ++ @typeName(T)),
-    }
 }
 
 // The view
@@ -165,7 +158,7 @@ pub const OperInfo = packed struct(u16) {
 };
 
 /// The one place a token maps to the operator it means. `Parse` reads `prec` and
-/// `assoc`, where `viewOf` reads `op` back off the token.
+/// `assoc`; `viewOf` reads `op` back off the token.
 pub const oper_table: [Token.tag_count]OperInfo = blk: {
     var t: [Token.tag_count]OperInfo = @splat(.{});
     for (.{
@@ -186,7 +179,6 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
     break :blk t;
 };
 
-/// A node widened into named fields. On demand, never stored.
 pub const View = union(enum) {
     root: []const Node.Index,
     block: []const Node.Index,
@@ -195,9 +187,13 @@ pub const View = union(enum) {
     grouped: Node.Index,
     pointer_type: Pointer,
     return_stmt: Node.OptionalIndex,
+    break_stmt: TokenIndex,
+    continue_stmt: TokenIndex,
 
     fn_decl: FnDecl,
     var_decl: VarDecl,
+    if_stmt: If,
+    for_stmt: For,
     call: Call,
     binary: Binary,
     unary: Unary,
@@ -229,6 +225,10 @@ pub const View = union(enum) {
     };
     /// Mutability is a token, never a stored bit.
     pub const Pointer = struct { is_mutable: bool, child: Node.Index };
+    /// `else_node` is a block, or an `if_stmt` when the source chained `else if`.
+    pub const If = struct { cond: Node.Index, then_block: Node.Index, else_node: Node.OptionalIndex };
+    /// No condition is `for { }`, which only a `break` or `return` leaves.
+    pub const For = struct { cond: Node.OptionalIndex, body: Node.Index };
     pub const TypedName = struct { name_token: TokenIndex, type_expr: Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     pub const FieldAccess = struct { lhs: Node.Index, name_token: TokenIndex };
@@ -251,7 +251,25 @@ pub fn viewOf(tree: Ast, n: Node.Index) View {
             .child = data.node,
         } },
         .return_stmt => .{ .return_stmt = data.opt_node },
+        .break_stmt => .{ .break_stmt = main },
+        .continue_stmt => .{ .continue_stmt = main },
         .err => .err,
+
+        // `if cond { } else ...`. `extra` is the condition, then block, and else.
+        .if_stmt => blk: {
+            const s = @intFromEnum(data.extra_range.start);
+            const e = @intFromEnum(data.extra_range.end);
+            assert(e - s >= 2); // the parser always appends the condition and then block
+            break :blk .{ .if_stmt = .{
+                .cond = @enumFromInt(tree.extra[s]),
+                .then_block = @enumFromInt(tree.extra[s + 1]),
+                .else_node = if (e - s > 2) @enumFromInt(tree.extra[s + 2]) else .none,
+            } };
+        },
+        .for_stmt => .{ .for_stmt = .{
+            .cond = data.opt_node_and_node[0],
+            .body = data.opt_node_and_node[1],
+        } },
 
         .param => .{ .param = .{ .name_token = main, .type_expr = data.node } },
         .field => .{ .field = .{ .name_token = main, .type_expr = data.node } },
@@ -346,7 +364,7 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
     };
 }
 
-/// The last token of a node's source span, so a label can underline all of it.
+/// The last token of a node's span, so a label can underline all of it.
 pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
     return switch (tree.viewOf(node)) {
         .ident, .number_literal, .str_literal => |token| token,
@@ -360,15 +378,19 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         .param, .field => |it| tree.lastToken(it.type_expr),
         .var_decl => |it| tree.lastToken(it.init_expr),
         .return_stmt => |it| if (it.unwrap()) |e| tree.lastToken(e) else tree.nodeMainToken(node),
+        .if_stmt => |it| tree.lastToken(it.else_node.unwrap() orelse it.then_block),
+        .for_stmt => |it| tree.lastToken(it.body),
+        .break_stmt, .continue_stmt => |token| token,
         // The closing token is not stored, and always follows what it closes.
         .call => |it| 1 + if (it.args.len > 0)
             tree.lastToken(it.args[it.args.len - 1])
         else
             tree.nodeMainToken(node),
-        .block, .struct_type, .root => |stmts| 1 + if (stmts.len > 0)
-            tree.lastToken(stmts[stmts.len - 1])
+        // A statement's newline puts a semicolon between it and the brace.
+        .block, .struct_type, .root => |stmts| if (stmts.len > 0)
+            tree.pastSemis(tree.lastToken(stmts[stmts.len - 1]))
         else
-            tree.nodeMainToken(node),
+            tree.nodeMainToken(node) + 1,
         .use_decl => |child| tree.lastToken(child),
         .fn_decl => |it| tree.lastToken(it.body),
         .err => tree.nodeMainToken(node),
@@ -377,6 +399,12 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
 
 pub fn nodeMainToken(tree: Ast, n: Node.Index) TokenIndex {
     return tree.nodes.items(.main_token)[@intFromEnum(n)];
+}
+
+fn pastSemis(tree: Ast, token: TokenIndex) TokenIndex {
+    var at = token + 1;
+    while (tree.tokenTag(at) == .semi) at += 1;
+    return at;
 }
 
 pub fn tokenTag(tree: Ast, i: TokenIndex) Token.Tag {
@@ -397,12 +425,10 @@ pub fn tokenSlice(tree: Ast, i: TokenIndex) []const u8 {
 
 pub const Error = struct {
     tag: Tag,
-    /// The token the parser was looking at when it gave up.
     token: TokenIndex,
     expected: ?Token.Tag = null,
 
-    /// Codes are explicit and permanent, like `Diagnostic.Tag`'s. Parse errors own the
-    /// E01xx range.
+    /// Explicit and permanent, like `Diagnostic.Tag`'s. Parse errors own E01xx.
     pub const Tag = enum(u16) {
         expected_token = 101,
         expected_expr = 102,
@@ -414,6 +440,7 @@ pub const Error = struct {
         invalid_assign_target = 108,
         nesting_too_deep = 109,
         invalid_bytes = 110,
+        stray_else = 111,
     };
 
     pub fn render(err: Error, tree: Ast, w: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -432,6 +459,9 @@ pub const Error = struct {
             .invalid_assign_target => try w.writeAll("cannot assign to this expression"),
             .nesting_too_deep => try w.writeAll("expression nests too deeply"),
             .invalid_bytes => try w.writeAll("invalid bytes"),
+            .stray_else => try w.writeAll(
+                "'else' has no 'if' here. It has to sit on the same line as the '}' that closes one",
+            ),
         }
     }
 };

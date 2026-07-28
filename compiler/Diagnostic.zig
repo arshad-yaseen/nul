@@ -12,8 +12,8 @@ const Diagnostic = @This();
 
 // What a pass records
 
-/// Explicit and permanent, so `E0007` means one thing forever. A kind may be retired,
-/// never renumbered. Semantic errors own E00xx and `Ast.Error.Tag` owns E01xx.
+/// Explicit and permanent: `E0007` means one thing forever. A kind may be retired,
+/// never renumbered. Semantic errors own E00xx, `Ast.Error.Tag` owns E01xx.
 pub const Tag = enum(u16) {
     redeclared = 1,
     shadows_builtin = 2,
@@ -37,10 +37,12 @@ pub const Tag = enum(u16) {
     out_of_range = 20,
     division_by_zero = 21,
     comptime_overflow = 22,
+    missing_return = 23,
+    not_in_a_loop = 24,
 };
 
-/// One recorded mistake. Most need only a tag and a token, which costs no allocation.
-/// Everything below `token` is owned by the `List` and usually empty.
+/// One recorded mistake. Most need only a tag and a token, which costs no allocation;
+/// everything below `token` is owned by the `List` and usually empty.
 pub const Entry = struct {
     tag: Tag,
     /// The primary span, what the header points at and what sorting orders on.
@@ -84,11 +86,12 @@ pub const Entry = struct {
             .out_of_range => try w.writeAll("this value does not fit its type"),
             .division_by_zero => try w.writeAll("division by zero"),
             .comptime_overflow => try w.writeAll("this computation is too large to represent"),
+            .missing_return => try w.writeAll("not every path through this function returns a value"),
+            .not_in_a_loop => try w.print("'{s}' is not inside a loop", .{name}),
         }
     }
 };
 
-/// A secondary span with its own wording.
 pub const Mark = struct {
     token: Ast.TokenIndex,
     last: ?Ast.TokenIndex = null,
@@ -163,9 +166,7 @@ pub const List = struct {
 
 // What the renderer draws
 
-/// Says what is wrong, never where.
 message: []const u8,
-/// Rendered as `error[E0007]`.
 code: ?u16 = null,
 /// Any order, since the renderer sorts. Exactly one `.primary`, which fixes the header.
 labels: []const Label,
@@ -184,9 +185,9 @@ pub const Label = struct {
     pub const Style = enum { primary, secondary };
 };
 
-/// Four steps of loudness. The frame recedes furthest, annotations sit below the source
-/// they describe, source reads plain, and red marks what is wrong. A help note shares
-/// its green with the `+` line it introduces.
+/// Four steps of loudness: the frame recedes furthest, annotations sit below the source
+/// they describe, source reads plain, red marks what is wrong. A help note shares its
+/// green with the `+` line it introduces.
 pub const Palette = struct {
     reset: []const u8 = "",
     fail: []const u8 = "",
@@ -436,7 +437,6 @@ const Render = struct {
         try r.print(r.palette.frame, "{d} │ ", .{line});
     }
 
-    /// Opens a row under the source line.
     fn bar(r: Render) Io.Writer.Error!void {
         try r.w.splatByteAll(' ', r.gutter + 1);
         try r.tint(r.palette.frame, "│");
@@ -536,10 +536,7 @@ const Render = struct {
 };
 
 fn digitCount(n: u32) u32 {
-    var count: u32 = 1;
-    var rest = n / 10;
-    while (rest > 0) : (rest /= 10) count += 1;
-    return count;
+    return std.math.log10_int(@max(n, 1)) + 1;
 }
 
 test "renders several labels and notes" {

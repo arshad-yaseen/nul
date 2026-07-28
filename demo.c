@@ -40,7 +40,13 @@ void *nul_arena_alloc(nul_arena *a, size_t size) {
 
 void nul_arena_reset(nul_arena *a) { a->used = 0; }
 
-void nul_arena_destroy(nul_arena *a) { free(a->base); free(a); }
+// NULL tolerant, so an early 'destroy' and the scope's own cleanup never
+// free twice.
+void nul_arena_destroy(nul_arena *a) {
+    if (!a) return;
+    free(a->base);
+    free(a);
+}
 
 nul_str nul_arena_copy_str(nul_arena *a, nul_str s) {
     char *bytes = (char *)nul_arena_alloc(a, (size_t)s.len + 1);
@@ -50,8 +56,50 @@ nul_str nul_arena_copy_str(nul_arena *a, nul_str s) {
 }
 
 
-uint8_t keep(nul_arena * t0);
+int64_t grade(int64_t t0);
+int64_t first_square_past(int64_t t0);
 
-uint8_t keep(nul_arena * t0) {
-    return 255;
+int64_t grade(int64_t t0) {
+    bool t2;
+    bool t5;
+    t2 = t0 > 90;
+    if (!t2) goto b2;
+    return 4;
+b2:;
+    t5 = t0 > 80;
+    if (!t5) goto b5;
+    return 3;
+b5:;
+    return 1;
+}
+
+int64_t first_square_past(int64_t t0) {
+    int64_t t2;
+    int64_t t3;
+    int64_t t5;
+    int64_t t6;
+    int64_t t7;
+    bool t8;
+    int64_t t9;
+    int64_t t10;
+    int64_t t11;
+    int64_t t12;
+    int64_t t14;
+    t2 = 1;
+    t3 = t2;
+b1:;
+    t5 = t3;
+    t6 = t3;
+    t7 = t5 * t6;
+    t8 = t7 > t0;
+    if (!t8) goto b5;
+    t9 = t3;
+    t10 = t3;
+    t11 = t9 * t10;
+    return t11;
+b5:;
+    t12 = t3;
+    t14 = t12 + 1;
+    t3 = t14;
+    goto b1;
 }

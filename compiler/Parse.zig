@@ -11,14 +11,12 @@ const TokenIndex = Ast.TokenIndex;
 
 const Parse = @This();
 
-/// Recursive descent lets adversarial input exhaust the stack. A limit with a real
-/// diagnostic beats a crash.
+/// Adversarial input can exhaust the stack, and a limit with a diagnostic beats a crash.
 const max_depth = 256;
 /// Past this many errors the file is generated, not edited. Stop recording.
 const max_errors = 128;
 
 gpa: Allocator,
-source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
 tok_i: TokenIndex,
 nodes: Ast.NodeList,
@@ -27,10 +25,6 @@ scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Ast.Error),
 depth: u32,
 
-fn estimatedNodeCount(n: usize) usize {
-    return n * 3 / 4 + 8;
-}
-
 pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!Ast {
     var tokens: Tokenizer.TokenList = .empty;
     errdefer tokens.deinit(gpa);
@@ -38,7 +32,6 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!Ast {
 
     var p: Parse = .{
         .gpa = gpa,
-        .source = source,
         .tokens = tokens.slice(),
         .tok_i = 0,
         .nodes = .empty,
@@ -54,7 +47,6 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!Ast {
         p.errors.deinit(gpa);
     }
 
-    try p.nodes.ensureTotalCapacity(gpa, estimatedNodeCount(tokens.len));
     try p.parseRoot();
 
     return .{
@@ -166,7 +158,10 @@ const starts_expr = TokenSet.initMany(&.{
     .l_paren, .minus,  .bang, .star,    .kw_struct,
 });
 
-const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{ .kw_let, .kw_var, .kw_return }));
+const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
+    .kw_let, .kw_var,   .kw_return,   .kw_if,
+    .kw_for, .kw_break, .kw_continue,
+}));
 
 /// Tokens that can only start a top-level declaration.
 const starts_decl = TokenSet.initMany(&.{ .kw_use, .kw_fn, .kw_pub });
@@ -261,7 +256,6 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// A `struct` keyword and its braced list of named fields.
 fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
     const struct_token = p.nextToken();
 
@@ -324,6 +318,9 @@ fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
             p.tok_i += 1;
         } else if (starts_stmt.contains(p.tag())) {
             try p.scratch.append(p.gpa, try p.parseStatement());
+        } else if (p.at(.kw_else)) {
+            // The likeliest cause is a newline before it, which ended the `if`.
+            try p.scratch.append(p.gpa, try p.errNodeAdvance(.stray_else));
         } else if (recover_in_block.contains(p.tag())) {
             break;
         } else {
@@ -340,6 +337,14 @@ fn parseBlock(p: *Parse) Allocator.Error!Node.Index {
 fn parseStatement(p: *Parse) Allocator.Error!Node.Index {
     switch (p.tag()) {
         .kw_let, .kw_var => return p.parseVarDecl(),
+        .kw_if => return p.parseIf(),
+        .kw_for => return p.parseFor(),
+        .kw_break, .kw_continue => {
+            const stmt_tag: Node.Tag = if (p.at(.kw_break)) .break_stmt else .continue_stmt;
+            const keyword = p.nextToken();
+            try p.expectSemi();
+            return p.addNode(.{ .tag = stmt_tag, .main_token = keyword, .data = .{ .none = {} } });
+        },
         .kw_return => {
             const return_token = p.nextToken();
             const operand: Node.OptionalIndex = if (starts_expr.contains(p.tag()))
@@ -355,6 +360,49 @@ fn parseStatement(p: *Parse) Allocator.Error!Node.Index {
         },
         else => return p.parseExprStatement(),
     }
+}
+
+/// No parentheses, and braces are mandatory, so an arm can never dangle.
+fn parseIf(p: *Parse) Allocator.Error!Node.Index {
+    // The `else if` chain recurses without a block in between, so it guards itself.
+    if (p.depth >= max_depth) return p.errNodeAdvance(.nesting_too_deep);
+    p.depth += 1;
+    defer p.depth -= 1;
+
+    const if_token = p.nextToken();
+    const top = p.scratch.items.len;
+    defer p.scratch.shrinkRetainingCapacity(top);
+
+    try p.scratch.append(p.gpa, try p.parseExpr());
+    try p.scratch.append(p.gpa, try p.parseBlock());
+
+    if (p.eatToken(.kw_else) != null) {
+        // `else if` chains as a nested `if_stmt`, so one shape covers every arm.
+        const else_node = if (p.at(.kw_if)) try p.parseIf() else try p.parseBlock();
+        try p.scratch.append(p.gpa, else_node);
+    }
+
+    return p.addNode(.{
+        .tag = .if_stmt,
+        .main_token = if_token,
+        .data = .{ .extra_range = try p.storeChildren(p.scratch.items[top..]) },
+    });
+}
+
+fn parseFor(p: *Parse) Allocator.Error!Node.Index {
+    const for_token = p.nextToken();
+
+    const cond: Node.OptionalIndex = if (p.at(.l_brace))
+        .none
+    else
+        (try p.parseExpr()).toOptional();
+    const body = try p.parseBlock();
+
+    return p.addNode(.{
+        .tag = .for_stmt,
+        .main_token = for_token,
+        .data = .{ .opt_node_and_node = .{ cond, body } },
+    });
 }
 
 fn parseVarDecl(p: *Parse) Allocator.Error!Node.Index {

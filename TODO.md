@@ -6,17 +6,20 @@ everything below them is easier to design once they exist.
 
 ## Unblocking
 
-- [ ] **Control flow: `if`, `for`.** Nothing algorithmic can be written without it, and it
-      forces the largest single migration in the compiler:
-  - [ ] `Nir` gains blocks and terminators
-  - [ ] locals become `alloc`/`store`/`load`. `Lower.assignLocal`'s `local.inst = value`
-        only works because bodies are straight line
-  - [ ] `Region`'s `Info.released: u32` becomes a forward dataflow over the CFG. Union at
-        joins is the *may* answer and the safe one; keeping the *must* answer too is what
-        separates "is used after" from "may be used after"
-  - [ ] `codegen/c.zig` must hoist temp declarations to the top of the function; a C local
-        declared inside a branch is not visible after it
-  - [ ] `Lower.endScope` becomes cleanup-on-every-path
+- [x] **Control flow: `if`, `for`.** Done, and it was the largest single migration in the
+      compiler:
+  - [x] `Nir` is a CFG: blocks with one terminator each (`jump`, `branch`, `ret`)
+  - [x] a `var` is an `alloc` slot with `store`/`load`; a `let` and a parameter stay
+        direct references, and an arena local is always direct, so releases act on names
+  - [x] `Region` runs slot state to a fixed point over the graph. A join merges toward
+        the shorter lived region, siblings merge into a `merged` region that answers for
+        both, and a release is judged per path with the value's origin as the barrier,
+        which is what separates "is used after" from "may be used after"
+  - [x] `codegen/c.zig` hoists declarations and spells the graph as labels and gotos
+  - [x] `Lower.endScope` is cleanup-on-every-path: `return`, `break` and `continue` each
+        end the scopes they leave, and `nul_arena_destroy` tolerates NULL so an early
+        `destroy` and the scope's own end never free twice
+  - [ ] `for x in y` waits on slices, which is what there is to iterate
 - [ ] **Slices, `[]T`.** The largest gap in the type system, and the one that can still
       teach us something about the memory model: what region does `slice[i]` carry, and
       does a slice of pointers behave? `str` is already an immutable `[]u8`.
@@ -44,12 +47,11 @@ everything below them is easier to design once they exist.
 
 - [ ] **Concurrency.** Zero mentions across `README.md`, `spec.md` and `memory_model.md`.
       Arenas plus threads may constrain `Arena` itself, so sketch it before the stdlib
-- [ ] Write the branch case as a `test/fail` file *now*, before the CFG exists, so the
-      wording is designed rather than discovered. A release inside one arm with the use
-      after the join has no single line to blame
-- [ ] `arena.destroy()` followed by `arena.create()` is not caught: `Region.checkLive`
-      skips operands whose type is `Arena`, which is right for a handle surviving its own
-      reset and wrong for one that was destroyed
+- [x] The branch cases are `test/fail` files: a release inside one arm with the use after
+      the join (27), and a pointer that means different arenas on different paths (31, 32)
+- [x] `arena.destroy()` followed by `arena.create()` is caught (`checkArenaAlive`), with
+      per-path wording when the destroy sits in a branch. `reset` still leaves the handle
+      alive, as it should
 - [ ] Write `List`, `HashMap` and a graph in Nul. Not as features, as experiments: they
       decide whether the model survives contact with real data structures
 - [ ] Arena operations are `Nir` instructions. `memory_model.md` calls `copy` "an ordinary

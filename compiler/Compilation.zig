@@ -27,8 +27,8 @@ pub fn check(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8) Error!Compil
     return build(gpa, io, dir, path, null);
 }
 
-/// Checks `path`, and writes C to `emit` when nothing is wrong with it. Emission happens
-/// here because the types and the bodies are alive only for the length of this call.
+/// Checks `path`, writing C to `emit` when nothing is wrong with it. Emission happens
+/// here because the types and bodies live only for the length of this call.
 pub fn build(
     gpa: Allocator,
     io: Io,
@@ -90,7 +90,7 @@ fn analyze(
     // Emitting a program the checker rejected would only produce C that lies.
     if (emit) |w| {
         if (diagnostics.all().len == 0) {
-            try codegen_c.emit(&types, tree, &namespace, functions.items, w);
+            try codegen_c.emit(gpa, &types, tree, &namespace, functions.items, w);
         }
     }
 }

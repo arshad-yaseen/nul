@@ -1,4 +1,4 @@
-//! The container's declaration table. What a declaration means is `Sema`'s. Every name
+//! The container's declaration table; what a declaration means is `Sema`'s. Every name
 //! is bound before any is resolved, which lets declarations refer to each other in any
 //! order.
 
@@ -16,12 +16,11 @@ decls: std.ArrayList(Decl),
 /// Positions in `decls`, keyed on the name's source bytes.
 by_name: std.StringHashMapUnmanaged(u32),
 
-/// Collection fills in where it is written, and `Sema` owns everything after.
 pub const Decl = struct {
     name_token: Ast.TokenIndex,
     node: Ast.Node.Index,
     state: State = .unresolved,
-    /// What the name means. A struct declaration binds a value whose type is `type`.
+    /// A struct declaration binds a value whose type is `type`.
     value: Value = .poisoned,
 
     /// `in_progress` turns a self-dependency into a report instead of a hang.
@@ -97,7 +96,6 @@ pub fn deinit(ns: *Namespace, gpa: Allocator) void {
     ns.* = undefined;
 }
 
-/// Stays valid, the table stops growing before anything resolves.
 pub fn find(ns: *Namespace, name: []const u8) ?*Decl {
     const at = ns.by_name.get(name) orelse return null;
     return &ns.decls.items[at];
