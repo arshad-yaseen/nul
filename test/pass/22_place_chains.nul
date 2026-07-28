@@ -4,6 +4,8 @@ let Inner = struct { x: i64 }
 let Outer = struct { inner: Inner }
 let Holder = struct { item: *var Inner }
 
+/// A write finds its memory through a chain of field pointers, however deep the
+/// path and whether it crosses a pointer on the way. Nothing is copied.
 fn deep(arena: Arena, o: Outer) i64 {
     var q = arena.copy(o)
     q.inner.x = 3

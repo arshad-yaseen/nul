@@ -1,13 +1,5 @@
 //! Nul Intermediate Representation. A function body as a control flow graph:
 //! typed instructions in one flat list, blocks each closed by one terminator.
-//!
-//! `Data` is the whole encoding, and every field of type `Ref` in a payload is an
-//! operand, so `operandsOf` derives the dependency graph from the types rather than
-//! from a table that could drift.
-//!
-//! A `var` is an `alloc` slot written by `store` and read by `load`, so a name means
-//! the same thing on every path into a join. A `let` and a parameter never rebind,
-//! so they stay direct references to the instruction that produced them.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -63,17 +55,20 @@ pub const Data = union(enum) {
     constant,
     str,
     decl,
-    /// A mutable local. `val` is the content type; the slot is frame memory.
+    /// A mutable local. `val` is a mutable pointer to the slot's frame memory.
     alloc,
-    /// The slot read.
+    /// The pointer read through: a slot, a `field_ptr`, or any pointer value.
     load: Ref,
+    /// The pointer written through, which has to be mutable.
     store: Store,
     binary: Binary,
     unary: Ref,
     /// A binding takes its declared type here, and a `var` sheds comptime knownness.
     coerce: Ref,
-    field: Field,
-    store_field: StoreField,
+    /// A field extracted from a struct value. No memory is involved.
+    field_val: Field,
+    /// A pointer to a field of what `base` points at.
+    field_ptr: Field,
     call: Call,
     arena_init,
     /// The parent arena.
@@ -88,10 +83,9 @@ pub const Data = union(enum) {
     /// Reported already, or not lowered yet. Nothing downstream should trust it.
     todo,
 
-    pub const Store = struct { slot: Ref, value: Ref };
+    pub const Store = struct { ptr: Ref, value: Ref };
     pub const Binary = struct { lhs: Ref, rhs: Ref };
     pub const Field = struct { base: Ref, index: u32 };
-    pub const StoreField = struct { place: Ref, value: Ref };
     pub const Call = struct { callee: Ref, args: Range };
     pub const Copy = struct { arena: Ref, value: Ref };
 };

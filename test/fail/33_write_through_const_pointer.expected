@@ -1,0 +1,9 @@
+error[E0011]: writing through '*Counter' is not allowed
+
+  ┌─ test/fail/33_write_through_const_pointer.nul:6:5
+  │
+6 │     c.hits = c.hits + 1
+  │     ^  this is '*Counter', and only a '*var' pointer can be written through
+  │
+  = help: declare it as '*var Counter' to allow the write
+  │

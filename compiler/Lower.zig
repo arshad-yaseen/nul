@@ -39,7 +39,7 @@ const Local = struct {
     is_mutable: bool,
 };
 
-/// `value` is the instruction that produced it; `slot` is an `alloc` to load and store.
+/// `value` is the instruction that produced it, `slot` is an `alloc` to load and store.
 const Binding = union(enum) {
     value: Ref,
     slot: Ref,
@@ -149,9 +149,9 @@ fn fail(lower: *Lower, entry: Diagnostic.Entry) Allocator.Error!Ref {
     return lower.todo(entry.token);
 }
 
-fn storeTo(lower: *Lower, slot: Ref, value: Ref, token: Token) Allocator.Error!Ref {
+fn storeTo(lower: *Lower, ptr: Ref, value: Ref, token: Token) Allocator.Error!Ref {
     return lower.add(.{
-        .data = .{ .store = .{ .slot = slot, .value = value } },
+        .data = .{ .store = .{ .ptr = ptr, .value = value } },
         .val = .{ .ty = .void },
         .token = token,
     });
@@ -342,7 +342,7 @@ fn localDecl(lower: *Lower, binding: Ast.View.VarDecl) Allocator.Error!void {
     if (binding.is_mutable and held != .Arena) {
         const slot = try lower.add(.{
             .data = .alloc,
-            .val = .{ .ty = held },
+            .val = .{ .ty = try lower.pointerTo(held) },
             .token = binding.name_token,
         });
         _ = try lower.storeTo(slot, inst, binding.name_token);
@@ -429,7 +429,7 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
         }),
     };
 
-    const held = lower.typeOf(slot);
+    const held = lower.types.pointeeOf(lower.typeOf(slot)) orelse .poisoned;
     _ = try lower.sema.expect(held, lower.valOf(value), rhs, .{ .assigned = .{
         .name = token,
         .site = declared_at,
@@ -440,20 +440,142 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
 }
 
 fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAccess) Allocator.Error!Ref {
-    const target = try lower.expr(node.lhs);
+    const place = try lower.placeOf(node.lhs);
     const value = try lower.expr(node.rhs);
 
-    _ = try lower.sema.expect(lower.typeOf(target), lower.valOf(value), node.rhs, .{
+    const expected = lower.types.pointeeOf(lower.typeOf(place)) orelse .poisoned;
+    _ = try lower.sema.expect(expected, lower.valOf(value), node.rhs, .{
         .field_store = .{ .name = access.name_token },
     });
 
     return lower.add(.{
-        .data = .{ .store_field = .{ .place = target, .value = value } },
+        .data = .{ .store = .{ .ptr = place, .value = value } },
         .val = .{ .ty = .void },
         // The value, not the destination, since that is what a lifetime error is about.
         .token = lower.tree.firstToken(node.rhs),
         .last = lower.tree.lastToken(node.rhs),
     });
+}
+
+/// The memory an assignment target names, as a mutable pointer. A name is its slot
+/// or the pointer it holds, and a dotted path narrows with `field_ptr`, so nothing
+/// is copied on the way to a write.
+fn placeOf(lower: *Lower, node: Ast.Node.Index) Allocator.Error!Ref {
+    switch (lower.tree.viewOf(node)) {
+        .field_access => |access| {
+            var base = try lower.placeOf(access.lhs);
+            // A place holding a pointer is crossed by reading it, so the chain
+            // continues in the memory it points at.
+            while (lower.types.pointerOf(lower.typeOf(base))) |pointer| {
+                if (lower.types.pointerOf(pointer.pointee) == null) break;
+                base = try lower.add(.{
+                    .data = .{ .load = base },
+                    .val = .{ .ty = pointer.pointee },
+                    .token = lower.tree.firstToken(access.lhs),
+                    .last = lower.tree.lastToken(access.lhs),
+                });
+            }
+            const base_ty = lower.typeOf(base);
+            if (base_ty == .poisoned) return lower.todo(access.name_token);
+            const pointer = lower.types.pointerOf(base_ty) orelse
+                return lower.todo(access.name_token);
+            if (!pointer.is_mutable) return lower.fail(.{
+                .tag = .not_mutable,
+                .token = lower.tree.firstToken(access.lhs),
+                .last = lower.tree.lastToken(access.lhs),
+                .message = try lower.print("writing through '{s}' is not allowed", .{
+                    try lower.typeName(base_ty),
+                }),
+                .text = try lower.print(
+                    "this is '{s}', and only a '*var' pointer can be written through",
+                    .{try lower.typeName(base_ty)},
+                ),
+                .notes = try lower.notes(&.{.{
+                    .kind = .help,
+                    .text = try lower.print("declare it as '{s}' to allow the write", .{
+                        try lower.typeName(try lower.pointerTo(pointer.pointee)),
+                    }),
+                }}),
+            });
+
+            const owner = pointer.pointee;
+            if (!lower.types.isStruct(owner) or !lower.types.isDefined(owner)) {
+                return lower.todo(access.name_token);
+            }
+            const at = try lower.resolveField(owner, access.name_token) orelse
+                return lower.todo(access.name_token);
+            const ft = lower.types.fieldTypes(owner)[at];
+            return lower.add(.{
+                .data = .{ .field_ptr = .{ .base = base, .index = at } },
+                .val = .{ .ty = if (ft == .poisoned) .poisoned else try lower.pointerTo(ft) },
+                .token = lower.tree.firstToken(node),
+                .last = access.name_token,
+            });
+        },
+        .ident => |token| {
+            const text = lower.tree.tokenSlice(token);
+            if (lower.find(text)) |local| switch (local.binding) {
+                .slot => |slot| return slot,
+                .value => |inst| {
+                    if (lower.types.pointerOf(lower.typeOf(inst)) != null) return inst;
+                    if (lower.typeOf(inst) == .poisoned) return lower.todo(token);
+                    return lower.valueNotPlace(token, text, local.token, inst);
+                },
+            };
+            const index = lower.sema.namespace.find(text) orelse
+                return lower.fail(undefinedName(token));
+            try lower.sema.resolveDecl(index);
+            return lower.fail(.{
+                .tag = .not_assignable,
+                .token = token,
+                .message = try lower.print("'{s}' is a value, so its fields cannot be assigned", .{text}),
+                .text = "a write here would land on a copy",
+                .marks = try lower.mark(
+                    lower.sema.namespace.decl(index).name_token,
+                    "declared here, as a comptime value",
+                ),
+            });
+        },
+        else => {
+            const inst = try lower.expr(node);
+            if (lower.types.pointerOf(lower.typeOf(inst)) != null) return inst;
+            if (lower.typeOf(inst) == .poisoned) return lower.todo(lower.tree.firstToken(node));
+            return lower.fail(.{
+                .tag = .not_assignable,
+                .token = lower.tree.firstToken(node),
+                .last = lower.tree.lastToken(node),
+                .text = "this is a value, not memory that can be assigned",
+            });
+        },
+    }
+}
+
+/// Writing a field of a by-value binding would write a copy nothing keeps.
+fn valueNotPlace(lower: *Lower, token: Token, text: []const u8, declared_at: Token, inst: Ref) Allocator.Error!Ref {
+    const is_param = lower.b.dataOf(inst) == .arg;
+    return lower.fail(.{
+        .tag = .not_assignable,
+        .token = token,
+        .message = try lower.print("'{s}' is a value, so its fields cannot be assigned", .{text}),
+        .text = "a write here would land on a copy",
+        .marks = try lower.mark(declared_at, if (is_param)
+            "declared here, as a value parameter"
+        else
+            "declared here, as a 'let'"),
+        .notes = try lower.notes(&.{.{
+            .kind = .help,
+            .text = if (is_param)
+                try lower.print("take '{s}: *var {s}' to write what the caller passed", .{
+                    text, try lower.typeName(lower.typeOf(inst)),
+                })
+            else
+                "declare it with 'var' if it has to change",
+        }}),
+    });
+}
+
+fn pointerTo(lower: *Lower, pointee: Type.Index) Allocator.Error!Type.Index {
+    return lower.types.pointerType(lower.gpa, pointee, true);
 }
 
 // Expressions
@@ -489,7 +611,7 @@ fn name(lower: *Lower, token: Token) Allocator.Error!Ref {
         .slot => |slot| {
             const load = try lower.add(.{
                 .data = .{ .load = slot },
-                .val = .{ .ty = lower.typeOf(slot) },
+                .val = .{ .ty = lower.types.pointeeOf(lower.typeOf(slot)) orelse .poisoned },
                 .token = token,
             });
             // Named after the declaration, where the reader looks the name up.
@@ -528,7 +650,11 @@ fn binary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Binary) Allocator.Er
 /// as control flow with a slot holding the answer.
 fn shortCircuit(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Binary) Allocator.Error!Ref {
     const lhs = try lower.expr(it.lhs);
-    const slot = try lower.add(.{ .data = .alloc, .val = .{ .ty = .bool }, .token = it.op_token });
+    const slot = try lower.add(.{
+        .data = .alloc,
+        .val = .{ .ty = try lower.pointerTo(.bool) },
+        .token = it.op_token,
+    });
     _ = try lower.storeTo(slot, lhs, it.op_token);
 
     const rhs_b = try lower.b.reserve();
@@ -560,17 +686,51 @@ fn unary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Unary) Allocator.Erro
 
 fn fieldOf(lower: *Lower, base: Ref, access: Ast.View.FieldAccess, node: Ast.Node.Index) Allocator.Error!Ref {
     // Through a pointer as readily as into a value, since `n.next` never says which.
-    const owner = lower.types.pointeeOf(lower.typeOf(base)) orelse lower.typeOf(base);
+    const base_ty = lower.typeOf(base);
+    const owner = lower.types.pointeeOf(base_ty) orelse base_ty;
     // An `Arena` method is not a field, and `call` has already taken those.
     if (!lower.types.isStruct(owner) or !lower.types.isDefined(owner)) {
         return lower.todo(access.name_token);
     }
+    const at = try lower.resolveField(owner, access.name_token) orelse
+        return lower.todo(access.name_token);
+    const ft = lower.types.fieldTypes(owner)[at];
 
-    const text = lower.tree.tokenSlice(access.name_token);
+    // Through a pointer the read narrows it and loads, copying nothing on the way.
+    // From a value it extracts.
+    if (lower.types.pointerOf(base_ty)) |pointer| {
+        const place = try lower.add(.{
+            .data = .{ .field_ptr = .{ .base = base, .index = at } },
+            .val = .{ .ty = if (ft == .poisoned)
+                .poisoned
+            else
+                try lower.types.pointerType(lower.gpa, ft, pointer.is_mutable) },
+            .token = lower.tree.firstToken(node),
+            .last = access.name_token,
+        });
+        return lower.add(.{
+            .data = .{ .load = place },
+            .val = .{ .ty = ft },
+            .token = lower.tree.firstToken(node),
+            .last = access.name_token,
+        });
+    }
+    return lower.add(.{
+        .data = .{ .field_val = .{ .base = base, .index = at } },
+        .val = .{ .ty = ft },
+        .token = lower.tree.firstToken(node),
+        .last = access.name_token,
+    });
+}
+
+/// The field's position in `owner`, reporting when there is no such field.
+fn resolveField(lower: *Lower, owner: Type.Index, name_token: Token) Allocator.Error!?u32 {
+    const text = lower.tree.tokenSlice(name_token);
     const wanted = try lower.types.internString(lower.gpa, text);
-    const at = lower.types.findField(owner, wanted) orelse return lower.fail(.{
+    if (lower.types.findField(owner, wanted)) |at| return at;
+    _ = try lower.fail(.{
         .tag = .no_such_field,
-        .token = access.name_token,
+        .token = name_token,
         .message = try lower.print("'{s}' has no field named '{s}'", .{
             try lower.typeName(owner), text,
         }),
@@ -581,13 +741,7 @@ fn fieldOf(lower: *Lower, base: Ref, access: Ast.View.FieldAccess, node: Ast.Nod
             }),
         }}),
     });
-
-    return lower.add(.{
-        .data = .{ .field = .{ .base = base, .index = at } },
-        .val = .{ .ty = lower.types.fieldTypes(owner)[at] },
-        .token = lower.tree.firstToken(node),
-        .last = access.name_token,
-    });
+    return null;
 }
 
 fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!Ref {

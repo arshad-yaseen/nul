@@ -74,7 +74,7 @@ fn instruction(
         .decl => try w.print("decl {s}", .{tree.tokenSlice(inst.token)}),
         .alloc => try w.writeAll("alloc"),
         .load => |slot| try w.print("load %{d}", .{slot.i()}),
-        .store => |it| try w.print("store %{d}, %{d}", .{ it.slot.i(), it.value.i() }),
+        .store => |it| try w.print("store %{d}, %{d}", .{ it.ptr.i(), it.value.i() }),
         .binary => |it| try w.print("binary({s}) %{d}, %{d}", .{
             tree.tokenSlice(inst.token), it.lhs.i(), it.rhs.i(),
         }),
@@ -82,11 +82,11 @@ fn instruction(
             tree.tokenSlice(inst.token), operand.i(),
         }),
         .coerce => |operand| try w.print("coerce %{d}", .{operand.i()}),
-        .field => |it| try w.print("field %{d}.{s}", .{
+        .field_val => |it| try w.print("field_val %{d}.{s}", .{
             it.base.i(), tree.tokenSlice(inst.last),
         }),
-        .store_field => |it| try w.print("store_field %{d}, %{d}", .{
-            it.place.i(), it.value.i(),
+        .field_ptr => |it| try w.print("field_ptr %{d}.{s}", .{
+            it.base.i(), tree.tokenSlice(inst.last),
         }),
         .call => |it| {
             switch (nir.get(it.callee).val.known) {

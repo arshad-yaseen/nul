@@ -1,0 +1,7 @@
+let Counter = struct { hits: i64 }
+
+/// '*Counter' lends the memory for reading. Writing through it needs '*var', which
+/// is the whole difference between the two.
+fn bump(c: *Counter) {
+    c.hits = c.hits + 1
+}

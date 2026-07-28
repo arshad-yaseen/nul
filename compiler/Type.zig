@@ -53,6 +53,8 @@ pub const String = enum(u32) { empty = 0, _ };
 
 pub const Func = struct { params: []const Index, return_type: Index };
 
+pub const Pointer = struct { pointee: Index, is_mutable: bool };
+
 // Builtins
 
 pub fn builtinName(index: Index) ?[]const u8 {
@@ -224,8 +226,12 @@ pub fn canEqual(types: *const Type, ty: Index) bool {
 // Queries
 
 pub fn pointeeOf(types: *const Type, ty: Index) ?Index {
+    return if (types.pointerOf(ty)) |pointer| pointer.pointee else null;
+}
+
+pub fn pointerOf(types: *const Type, ty: Index) ?Pointer {
     return switch (types.keyOf(ty)) {
-        .pointer => |pointer| pointer.pointee,
+        .pointer => |pointer| pointer,
         else => null,
     };
 }
@@ -406,8 +412,6 @@ const Key = union(enum) {
     struct_type: NominalId,
     func: Func,
 
-    const Pointer = struct { pointee: Index, is_mutable: bool };
-
     /// `std.meta.eql` would compare the params slice by pointer, so this stays by hand.
     fn eql(a: Key, b: Key) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
@@ -439,7 +443,7 @@ const Entry = struct {
 
 const Data = union(enum) {
     builtin,
-    pointer: Key.Pointer,
+    pointer: Pointer,
     struct_type: u32,
     /// Locates a `FuncRecord`, then its parameter types.
     func: u32,
