@@ -46,7 +46,6 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
 
-    // File tests, where `test/pass` checks clean and `test/fail` matches its snapshot.
     const runner = b.addExecutable(.{
         .name = "filetest",
         .root_module = b.createModule(.{
@@ -67,8 +66,6 @@ pub fn build(b: *std.Build) void {
     b.step("test-update", "Rewrite what the file tests expect").dependOn(&update.step);
 }
 
-/// Every `.nul` under `test/`, in a stable order, with the runner's cwd at the project
-/// root so rendered paths match the snapshots.
 fn addTestFiles(b: *std.Build, run: *std.Build.Step.Run) void {
     run.setCwd(b.path("."));
     const io = b.graph.io;
