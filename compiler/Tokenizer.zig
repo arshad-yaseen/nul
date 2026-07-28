@@ -246,7 +246,7 @@ inline fn pairOrSingle(
     return if_paired;
 }
 
-/// The byte just past a token. Fixed-length tags answer from the table; the four
+/// The byte just past a token. Fixed-length tags answer from the table, and the four
 /// variable-length ones rescan.
 pub fn tokenEnd(src: [:0]const u8, tag: Token.Tag, start: u32) u32 {
     const fixed = Token.traits[@intFromEnum(tag)].lexeme_len;

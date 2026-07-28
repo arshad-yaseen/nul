@@ -7,7 +7,7 @@ const Io = std.Io;
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const codegen_c = @import("codegen/c.zig");
-const InternPool = @import("InternPool.zig");
+const Type = @import("Type.zig");
 const Lower = @import("Lower.zig");
 const Namespace = @import("Namespace.zig");
 const Nir = @import("Nir.zig");
@@ -28,7 +28,7 @@ pub fn check(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8) Error!Compil
 }
 
 /// Checks `path`, and writes C to `emit` when nothing is wrong with it. Emission happens
-/// here because the pool and the bodies are alive only for the length of this call.
+/// here because the types and the bodies are alive only for the length of this call.
 pub fn build(
     gpa: Allocator,
     io: Io,
@@ -58,15 +58,15 @@ fn analyze(
     diagnostics: *Diagnostic.List,
     emit: ?*Io.Writer,
 ) Error!void {
-    var pool = try InternPool.init(gpa);
-    defer pool.deinit(gpa);
+    var types = try Type.init(gpa);
+    defer types.deinit(gpa);
 
     var namespace = try Namespace.collect(gpa, tree, diagnostics);
     defer namespace.deinit(gpa);
 
     var sema: Sema = .{
         .gpa = gpa,
-        .pool = &pool,
+        .types = &types,
         .tree = tree,
         .namespace = &namespace,
         .diagnostics = diagnostics,
@@ -84,13 +84,13 @@ fn analyze(
         if (tree.nodeTag(decl.node) != .fn_decl) continue;
         const body = try Lower.run(&sema, decl);
         try functions.append(gpa, .{ .decl = decl, .body = body });
-        try Region.run(gpa, &pool, tree, diagnostics, body);
+        try Region.run(gpa, &types, tree, diagnostics, body);
     }
 
     // Emitting a program the checker rejected would only produce C that lies.
     if (emit) |w| {
         if (diagnostics.all().len == 0) {
-            try codegen_c.emit(&pool, tree, &namespace, functions.items, w);
+            try codegen_c.emit(&types, tree, &namespace, functions.items, w);
         }
     }
 }

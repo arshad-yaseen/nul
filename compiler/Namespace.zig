@@ -1,16 +1,14 @@
-//! The container's declaration table. What a declaration *means* is `Sema`'s.
-//!
-//! Every name is bound before any is resolved, which is what lets declarations refer to
-//! each other in any order.
+//! The container's declaration table. What a declaration means is `Sema`'s. Every name
+//! is bound before any is resolved, which lets declarations refer to each other in any
+//! order.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
-const Comptime = @import("Comptime.zig");
 const Diagnostic = @import("Diagnostic.zig");
-const InternPool = @import("InternPool.zig");
 const Type = @import("Type.zig");
+const Value = @import("Value.zig");
 
 const Namespace = @This();
 
@@ -18,28 +16,16 @@ decls: std.ArrayList(Decl),
 /// Positions in `decls`, keyed on the name's source bytes.
 by_name: std.StringHashMapUnmanaged(u32),
 
-/// Collection fills in where it is written; `Sema` owns everything after.
+/// Collection fills in where it is written, and `Sema` owns everything after.
 pub const Decl = struct {
     name_token: Ast.TokenIndex,
     node: Ast.Node.Index,
     state: State = .unresolved,
-    /// `let Node = struct {...}` has type `type` and value the struct type itself.
-    ty: Type.Index = .poisoned,
-    val: Comptime.Value = .unknown,
+    /// What the name means. A struct declaration binds a value whose type is `type`.
+    value: Value = .poisoned,
 
     /// `in_progress` turns a self-dependency into a report instead of a hang.
     pub const State = enum { unresolved, in_progress, resolved };
-
-    /// Poison stays poison, so a failed declaration is never mistaken for a type.
-    pub fn setType(decl: *Decl, ty: Type.Index) void {
-        if (ty == .poisoned) {
-            decl.ty = .poisoned;
-            decl.val = .unknown;
-        } else {
-            decl.ty = .type;
-            decl.val = .{ .type = ty };
-        }
-    }
 };
 
 pub const empty: Namespace = .{ .decls = .empty, .by_name = .empty };
@@ -57,8 +43,8 @@ pub fn collect(
         const name_token = declaredName(tree, node) orelse continue;
         const name = tree.tokenSlice(name_token);
 
-        // Imports are exempt: `use std.mem.Arena` binds the `Arena` that *is* the builtin.
-        if (tree.nodeTag(node) != .use_decl and InternPool.builtinNamed(name) != null) {
+        // Imports are exempt, since `use std.mem.Arena` binds the builtin itself.
+        if (tree.nodeTag(node) != .use_decl and Type.builtinNamed(name) != null) {
             try diagnostics.add(.{ .tag = .shadows_builtin, .token = name_token });
             continue;
         }
@@ -78,7 +64,7 @@ fn declaredName(tree: *const Ast, node: Ast.Node.Index) ?Ast.TokenIndex {
     return switch (tree.viewOf(node)) {
         .var_decl => |decl| decl.name_token,
         .fn_decl => |decl| decl.name_token,
-        // An import binds the last segment: `use std.mem.Arena` is `Arena`.
+        // An import binds the last segment, so `use std.mem.Arena` is `Arena`.
         .use_decl => |path| switch (tree.viewOf(path)) {
             .field_access => |access| access.name_token,
             .ident => |token| token,

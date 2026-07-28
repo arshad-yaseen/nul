@@ -261,7 +261,7 @@ fn parseFnDecl(p: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// `struct { name: T ... }`
+/// A `struct` keyword and its braced list of named fields.
 fn parseStructType(p: *Parse) Allocator.Error!Node.Index {
     const struct_token = p.nextToken();
 

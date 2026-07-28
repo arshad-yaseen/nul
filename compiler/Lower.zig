@@ -1,33 +1,27 @@
 //! Lowers one function body to `Nir`, typing and folding every value as it goes.
-//!
-//! Signatures are already resolved, so nothing here reads another body. Local names are
-//! resolved here and never reach the checker: an identifier becomes the index of the
-//! instruction that produced it, which is also how a comptime value flows through a
-//! name without being recomputed.
+//! Signatures are already resolved, so nothing here reads another body. A local name is
+//! the instruction that produced it, which is how a comptime value flows through a name.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
-const Comptime = @import("Comptime.zig");
 const Diagnostic = @import("Diagnostic.zig");
-const InternPool = @import("InternPool.zig");
 const Namespace = @import("Namespace.zig");
 const Nir = @import("Nir.zig");
 const Sema = @import("Sema.zig");
 const Type = @import("Type.zig");
+const Value = @import("Value.zig");
 
 const Lower = @This();
 const Token = Ast.TokenIndex;
 const Inst = Nir.Inst;
 const Note = Diagnostic.Note;
 const Span = struct { Token, Token };
-const TypedValue = Comptime.TypedValue;
-const Value = Comptime.Value;
 
 sema: *Sema,
 gpa: Allocator,
-pool: *InternPool,
+types: *Type,
 tree: *const Ast,
 function: Ast.View.FnDecl,
 /// What a `return` is checked against.
@@ -39,9 +33,8 @@ names: std.ArrayList(Ast.TokenIndex) = .empty,
 /// to the length it entered with.
 locals: std.ArrayList(Local) = .empty,
 
-/// A name is the instruction that last produced its value, the instruction's type and
-/// value are the name's. Rebinding points at a new instruction, which is why no storage
-/// slot is needed while bodies are straight line.
+/// A name is the instruction that last produced its value. Rebinding points at a new
+/// one, which is why no storage slot is needed while bodies are straight line.
 const Local = struct {
     name: []const u8,
     token: Token,
@@ -51,15 +44,13 @@ const Local = struct {
 
 pub fn run(sema: *Sema, decl: Namespace.Decl) Allocator.Error!Nir {
     const function = sema.tree.viewOf(decl.node).fn_decl;
-    const signature: InternPool.Key.Func = switch (sema.pool.keyOf(decl.ty)) {
-        .func => |func| func,
-        else => .{ .params = &.{}, .return_type = .poisoned },
-    };
+    const signature = sema.types.funcOf(decl.value.ty) orelse
+        Type.Func{ .params = &.{}, .return_type = .poisoned };
 
     var lower: Lower = .{
         .sema = sema,
         .gpa = sema.gpa,
-        .pool = sema.pool,
+        .types = sema.types,
         .tree = sema.tree,
         .function = function,
         .returns = signature.return_type,
@@ -92,7 +83,7 @@ fn bindParams(lower: *Lower, params: []const Type.Index) Allocator.Error!void {
         const inst = try lower.add(.{
             .tag = .arg,
             .token = param.name_token,
-            .ty = params[at],
+            .val = .{ .ty = params[at] },
             .lhs = at,
         });
         try lower.declare(param.name_token, inst, false);
@@ -105,12 +96,12 @@ fn bindParams(lower: *Lower, params: []const Type.Index) Allocator.Error!void {
 fn add(lower: *Lower, inst: Inst) Allocator.Error!u32 {
     const at: u32 = @intCast(lower.insts.items.len);
     try lower.insts.append(lower.gpa, inst);
-    try lower.names.append(lower.gpa, Nir.no_name);
+    try lower.names.append(lower.gpa, Nir.none);
     return at;
 }
 
 fn todo(lower: *Lower, token: Token) Allocator.Error!u32 {
-    return lower.add(.{ .tag = .todo, .token = token, .ty = .poisoned });
+    return lower.add(.{ .tag = .todo, .token = token, .val = .poisoned });
 }
 
 fn report(lower: *Lower, entry: Diagnostic.Entry) Allocator.Error!void {
@@ -123,13 +114,12 @@ fn fail(lower: *Lower, entry: Diagnostic.Entry) Allocator.Error!u32 {
     return lower.todo(entry.token);
 }
 
-fn typeOf(lower: *const Lower, inst: u32) Type.Index {
-    return lower.insts.items[inst].ty;
+fn valOf(lower: *const Lower, inst: u32) Value {
+    return lower.insts.items[inst].val;
 }
 
-fn typedValue(lower: *const Lower, inst: u32) TypedValue {
-    const it = lower.insts.items[inst];
-    return .{ .ty = it.ty, .val = it.val };
+fn typeOf(lower: *const Lower, inst: u32) Type.Index {
+    return lower.valOf(inst).ty;
 }
 
 fn declare(lower: *Lower, token: Token, inst: u32, is_mutable: bool) Allocator.Error!void {
@@ -152,13 +142,13 @@ fn find(lower: *Lower, text: []const u8) ?*Local {
     return null;
 }
 
-/// Gives a value the type a binding assigns it. `keep_value` is false for a `var`,
+/// Gives a value the type a binding assigns it. `keep_known` is false for a `var`,
 /// since a mutable slot is a runtime value whatever initialized it.
-fn coerced(lower: *Lower, inst: u32, into: Type.Index, token: Token, keep_value: bool) Allocator.Error!u32 {
-    const val: Value = if (keep_value) lower.insts.items[inst].val else .unknown;
-    const same_type = lower.typeOf(inst) == into;
-    if (same_type and std.meta.eql(val, lower.insts.items[inst].val)) return inst;
-    return lower.add(.{ .tag = .coerce, .token = token, .ty = into, .val = val, .lhs = inst });
+fn coerced(lower: *Lower, inst: u32, into: Type.Index, token: Token, keep_known: bool) Allocator.Error!u32 {
+    const old = lower.valOf(inst);
+    const val: Value = .{ .ty = into, .known = if (keep_known) old.known else .runtime };
+    if (std.meta.eql(val, old)) return inst;
+    return lower.add(.{ .tag = .coerce, .token = token, .val = val, .lhs = inst });
 }
 
 // Statements
@@ -190,7 +180,7 @@ fn endScope(lower: *Lower, depth: usize) Allocator.Error!void {
         _ = try lower.add(.{
             .tag = .arena_end,
             .token = local.token,
-            .ty = .void,
+            .val = .{ .ty = .void },
             .lhs = local.inst,
         });
     }
@@ -216,15 +206,14 @@ fn statement(lower: *Lower, node: Ast.Node.Index) Allocator.Error!void {
     }
 }
 
-/// A `let` stays comptime when its value is known, like the literal it names. A `var`
-/// is a runtime slot: an untyped comptime initializer decides its type as `i64`/`f64`,
-/// and its knownness ends here, so nothing folds through a mutable name.
+/// A `let` stays comptime when its value is known. A `var` is a runtime slot, so an
+/// untyped comptime initializer becomes `i64` or `f64` and knownness ends here.
 fn localDecl(lower: *Lower, binding: Ast.View.VarDecl) Allocator.Error!void {
     var inst = try lower.expr(binding.init_expr);
 
     if (binding.type_expr.unwrap()) |annotation| {
         const declared = try lower.sema.evalTypeExpr(annotation);
-        const fits = try lower.sema.expect(declared, lower.typedValue(inst), binding.init_expr, .{
+        const fits = try lower.sema.expect(declared, lower.valOf(inst), binding.init_expr, .{
             .annotation = .{ .name = binding.name_token, .site = lower.mainToken(annotation) },
         });
         inst = try lower.coerced(inst, declared, binding.name_token, fits and !binding.is_mutable);
@@ -237,18 +226,17 @@ fn localDecl(lower: *Lower, binding: Ast.View.VarDecl) Allocator.Error!void {
 }
 
 fn returnStmt(lower: *Lower, node: Ast.Node.Index, value: Ast.Node.OptionalIndex) Allocator.Error!void {
-    var operand: Nir.OptionalIndex = .none;
-    var tv: TypedValue = .{ .ty = .void };
+    var operand: u32 = Nir.none;
+    var returned: Value = .{ .ty = .void };
     var blame = node;
 
     if (value.unwrap()) |expr_node| {
-        const inst = try lower.expr(expr_node);
-        operand = @enumFromInt(inst);
-        tv = lower.typedValue(inst);
+        operand = try lower.expr(expr_node);
+        returned = lower.valOf(operand);
         blame = expr_node;
     }
 
-    _ = try lower.sema.expect(lower.returns, tv, blame, .{ .returned = .{
+    _ = try lower.sema.expect(lower.returns, returned, blame, .{ .returned = .{
         .fn_name = lower.function.name_token,
         .site = if (lower.function.return_type.unwrap()) |n| lower.mainToken(n) else null,
     } });
@@ -259,12 +247,12 @@ fn returnStmt(lower: *Lower, node: Ast.Node.Index, value: Ast.Node.OptionalIndex
         .tag = .ret,
         .token = lower.mainToken(node),
         .last = lower.tree.lastToken(node),
-        .ty = .void,
-        .lhs = @intFromEnum(operand),
+        .val = .{ .ty = .void },
+        .lhs = operand,
     });
 }
 
-/// `x = e` points the name at a new instruction; `a.f = e` stores.
+/// `x = e` points the name at a new instruction, where `a.f = e` stores.
 fn assign(lower: *Lower, node: Ast.View.Assign) Allocator.Error!u32 {
     switch (lower.tree.viewOf(node.lhs)) {
         .ident => |token| return lower.assignLocal(token, node.rhs),
@@ -295,7 +283,7 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
     });
 
     const held = lower.typeOf(local.inst);
-    _ = try lower.sema.expect(held, lower.typedValue(value), rhs, .{ .assigned = .{
+    _ = try lower.sema.expect(held, lower.valOf(value), rhs, .{ .assigned = .{
         .name = token,
         .site = declared_at,
     } });
@@ -310,16 +298,16 @@ fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAcces
     const target = try lower.expr(node.lhs);
     const value = try lower.expr(node.rhs);
 
-    _ = try lower.sema.expect(lower.typeOf(target), lower.typedValue(value), node.rhs, .{
+    _ = try lower.sema.expect(lower.typeOf(target), lower.valOf(value), node.rhs, .{
         .field_store = .{ .name = access.name_token },
     });
 
     return lower.add(.{
         .tag = .store_field,
-        // The value, not the destination: it is what a lifetime error is about.
+        // The value, not the destination, since that is what a lifetime error is about.
         .token = lower.tree.firstToken(node.rhs),
         .last = lower.tree.lastToken(node.rhs),
-        .ty = .void,
+        .val = .{ .ty = .void },
         .lhs = target,
         .rhs = value,
     });
@@ -329,16 +317,12 @@ fn assignField(lower: *Lower, node: Ast.View.Assign, access: Ast.View.FieldAcces
 
 fn expr(lower: *Lower, node: Ast.Node.Index) Allocator.Error!u32 {
     switch (lower.tree.viewOf(node)) {
-        .number_literal, .bool_literal => {
-            const tv = try lower.sema.evalComptime(node);
-            return lower.add(.{
-                .tag = .constant,
-                .token = lower.mainToken(node),
-                .ty = tv.ty,
-                .val = tv.val,
-            });
-        },
-        .str_literal => |token| return lower.add(.{ .tag = .str, .token = token, .ty = .str }),
+        .number_literal, .bool_literal => return lower.add(.{
+            .tag = .constant,
+            .token = lower.mainToken(node),
+            .val = try lower.sema.evalComptime(node),
+        }),
+        .str_literal => |token| return lower.add(.{ .tag = .str, .token = token, .val = .{ .ty = .str } }),
         .ident => |token| return lower.name(token),
         .grouped => |inner| return lower.expr(inner),
         .binary => |it| return lower.binary(node, it),
@@ -355,33 +339,25 @@ fn name(lower: *Lower, token: Token) Allocator.Error!u32 {
     const text = lower.tree.tokenSlice(token);
     if (lower.find(text)) |local| return local.inst;
 
-    if (InternPool.builtinNamed(text)) |builtin| return lower.add(.{
+    if (Type.builtinNamed(text)) |builtin| return lower.add(.{
         .tag = .decl,
         .token = token,
-        .ty = .type,
-        .val = .{ .type = builtin },
+        .val = .ofType(builtin),
     });
 
     const decl = lower.sema.namespace.find(text) orelse
         return lower.fail(.{ .tag = .undefined_name, .token = token });
     try lower.sema.resolveDecl(decl);
-    return lower.add(.{
-        .tag = .decl,
-        .token = token,
-        .ty = decl.ty,
-        .val = decl.val,
-    });
+    return lower.add(.{ .tag = .decl, .token = token, .val = decl.value });
 }
 
 fn binary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Binary) Allocator.Error!u32 {
     const lhs = try lower.expr(it.lhs);
     const rhs = try lower.expr(it.rhs);
-    const out = try lower.sema.binOp(node, it, lower.typedValue(lhs), lower.typedValue(rhs));
     return lower.add(.{
         .tag = .binary,
         .token = it.op_token,
-        .ty = out.ty,
-        .val = out.val,
+        .val = try lower.sema.binOp(node, it, lower.valOf(lhs), lower.valOf(rhs)),
         .lhs = lhs,
         .rhs = rhs,
     });
@@ -389,27 +365,26 @@ fn binary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Binary) Allocator.Er
 
 fn unary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Unary) Allocator.Error!u32 {
     const operand = try lower.expr(it.operand);
-    const out = try lower.sema.unOp(node, it, lower.typedValue(operand));
     return lower.add(.{
         .tag = .unary,
         .token = it.op_token,
-        .ty = out.ty,
-        .val = out.val,
+        .val = try lower.sema.unOp(node, it, lower.valOf(operand)),
         .lhs = operand,
     });
 }
 
 fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess, node: Ast.Node.Index) Allocator.Error!u32 {
-    // Through a pointer as readily as into a value: `n.next.value` never says which.
-    const owner = Type.pointeeOf(lower.pool, lower.typeOf(base)) orelse lower.typeOf(base);
+    // Through a pointer as readily as into a value, since `n.next.value` never says
+    // which.
+    const owner = lower.types.pointeeOf(lower.typeOf(base)) orelse lower.typeOf(base);
     // An `Arena` method is not a field, and `call` has already taken those.
-    if (lower.pool.keyOf(owner) != .struct_type or !lower.pool.isDefined(owner)) {
+    if (!lower.types.isStruct(owner) or !lower.types.isDefined(owner)) {
         return lower.todo(access.name_token);
     }
 
     const text = lower.tree.tokenSlice(access.name_token);
-    const wanted = try lower.pool.internString(lower.gpa, text);
-    const at = lower.pool.findStructField(owner, wanted) orelse return lower.fail(.{
+    const wanted = try lower.types.internString(lower.gpa, text);
+    const at = lower.types.findField(owner, wanted) orelse return lower.fail(.{
         .tag = .no_such_field,
         .token = access.name_token,
         .message = try lower.print("'{s}' has no field named '{s}'", .{
@@ -427,7 +402,7 @@ fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess, node: Ast.Nod
         .tag = .field,
         .token = lower.tree.firstToken(node),
         .last = access.name_token,
-        .ty = lower.pool.structFieldTypes(owner)[at],
+        .val = .{ .ty = lower.types.fieldTypes(owner)[at] },
         .lhs = base,
         .rhs = at,
     });
@@ -451,19 +426,16 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
     };
 
     const callee_ty = lower.typeOf(callee);
-    const signature = switch (lower.pool.keyOf(callee_ty)) {
-        .func => |func| func,
-        else => {
-            for (it.args) |arg| _ = try lower.expr(arg);
-            if (callee_ty == .poisoned) return lower.todo(token);
-            return lower.fail(.{
-                .tag = .not_callable,
-                .token = lower.insts.items[callee].token,
-                .message = try lower.print("this is '{s}', which is not a function", .{
-                    try lower.typeName(callee_ty),
-                }),
-            });
-        },
+    const signature = lower.types.funcOf(callee_ty) orelse {
+        for (it.args) |arg| _ = try lower.expr(arg);
+        if (callee_ty == .poisoned) return lower.todo(token);
+        return lower.fail(.{
+            .tag = .not_callable,
+            .token = lower.insts.items[callee].token,
+            .message = try lower.print("this is '{s}', which is not a function", .{
+                try lower.typeName(callee_ty),
+            }),
+        });
     };
 
     const callee_name = lower.tree.tokenSlice(lower.insts.items[callee].token);
@@ -473,7 +445,7 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
     for (it.args, 0..) |arg, at| {
         const value = try lower.expr(arg);
         if (at < signature.params.len) {
-            _ = try lower.sema.expect(signature.params[at], lower.typedValue(value), arg, .{
+            _ = try lower.sema.expect(signature.params[at], lower.valOf(value), arg, .{
                 .argument = .{
                     .position = at,
                     .callee = callee_name,
@@ -503,7 +475,7 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
         .tag = .call,
         .token = span[0],
         .last = span[1],
-        .ty = signature.return_type,
+        .val = .{ .ty = signature.return_type },
         .lhs = callee,
         .rhs = start,
     });
@@ -530,10 +502,7 @@ fn paramSite(lower: *Lower, callee_node: Ast.Node.Index, at: usize) ?Token {
 /// Whether `inst` names the `Arena` type itself, as `Arena.init()` does.
 fn isArenaType(lower: *const Lower, inst: u32) bool {
     const it = lower.insts.items[inst];
-    return it.tag == .decl and switch (it.val) {
-        .type => |ty| ty == .Arena,
-        else => false,
-    };
+    return it.tag == .decl and it.val.asType() == .Arena;
 }
 
 const Method = enum { init, child, create, copy, reset, destroy };
@@ -570,38 +539,47 @@ fn arenaMethod(
     if (args.len != wanted) return lower.fail(.{
         .tag = .wrong_arg_count,
         .token = token,
-        .message = try lower.print("'{s}' takes {d} argument{s}, but {d} were given", .{
-            text, wanted, if (wanted == 1) "" else "s", args.len,
+        .message = try lower.print("'{s}' takes {d} argument{s}, but {d} {s} given", .{
+            text,
+            wanted,
+            if (wanted == 1) "" else "s",
+            args.len,
+            if (args.len == 1) "was" else "were",
         }),
     });
 
     return switch (method) {
-        .init => lower.add(.{ .tag = .arena_init, .token = span[0], .last = span[1], .ty = .Arena }),
+        .init => lower.add(.{
+            .tag = .arena_init,
+            .token = span[0],
+            .last = span[1],
+            .val = .{ .ty = .Arena },
+        }),
         .child => lower.add(.{
             .tag = .arena_child,
             .token = span[0],
             .last = span[1],
-            .ty = .Arena,
+            .val = .{ .ty = .Arena },
             .lhs = receiver,
         }),
         .reset, .destroy => lower.add(.{
             .tag = if (method == .reset) .arena_reset else .arena_destroy,
             .token = span[0],
             .last = span[1],
-            .ty = .void,
+            .val = .{ .ty = .void },
             .lhs = receiver,
         }),
         .create => blk: {
             const of = try lower.sema.evalTypeExpr(args[0]);
-            const ty = if (of == .poisoned) .poisoned else try lower.pool.intern(
-                lower.gpa,
-                .{ .pointer = .{ .pointee = of, .is_mutable = true } },
-            );
+            const ty = if (of == .poisoned)
+                Type.Index.poisoned
+            else
+                try lower.types.pointerType(lower.gpa, of, true);
             break :blk lower.add(.{
                 .tag = .arena_create,
                 .token = span[0],
                 .last = span[1],
-                .ty = ty,
+                .val = .{ .ty = ty },
                 .lhs = receiver,
             });
         },
@@ -609,7 +587,7 @@ fn arenaMethod(
             const value = try lower.expr(args[0]);
             const ty = lower.typeOf(value);
             // A copy holding a pointer would be relabelled without moving what it reaches.
-            if (ty != .poisoned and lower.pool.isDefined(ty) and !Type.isCopyable(lower.pool, ty)) {
+            if (ty != .poisoned and lower.types.isDefined(ty) and !lower.types.isCopyable(ty)) {
                 try lower.report(.{
                     .tag = .copy_holds_pointer,
                     .token = lower.mainToken(args[0]),
@@ -624,7 +602,7 @@ fn arenaMethod(
                 .tag = .arena_copy,
                 .token = span[0],
                 .last = span[1],
-                .ty = ty,
+                .val = .{ .ty = ty },
                 .lhs = receiver,
                 .rhs = value,
             });
@@ -656,7 +634,7 @@ fn notes(lower: *Lower, values: []const Note) Allocator.Error![]const Note {
 
 /// `fields 'value' and 'next'`, for a diagnostic that has to say what a type does have.
 fn fieldList(lower: *Lower, owner: Type.Index) Allocator.Error![]const u8 {
-    const names = lower.pool.structFieldNames(owner);
+    const names = lower.types.fieldNames(owner);
     if (names.len == 0) return "no fields";
 
     const arena = lower.sema.diagnostics.allocator();
@@ -665,7 +643,7 @@ fn fieldList(lower: *Lower, owner: Type.Index) Allocator.Error![]const u8 {
     for (names, 0..) |field_name, at| {
         if (at > 0) try out.appendSlice(arena, if (at + 1 == names.len) " and " else ", ");
         try out.append(arena, '\'');
-        try out.appendSlice(arena, lower.pool.stringBytes(field_name));
+        try out.appendSlice(arena, lower.types.stringBytes(field_name));
         try out.append(arena, '\'');
     }
     return out.items;
@@ -674,15 +652,15 @@ fn fieldList(lower: *Lower, owner: Type.Index) Allocator.Error![]const u8 {
 /// Names the field that makes the type uncopyable, which is the thing to fix.
 fn copyNotes(lower: *Lower, ty: Type.Index) Allocator.Error![]const Note {
     const help: Note = .{ .kind = .help, .text = "copy what the pointer reaches, and rebuild around it" };
-    if (lower.pool.keyOf(ty) != .struct_type) return lower.notes(&.{help});
+    if (!lower.types.isStruct(ty)) return lower.notes(&.{help});
 
-    for (lower.pool.structFieldNames(ty), lower.pool.structFieldTypes(ty)) |field_name, field_ty| {
-        if (Type.isCopyable(lower.pool, field_ty)) continue;
+    for (lower.types.fieldNames(ty), lower.types.fieldTypes(ty)) |field_name, field_ty| {
+        if (lower.types.isCopyable(field_ty)) continue;
         return lower.notes(&.{ .{
             .kind = .note,
             .text = try lower.print(
                 "'{s}' is '{s}', and a copy moves the value rather than what it points at,\nso the copy would still reach into the arena the original came from.",
-                .{ lower.pool.stringBytes(field_name), try lower.typeName(field_ty) },
+                .{ lower.types.stringBytes(field_name), try lower.typeName(field_ty) },
             ),
         }, help });
     }

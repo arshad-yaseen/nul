@@ -12,9 +12,8 @@ const Diagnostic = @This();
 
 // What a pass records
 
-/// Codes are explicit and permanent: a kind may be reordered or retired, never
-/// renumbered, so `E0007` means one thing forever. Semantic errors own E00xx,
-/// `Ast.Error.Tag` owns E01xx.
+/// Explicit and permanent, so `E0007` means one thing forever. A kind may be retired,
+/// never renumbered. Semantic errors own E00xx and `Ast.Error.Tag` owns E01xx.
 pub const Tag = enum(u16) {
     redeclared = 1,
     shadows_builtin = 2,
@@ -40,11 +39,11 @@ pub const Tag = enum(u16) {
     comptime_overflow = 22,
 };
 
-/// One recorded mistake. Most need only a tag and a token, which costs no allocation;
-/// everything below `token` is owned by the `List` and usually empty.
+/// One recorded mistake. Most need only a tag and a token, which costs no allocation.
+/// Everything below `token` is owned by the `List` and usually empty.
 pub const Entry = struct {
     tag: Tag,
-    /// The primary span: what the header points at, and what sorting orders on.
+    /// The primary span, what the header points at and what sorting orders on.
     token: Ast.TokenIndex,
     /// Null covers `token` alone.
     last: ?Ast.TokenIndex = null,
@@ -168,7 +167,7 @@ pub const List = struct {
 message: []const u8,
 /// Rendered as `error[E0007]`.
 code: ?u16 = null,
-/// Any order; the renderer sorts. Exactly one `.primary`, which fixes the header.
+/// Any order, since the renderer sorts. Exactly one `.primary`, which fixes the header.
 labels: []const Label,
 notes: []const Note = &.{},
 
@@ -185,9 +184,9 @@ pub const Label = struct {
     pub const Style = enum { primary, secondary };
 };
 
-/// Four steps of loudness: the frame recedes furthest, annotations sit below the source
-/// they describe, source reads plain, and red marks what is wrong. `help:` shares its
-/// green with the `+` line it introduces.
+/// Four steps of loudness. The frame recedes furthest, annotations sit below the source
+/// they describe, source reads plain, and red marks what is wrong. A help note shares
+/// its green with the `+` line it introduces.
 pub const Palette = struct {
     reset: []const u8 = "",
     fail: []const u8 = "",
@@ -216,8 +215,8 @@ pub const Palette = struct {
     };
 };
 
-/// Takes `Ast.Error`s as readily as `Entry`s: both word themselves with `render` and
-/// point at a `token`, which is why a parse error and a type error look the same.
+/// Takes `Ast.Error`s as readily as `Entry`s, since both word themselves with `render`
+/// and point at a `token`. That is why a parse error and a type error look the same.
 pub fn renderAll(
     gpa: Allocator,
     entries: anytype,
@@ -231,7 +230,7 @@ pub fn renderAll(
 
     for (entries, 0..) |entry, at| {
         if (at > 0) try w.writeByte('\n');
-        // An `Ast.Error` carries none of these; an `Entry` may.
+        // An `Ast.Error` carries none of these, where an `Entry` may.
         const extras: Extras = if (@hasField(@TypeOf(entry), "marks")) .{
             .message = entry.message,
             .last = entry.last,
@@ -281,7 +280,7 @@ fn spanOf(tree: Ast, token: Ast.TokenIndex, last: ?Ast.TokenIndex, style: Label.
     };
 }
 
-/// Columns are 1-based bytes; `end_col` is exclusive and always past `col`, so every
+/// Columns are 1-based bytes. `end_col` is exclusive and always past `col`, so every
 /// label draws at least one marker.
 const Placed = struct {
     line: u32,
@@ -367,8 +366,7 @@ pub fn render(
         try r.markerRow(group);
 
         // The rightmost label spoke on the marker row. Of the rest, only those with
-        // something to say need a connector, drawn from the right so none crosses
-        // another's text.
+        // something to say need a connector, drawn right to left so none crosses another.
         var speaking: usize = 0;
         for (group[0 .. group.len - 1]) |label| {
             if (label.text.len == 0) continue;
@@ -525,7 +523,7 @@ const Render = struct {
         try r.print(r.palette.added, "+ {s}{s}\n", .{ original[0..lead], code });
     }
 
-    /// Indents every line after the first; suggested code wants the first indented too.
+    /// Indents every line after the first. Suggested code wants the first indented too.
     fn wrapped(r: Render, text: []const u8, indent: u32, indent_first: bool) Io.Writer.Error!void {
         var lines = std.mem.splitScalar(u8, text, '\n');
         var first = true;

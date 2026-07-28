@@ -1,5 +1,5 @@
 //! The `nul` command. Parses arguments, drives the compiler, and chooses an exit code.
-//! Diagnostics go to stderr; what the command produces goes to stdout.
+//! Diagnostics go to stderr, and what the command produces goes to stdout.
 
 const std = @import("std");
 const Io = std.Io;

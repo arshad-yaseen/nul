@@ -10,7 +10,7 @@ const Parse = @import("Parse.zig");
 
 const Ast = @This();
 
-/// Borrowed; the caller's `Source` must outlive the tree.
+/// Borrowed, so the caller's `Source` must outlive the tree.
 source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
 nodes: NodeList.Slice,
@@ -38,8 +38,8 @@ pub fn deinit(tree: *Ast, gpa: Allocator) void {
 
 pub const Node = struct {
     tag: Tag,
-    /// Names this node: an operator, a keyword, a call's `(`. Every other position
-    /// derives from it.
+    /// Names this node, so an operator, a keyword, or a call's `(`. Every other
+    /// position derives from it.
     main_token: TokenIndex,
     data: Data,
 
@@ -76,18 +76,18 @@ pub const Node = struct {
         fn_decl,
         param,
         block,
-        /// Both `let` and `var`; `main_token` is the keyword.
+        /// Both `let` and `var`, where `main_token` is the keyword.
         var_decl,
         return_stmt,
         assign,
         call,
         field_access,
         grouped,
-        /// `struct { name: T ... }`, `data` is `extra_range`: the fields.
+        /// A struct type, whose `extra_range` holds the fields.
         struct_type,
-        /// `name: T` inside a struct. `main_token` is the name.
+        /// One named field inside a struct, where `main_token` is the name.
         field,
-        /// `*T`. `main_token` is `*`, `data` is `node`: the pointee type.
+        /// A pointer type, where `main_token` is `*` and `node` is the pointee.
         pointer_type,
 
         /// `main_token` is the operator.
@@ -165,7 +165,7 @@ pub const OperInfo = packed struct(u16) {
 };
 
 /// The one place a token maps to the operator it means. `Parse` reads `prec` and
-/// `assoc`; `viewOf` reads `op` back off the token.
+/// `assoc`, where `viewOf` reads `op` back off the token.
 pub const oper_table: [Token.tag_count]OperInfo = blk: {
     var t: [Token.tag_count]OperInfo = @splat(.{});
     for (.{

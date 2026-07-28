@@ -35,7 +35,7 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Build and run nul").dependOn(&run.step);
 
     const test_step = b.step("test", "Run unit tests and file tests");
-    for ([_][]const u8{ "compiler/Comptime.zig", "compiler/Diagnostic.zig" }) |root| {
+    for ([_][]const u8{ "compiler/Value.zig", "compiler/Diagnostic.zig" }) |root| {
         const t = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(root),
@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
 
-    // File tests: `test/pass` checks clean, `test/fail` matches its `.expected` snapshot.
+    // File tests, where `test/pass` checks clean and `test/fail` matches its snapshot.
     const runner = b.addExecutable(.{
         .name = "filetest",
         .root_module = b.createModule(.{

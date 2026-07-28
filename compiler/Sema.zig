@@ -1,20 +1,22 @@
+//! Resolves declarations, and hosts the checks every pass shares. `expect` is the one
+//! door a value walks through to become another type, and `binOp` with `unOp` say what
+//! each operator means. `Lower` calls both, so every site is judged by the same rules.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
-const Comptime = @import("Comptime.zig");
 const Diagnostic = @import("Diagnostic.zig");
-const InternPool = @import("InternPool.zig");
 const Namespace = @import("Namespace.zig");
 const Type = @import("Type.zig");
+const Value = @import("Value.zig");
 
 const Sema = @This();
 const Decl = Namespace.Decl;
 const Token = Ast.TokenIndex;
-const TypedValue = Comptime.TypedValue;
 
 gpa: Allocator,
-pool: *InternPool,
+types: *Type,
 /// Borrowed, must outlive this.
 tree: *const Ast,
 namespace: *Namespace,
@@ -28,7 +30,7 @@ pub fn deinit(sema: *Sema) void {
 }
 
 pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
-    return Type.spell(sema.pool, ty, sema.diagnostics.allocator());
+    return sema.types.spell(ty, sema.diagnostics.allocator());
 }
 
 fn report(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!void {
@@ -48,12 +50,13 @@ pub fn resolveDeclarations(sema: *Sema) Allocator.Error!void {
     sema.diagnostics.sortBySource();
 }
 
-/// Reentrant: `in_progress` means the declaration needs itself.
+/// Reentrant, so `in_progress` means the declaration needs itself.
 pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
     switch (decl.state) {
         .resolved => return,
         .in_progress => {
-            decl.ty = try sema.fail(.depends_on_itself, decl.name_token);
+            try sema.report(.depends_on_itself, decl.name_token);
+            decl.value = .poisoned;
             decl.state = .resolved;
             return;
         },
@@ -63,7 +66,7 @@ pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
     decl.state = .in_progress;
     switch (sema.tree.viewOf(decl.node)) {
         .var_decl => |binding| try sema.resolveBinding(decl, binding),
-        .fn_decl => |function| decl.ty = try sema.evalFuncType(function),
+        .fn_decl => |function| decl.value = .{ .ty = try sema.evalFuncType(function) },
         .use_decl => sema.resolveImport(decl),
         else => unreachable, // `Namespace.collect` binds only these three
     }
@@ -72,52 +75,47 @@ pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
 
 fn resolveBinding(sema: *Sema, decl: *Decl, binding: Ast.View.VarDecl) Allocator.Error!void {
     // A struct is declared before its fields resolve, so they can point back at it.
-    var tv: TypedValue = switch (sema.tree.viewOf(binding.init_expr)) {
-        .struct_type => |fields| .{
-            .ty = .type,
-            .val = .{ .type = try sema.evalStructType(fields, decl) },
-        },
+    var value: Value = switch (sema.tree.viewOf(binding.init_expr)) {
+        .struct_type => |fields| .ofType(try sema.evalStructType(fields, decl)),
         else => try sema.evalComptime(binding.init_expr),
     };
 
     // The written type wins, once the value is checked to fit it.
     if (binding.type_expr.unwrap()) |annotation| {
         const declared = try sema.evalTypeExpr(annotation);
-        const fits = try sema.expect(declared, tv, binding.init_expr, .{ .annotation = .{
+        const fits = try sema.expect(declared, value, binding.init_expr, .{ .annotation = .{
             .name = decl.name_token,
             .site = sema.tree.nodeMainToken(annotation),
         } });
-        tv = .{ .ty = declared, .val = if (fits) tv.val else .unknown };
+        value = .{ .ty = declared, .known = if (fits) value.known else .runtime };
     }
 
-    decl.ty = tv.ty;
-    decl.val = tv.val;
+    decl.value = value;
 }
 
 fn resolveImport(sema: *Sema, decl: *Decl) void {
-    const builtin = InternPool.builtinNamed(sema.tree.tokenSlice(decl.name_token)) orelse
+    const builtin = Type.builtinNamed(sema.tree.tokenSlice(decl.name_token)) orelse
         return;
-    decl.setType(builtin);
+    decl.value = .ofType(builtin);
 }
 
 // Comptime evaluation
 
-/// Evaluates an expression no running program computes: a container initializer or a
-/// type position. Types are values here, which is why one walk serves both.
-pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!TypedValue {
+/// Evaluates an expression no running program computes, meaning a container
+/// initializer or a type position. Types are values, so one walk serves both.
+pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Value {
     switch (sema.tree.viewOf(node)) {
         .number_literal => |token| {
-            const val = Comptime.parse(sema.tree.tokenSlice(token)) catch |err| {
+            return Value.parse(sema.tree.tokenSlice(token)) catch |err| {
                 try sema.report(switch (err) {
                     error.InvalidDigit => .invalid_digit,
                     error.TooLarge => .literal_too_large,
                 }, token);
                 return .poisoned;
             };
-            return .{ .ty = Comptime.typeOf(val), .val = val };
         },
         .str_literal => return .{ .ty = .str },
-        .bool_literal => |it| return .{ .ty = .bool, .val = .{ .bool = it.value } },
+        .bool_literal => |it| return .{ .ty = .bool, .known = .{ .bool = it.value } },
         .grouped => |inner| return sema.evalComptime(inner),
         .ident => |token| return sema.evalName(token),
         .unary => |it| return sema.unOp(node, it, try sema.evalComptime(it.operand)),
@@ -130,14 +128,9 @@ pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!TypedValu
             // Identity is enough, which is what lets two structs refer to each other.
             const pointee = try sema.evalTypeExpr(pointer.child);
             if (pointee == .poisoned) return .poisoned;
-            return .{ .ty = .type, .val = .{ .type = try sema.pool.intern(sema.gpa, .{
-                .pointer = .{ .pointee = pointee, .is_mutable = pointer.is_mutable },
-            }) } };
+            return .ofType(try sema.types.pointerType(sema.gpa, pointee, pointer.is_mutable));
         },
-        .struct_type => |fields| return .{
-            .ty = .type,
-            .val = .{ .type = try sema.evalStructType(fields, null) },
-        },
+        .struct_type => |fields| return .ofType(try sema.evalStructType(fields, null)),
         .err => return .poisoned,
         else => {
             try sema.diagnostics.add(.{
@@ -151,41 +144,39 @@ pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!TypedValu
 }
 
 /// The edge that makes resolution order independent.
-fn evalName(sema: *Sema, token: Token) Allocator.Error!TypedValue {
+fn evalName(sema: *Sema, token: Token) Allocator.Error!Value {
     const name = sema.tree.tokenSlice(token);
-    if (InternPool.builtinNamed(name)) |builtin| // nothing can rebind `i64`
-        return .{ .ty = .type, .val = .{ .type = builtin } };
+    if (Type.builtinNamed(name)) |builtin| return .ofType(builtin); // nothing can rebind `i64`
 
     const decl = sema.namespace.find(name) orelse {
         try sema.report(.undefined_name, token);
         return .poisoned;
     };
     try sema.resolveDecl(decl);
-    return .{ .ty = decl.ty, .val = decl.val };
+    return decl.value;
 }
 
 pub fn evalTypeExpr(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Type.Index {
-    const tv = try sema.evalComptime(node);
-    if (tv.ty == .poisoned) return .poisoned;
-    if (tv.ty != .type or tv.val != .type) {
+    const value = try sema.evalComptime(node);
+    if (value.ty == .poisoned) return .poisoned;
+    return value.asType() orelse {
         try sema.diagnostics.add(.{
             .tag = .not_a_type,
             .token = sema.tree.firstToken(node),
             .last = sema.tree.lastToken(node),
             .message = try sema.diagnostics.print("this is '{s}', not a type", .{
-                try sema.typeName(tv.ty),
+                try sema.typeName(value.ty),
             }),
         });
         return .poisoned;
-    }
-    return tv.val.type;
+    };
 }
 
 // The door
 
 /// What a value was checked against, which decides how a refusal reads.
 pub const Expect = union(enum) {
-    /// `let name: T = value`. `site` is the annotation.
+    /// An annotated binding. `site` is where the type was written.
     annotation: struct { name: Token, site: Token },
     /// `return value`. `site` is the return type in the signature, when written.
     returned: struct { fn_name: Token, site: ?Token },
@@ -200,19 +191,19 @@ pub const Expect = union(enum) {
 };
 
 /// The one place a value meets the type something needs it to be. Reports a refusal in
-/// the words of `ctx`, true means it fits.
+/// the words of `ctx`, and returns whether it fits.
 pub fn expect(
     sema: *Sema,
     into: Type.Index,
-    tv: TypedValue,
+    value: Value,
     node: Ast.Node.Index,
     ctx: Expect,
 ) Allocator.Error!bool {
-    if (into == .poisoned or tv.ty == .poisoned) return true;
-    Type.coerce(sema.pool, tv.ty, into, tv.val) catch |refusal| {
+    if (into == .poisoned or value.ty == .poisoned) return true;
+    sema.types.coerce(value, into) catch |refusal| {
         switch (refusal) {
-            error.OutOfRange => try sema.reportRange(node, tv.val.int, into, ctx),
-            error.WrongType => try sema.reportMismatch(into, tv, node, ctx),
+            error.OutOfRange => try sema.reportRange(node, value.known.int, into, ctx),
+            error.WrongType => try sema.reportMismatch(into, value, node, ctx),
         }
         return false;
     };
@@ -222,15 +213,14 @@ pub fn expect(
 fn reportMismatch(
     sema: *Sema,
     into: Type.Index,
-    tv: TypedValue,
+    value: Value,
     node: Ast.Node.Index,
     ctx: Expect,
 ) Allocator.Error!void {
-    const from = tv.ty;
     const d = sema.diagnostics;
     const wanted = try sema.typeName(into);
-    const got = try sema.typeName(from);
-    const returns_nothing = ctx == .returned and from == .void;
+    const got = try sema.typeName(value.ty);
+    const returns_nothing = ctx == .returned and value.ty == .void;
 
     try d.add(.{
         .tag = .type_mismatch,
@@ -261,9 +251,11 @@ fn reportMismatch(
                 sema.tree.tokenSlice(it.op), wanted, got,
             }),
         },
+        // A known value tells more than its type. `this is 3.5` explains what
+        // `this is 'comptime_float'` only classifies.
         .text = if (returns_nothing)
             "nothing is returned here"
-        else switch (tv.val) {
+        else switch (value.known) {
             .int => |x| try d.print("this is {d}", .{x}),
             .float => |x| try d.print("this is {d}", .{x}),
             else => try d.print("this is '{s}'", .{got}),
@@ -326,22 +318,22 @@ fn reportRange(
 
 // Operators
 
-/// Types and folds one binary operation: the operands settle on a peer type, each side
-/// has to fit it, and known values fold, with everything folding proves reported here.
+/// Types and folds one binary operation. The operands settle on a peer type, each side
+/// has to fit it, and what folding proves is reported here.
 pub fn binOp(
     sema: *Sema,
     node: Ast.Node.Index,
     it: Ast.View.Binary,
-    lhs: TypedValue,
-    rhs: TypedValue,
-) Allocator.Error!TypedValue {
+    lhs: Value,
+    rhs: Value,
+) Allocator.Error!Value {
     const in_op: Expect = .{ .operand = .{ .op = it.op_token } };
     switch (it.op) {
         // Checked side by side, so each wrong operand is its own report.
         .bool_and, .bool_or => {
             _ = try sema.expect(.bool, lhs, it.lhs, in_op);
             _ = try sema.expect(.bool, rhs, it.rhs, in_op);
-            return .{ .ty = .bool, .val = Comptime.fold(it.op, lhs.val, rhs.val) catch .unknown };
+            return .{ .ty = .bool, .known = Value.fold(it.op, lhs.known, rhs.known) catch .runtime };
         },
         else => {},
     }
@@ -351,14 +343,14 @@ pub fn binOp(
         else => false,
     };
 
-    const resolved = Type.peer(sema.pool, lhs.ty, rhs.ty) orelse {
+    const resolved = sema.types.peer(lhs.ty, rhs.ty) orelse {
         try sema.reportUncombinable(it, lhs.ty, rhs.ty);
         return .poisoned;
     };
     if (resolved == .poisoned) return .poisoned;
 
     const accepted = switch (it.op) {
-        .equal, .not_equal => Type.canEqual(sema.pool, resolved),
+        .equal, .not_equal => sema.types.canEqual(resolved),
         else => Type.isNumber(resolved),
     };
     if (!accepted) {
@@ -368,35 +360,35 @@ pub fn binOp(
 
     const lhs_fits = try sema.expect(resolved, lhs, it.lhs, in_op);
     const rhs_fits = try sema.expect(resolved, rhs, it.rhs, in_op);
-    // An operand that does not fit was reported; folding it would only repeat that.
+    // An operand that does not fit was reported, so folding would repeat it.
     if (!lhs_fits or !rhs_fits) return .{ .ty = if (comparing) .bool else resolved };
 
-    const val = Comptime.fold(it.op, lhs.val, rhs.val) catch |err| {
+    const known = Value.fold(it.op, lhs.known, rhs.known) catch |err| {
         try sema.reportFold(err, it.op_token);
         return .poisoned;
     };
-    if (comparing) return .{ .ty = .bool, .val = val };
+    if (comparing) return .{ .ty = .bool, .known = known };
 
     // What the fold proves is judged where the operands settled.
-    if (val == .int) if (Type.intRange(resolved)) |range| {
-        if (val.int < range.min or val.int > range.max) {
-            try sema.reportFoldRange(node, it, val.int, resolved, lhs, rhs);
+    if (known == .int) if (Type.intRange(resolved)) |range| {
+        if (known.int < range.min or known.int > range.max) {
+            try sema.reportFoldRange(node, it, known.int, resolved, lhs, rhs);
             return .{ .ty = resolved };
         }
     };
-    return .{ .ty = resolved, .val = val };
+    return .{ .ty = resolved, .known = known };
 }
 
 pub fn unOp(
     sema: *Sema,
     node: Ast.Node.Index,
     it: Ast.View.Unary,
-    operand: TypedValue,
-) Allocator.Error!TypedValue {
+    operand: Value,
+) Allocator.Error!Value {
     switch (it.op) {
         .bool_not => {
             _ = try sema.expect(.bool, operand, it.operand, .{ .operand = .{ .op = it.op_token } });
-            return .{ .ty = .bool, .val = Comptime.boolNot(operand.val) };
+            return .{ .ty = .bool, .known = Value.boolNot(operand.known) };
         },
         .negate => {
             if (operand.ty == .poisoned) return .poisoned;
@@ -404,11 +396,11 @@ pub fn unOp(
                 try sema.reportNotNegatable(node, operand.ty);
                 return .poisoned;
             }
-            const val = Comptime.negate(operand.val) catch {
+            const known = Value.negate(operand.known) catch {
                 try sema.reportFold(error.Overflow, it.op_token);
                 return .poisoned;
             };
-            return .{ .ty = operand.ty, .val = val };
+            return .{ .ty = operand.ty, .known = known };
         },
     }
 }
@@ -482,8 +474,8 @@ fn reportFoldRange(
     it: Ast.View.Binary,
     value: i128,
     resolved: Type.Index,
-    lhs: TypedValue,
-    rhs: TypedValue,
+    lhs: Value,
+    rhs: Value,
 ) Allocator.Error!void {
     const source = if (lhs.ty == resolved) it.lhs else if (rhs.ty == resolved) it.rhs else null;
     const marks: []const Diagnostic.Mark = if (source) |side| try sema.diagnostics.marks(&.{.{
@@ -512,7 +504,7 @@ fn reportFoldRange(
     });
 }
 
-fn reportFold(sema: *Sema, err: Comptime.FoldError, token: Token) Allocator.Error!void {
+fn reportFold(sema: *Sema, err: Value.FoldError, token: Token) Allocator.Error!void {
     switch (err) {
         error.DivisionByZero => try sema.diagnostics.add(.{
             .tag = .division_by_zero,
@@ -558,22 +550,22 @@ fn typedNameOf(sema: *Sema, node: Ast.Node.Index) ?Ast.View.TypedName {
     };
 }
 
-/// Nominal: the declaration site makes it distinct, never the fields. `owner` is where
-/// the name comes from, and what lets a field point back at it before the fields resolve.
+/// Nominal, so the declaration site makes it distinct rather than the fields. `owner`
+/// gives the name, and lets a field point back before the fields resolve.
 fn evalStructType(
     sema: *Sema,
     fields: []const Ast.Node.Index,
     owner: ?*Decl,
 ) Allocator.Error!Type.Index {
     const name = if (owner) |decl|
-        try sema.pool.internString(sema.gpa, sema.tree.tokenSlice(decl.name_token))
+        try sema.types.internString(sema.gpa, sema.tree.tokenSlice(decl.name_token))
     else
         .empty;
-    const ty = try sema.pool.declareStruct(sema.gpa, name);
+    const ty = try sema.types.declareStruct(sema.gpa, name);
 
-    // Finished before a field is looked at, so `next: *Node` finds a `Node`.
+    // Finished before a field is looked at, so a field can point back at it.
     if (owner) |decl| {
-        decl.setType(ty);
+        decl.value = .ofType(ty);
         decl.state = .resolved;
     }
 
@@ -592,7 +584,7 @@ fn resolveStructFields(
     const base = sema.scratch.items.len;
     defer sema.scratch.shrinkRetainingCapacity(base);
 
-    var names: std.ArrayList(InternPool.String) = .empty;
+    var names: std.ArrayList(Type.String) = .empty;
     defer names.deinit(sema.gpa);
 
     for (0..fields.len) |at| {
@@ -600,17 +592,17 @@ fn resolveStructFields(
 
         var field_ty = try sema.evalTypeExpr(field.type_expr);
         // A field held by value needs a size where a pointer to one does not.
-        if (!sema.pool.isDefined(field_ty))
+        if (!sema.types.isDefined(field_ty))
             field_ty = try sema.fail(.depends_on_itself, blame orelse field.name_token);
 
         try sema.scratch.append(sema.gpa, field_ty);
         try names.append(
             sema.gpa,
-            try sema.pool.internString(sema.gpa, sema.tree.tokenSlice(field.name_token)),
+            try sema.types.internString(sema.gpa, sema.tree.tokenSlice(field.name_token)),
         );
     }
 
-    try sema.pool.defineStruct(sema.gpa, ty, names.items, sema.scratch.items[base..]);
+    try sema.types.defineStruct(sema.gpa, ty, names.items, sema.scratch.items[base..]);
 }
 
 /// The signature and nothing else, which is what lets a call be checked without the body.
@@ -638,10 +630,7 @@ fn evalFuncType(sema: *Sema, function: Ast.View.FnDecl) Allocator.Error!Type.Ind
     else
         .void;
 
-    return sema.pool.intern(sema.gpa, .{ .func = .{
-        .params = sema.scratch.items[base..],
-        .return_type = return_type,
-    } });
+    return sema.types.funcType(sema.gpa, sema.scratch.items[base..], return_type);
 }
 
 /// A function allocates its results into exactly one arena, which is what lets a caller

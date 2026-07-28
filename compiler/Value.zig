@@ -1,55 +1,64 @@
-//! The compile-time value system. A `Value` is what the compiler knows about a value
-//! before the program runs, it is parsed here, folded here, and carried on instructions
-//! and declarations so that knowledge flows wherever the value does.
+//! What an expression yields, the type it has, and what the compiler knows of it before
+//! the program runs.
 
 const std = @import("std");
 
 const Ast = @import("Ast.zig");
-const InternPool = @import("InternPool.zig");
+const Type = @import("Type.zig");
 
-/// `unknown` is a runtime value. Everything else the compiler can act on.
-pub const Value = union(enum) {
-    unknown,
+const Value = @This();
+
+ty: Type.Index,
+known: Known = .runtime,
+
+/// The comptime half. `runtime` means only the running program will see it.
+pub const Known = union(enum) {
+    runtime,
     int: i128,
     float: f64,
     bool: bool,
-    type: InternPool.Index,
+    type: Type.Index,
 };
 
-/// A value with the type it has, which is how one travels.
-pub const TypedValue = struct {
-    ty: InternPool.Index,
-    val: Value = .unknown,
+/// What analysis yields once it has reported why it has no answer.
+pub const poisoned: Value = .{ .ty = .poisoned };
 
-    pub const poisoned: TypedValue = .{ .ty = .poisoned };
-};
+/// A type used as a value, which is what a type declaration binds.
+pub fn ofType(ty: Type.Index) Value {
+    if (ty == .poisoned) return .poisoned;
+    return .{ .ty = .type, .known = .{ .type = ty } };
+}
+
+/// The type this value names, when it names one.
+pub fn asType(value: Value) ?Type.Index {
+    return switch (value.known) {
+        .type => |ty| ty,
+        else => null,
+    };
+}
+
+pub fn isKnown(value: Value) bool {
+    return value.known != .runtime;
+}
+
+// Literals
 
 pub const ParseError = error{ InvalidDigit, TooLarge };
 
 /// The tokenizer accepts more than is valid, so a bad literal is caught here.
 pub fn parse(text: []const u8) ParseError!Value {
     if (isFloatLiteral(text)) {
-        return .{ .float = std.fmt.parseFloat(f64, text) catch return error.InvalidDigit };
+        const x = std.fmt.parseFloat(f64, text) catch return error.InvalidDigit;
+        return .{ .ty = .comptime_float, .known = .{ .float = x } };
     }
-    const value = std.fmt.parseInt(i128, text, 0) catch |err| return switch (err) {
+    const x = std.fmt.parseInt(i128, text, 0) catch |err| return switch (err) {
         error.Overflow => error.TooLarge,
         error.InvalidCharacter => error.InvalidDigit,
     };
-    return .{ .int = value };
+    return .{ .ty = .comptime_int, .known = .{ .int = x } };
 }
 
-/// The type a literal starts as.
-pub fn typeOf(val: Value) InternPool.Index {
-    return switch (val) {
-        .int => .comptime_int,
-        .float => .comptime_float,
-        .bool => .bool,
-        .type => .type,
-        .unknown => unreachable,
-    };
-}
-
-/// Base dependent: `e` is an exponent in decimal but a digit in hex, where `p` marks it.
+/// Base dependent. `e` is an exponent in decimal but a digit in hex, where `p` marks it.
 fn isFloatLiteral(text: []const u8) bool {
     if (text.len > 1 and text[0] == '0') switch (text[1]) {
         'x', 'X' => return std.mem.indexOfAny(u8, text, ".pP") != null,
@@ -61,26 +70,25 @@ fn isFloatLiteral(text: []const u8) bool {
 
 // Folding
 
-/// Comptime integers are `i128`: wide enough for every sized integer, and a fold past
-/// the edge reports rather than wraps.
+/// Comptime integers are `i128`, so a fold past that edge reports rather than wraps.
 pub const FoldError = error{ DivisionByZero, Overflow };
 
-/// Operand kinds are checked before folding, so a mismatch here means an operand was
-/// already reported; it folds to `unknown` rather than crashing the compiler.
-pub fn fold(op: Ast.BinaryOp, a: Value, b: Value) FoldError!Value {
-    if (a == .unknown or b == .unknown) return .unknown;
+/// Kinds are checked before folding, so a mismatch here was already reported and folds
+/// to `runtime`.
+pub fn fold(op: Ast.BinaryOp, a: Known, b: Known) FoldError!Known {
+    if (a == .runtime or b == .runtime) return .runtime;
 
     if (a == .bool and b == .bool) return switch (op) {
         .bool_and => .{ .bool = a.bool and b.bool },
         .bool_or => .{ .bool = a.bool or b.bool },
         .equal => .{ .bool = a.bool == b.bool },
         .not_equal => .{ .bool = a.bool != b.bool },
-        else => .unknown,
+        else => .runtime,
     };
 
     if (a == .float or b == .float) {
-        const x = toFloat(a) orelse return .unknown;
-        const y = toFloat(b) orelse return .unknown;
+        const x = toFloat(a) orelse return .runtime;
+        const y = toFloat(b) orelse return .runtime;
         return switch (op) {
             .add => .{ .float = x + y },
             .sub => .{ .float = x - y },
@@ -93,11 +101,11 @@ pub fn fold(op: Ast.BinaryOp, a: Value, b: Value) FoldError!Value {
             .less_or_equal => .{ .bool = x <= y },
             .greater_than => .{ .bool = x > y },
             .greater_or_equal => .{ .bool = x >= y },
-            .bool_and, .bool_or => .unknown,
+            .bool_and, .bool_or => .runtime,
         };
     }
 
-    if (a != .int or b != .int) return .unknown;
+    if (a != .int or b != .int) return .runtime;
     const x = a.int;
     const y = b.int;
     return switch (op) {
@@ -115,27 +123,27 @@ pub fn fold(op: Ast.BinaryOp, a: Value, b: Value) FoldError!Value {
         .less_or_equal => .{ .bool = x <= y },
         .greater_than => .{ .bool = x > y },
         .greater_or_equal => .{ .bool = x >= y },
-        .bool_and, .bool_or => .unknown,
+        .bool_and, .bool_or => .runtime,
     };
 }
 
-pub fn negate(val: Value) FoldError!Value {
-    return switch (val) {
+pub fn negate(known: Known) FoldError!Known {
+    return switch (known) {
         .int => |x| .{ .int = std.math.negate(x) catch return error.Overflow },
         .float => |x| .{ .float = -x },
-        else => .unknown,
+        else => .runtime,
     };
 }
 
-pub fn boolNot(val: Value) Value {
-    return switch (val) {
+pub fn boolNot(known: Known) Known {
+    return switch (known) {
         .bool => |x| .{ .bool = !x },
-        else => .unknown,
+        else => .runtime,
     };
 }
 
-fn toFloat(val: Value) ?f64 {
-    return switch (val) {
+fn toFloat(known: Known) ?f64 {
+    return switch (known) {
         .int => |x| @floatFromInt(x),
         .float => |x| x,
         else => null,
@@ -143,18 +151,18 @@ fn toFloat(val: Value) ?f64 {
 }
 
 test "literals parse into values" {
-    try std.testing.expectEqual(Value{ .int = 255 }, try parse("0xff"));
-    try std.testing.expectEqual(Value{ .float = 2.5 }, try parse("2.5"));
+    try std.testing.expectEqual(Value{ .ty = .comptime_int, .known = .{ .int = 255 } }, try parse("0xff"));
+    try std.testing.expectEqual(Value{ .ty = .comptime_float, .known = .{ .float = 2.5 } }, try parse("2.5"));
     try std.testing.expectError(error.TooLarge, parse("340282366920938463463374607431768211456"));
     try std.testing.expectError(error.InvalidDigit, parse("0b12"));
 }
 
 test "arithmetic folds, and the edges report" {
-    try std.testing.expectEqual(Value{ .int = 256 }, try fold(.add, .{ .int = 255 }, .{ .int = 1 }));
-    try std.testing.expectEqual(Value{ .float = 3.5 }, try fold(.add, .{ .int = 1 }, .{ .float = 2.5 }));
-    try std.testing.expectEqual(Value{ .bool = true }, try fold(.less_than, .{ .int = 1 }, .{ .int = 2 }));
-    try std.testing.expectEqual(Value.unknown, try fold(.add, .unknown, .{ .int = 1 }));
+    try std.testing.expectEqual(Known{ .int = 256 }, try fold(.add, .{ .int = 255 }, .{ .int = 1 }));
+    try std.testing.expectEqual(Known{ .float = 3.5 }, try fold(.add, .{ .int = 1 }, .{ .float = 2.5 }));
+    try std.testing.expectEqual(Known{ .bool = true }, try fold(.less_than, .{ .int = 1 }, .{ .int = 2 }));
+    try std.testing.expectEqual(Known.runtime, try fold(.add, .runtime, .{ .int = 1 }));
     try std.testing.expectError(error.DivisionByZero, fold(.div, .{ .int = 1 }, .{ .int = 0 }));
     try std.testing.expectError(error.Overflow, fold(.mul, .{ .int = std.math.maxInt(i128) }, .{ .int = 2 }));
-    try std.testing.expectEqual(Value{ .int = 0 }, try fold(.mod, .{ .int = std.math.minInt(i128) }, .{ .int = -1 }));
+    try std.testing.expectEqual(Known{ .int = 0 }, try fold(.mod, .{ .int = std.math.minInt(i128) }, .{ .int = -1 }));
 }

@@ -1,6 +1,6 @@
-//! Runs the file tests: everything under `pass/` must check clean, and everything under
+//! Runs the file tests. Everything under `pass/` must check clean, and everything under
 //! `fail/` must say exactly what its `.expected` snapshot says. `--update` rewrites the
-//! snapshots from what the compiler says now; read the diff before committing it.
+//! snapshots from what the compiler says now, so read the diff before committing it.
 
 const std = @import("std");
 const Io = std.Io;

@@ -1,40 +1,29 @@
-//! Nul Intermediate Representation: a function body as a flat list of typed instructions.
-//! `Lower` builds it.
+//! Nul Intermediate Representation. A function body as a flat list of typed
+//! instructions, built by `Lower`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
-const Comptime = @import("Comptime.zig");
 const Namespace = @import("Namespace.zig");
-const Type = @import("Type.zig");
+const Value = @import("Value.zig");
 
 const Nir = @This();
 
 insts: []const Inst,
-/// Variable-length operands: a call's arguments.
+/// Variable-length operands, meaning a call's arguments.
 extra: []const u32,
-/// The name bound to each instruction, `no_name` where there is none. Diagnostics name
-/// values; the IR itself never reads this.
+/// The name bound to each instruction, `none` where there is none. Only diagnostics
+/// read this.
 names: []const Ast.TokenIndex,
 
-pub const no_name = std.math.maxInt(Ast.TokenIndex);
+/// Marks an absent operand or name.
+pub const none = std.math.maxInt(u32);
 
 /// A lowered body and the declaration it came from, which is what a backend walks.
 pub const Function = struct {
     decl: Namespace.Decl,
     body: Nir,
-};
-
-pub const Index = enum(u32) { _ };
-
-pub const OptionalIndex = enum(u32) {
-    none = std.math.maxInt(u32),
-    _,
-
-    pub fn unwrap(oi: OptionalIndex) ?Index {
-        return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
-    }
 };
 
 /// A body is small, so this is a plain struct rather than the encoding `Ast` needs.
@@ -45,21 +34,19 @@ pub const Inst = struct {
     token: Ast.TokenIndex,
     /// Last token of that span, so a label underlines the whole expression.
     last: Ast.TokenIndex = 0,
-    /// The type of the value produced, `.void` when there is none.
-    ty: Type.Index,
-    /// What is known about the value at compile time. Known values never materialize,
-    /// a backend spells them at each use instead of binding them.
-    val: Comptime.Value = .unknown,
+    /// What this instruction yields, type `.void` when nothing. A known value never
+    /// materializes, since a backend spells it at each use instead of binding it.
+    val: Value,
     lhs: u32 = 0,
     rhs: u32 = 0,
 
     pub const Tag = enum(u8) {
         /// `lhs` is the parameter's position in the signature.
         arg,
-        /// A value `val` knows entirely: a literal, or a reference that resolved to one.
+        /// A value `val` knows entirely, meaning a literal or a name that reached one.
         constant,
         str,
-        /// A reference to a container declaration; `val` is its value when known.
+        /// A reference to a container declaration, carrying its value when known.
         decl,
         /// `lhs` and `rhs` are operands, `token` is the operator.
         binary,
@@ -74,7 +61,7 @@ pub const Inst = struct {
         store_field,
         /// `lhs` is the callee, `rhs` locates `len` then that many arguments in `extra`.
         call,
-        /// Takes no arena: `Arena.init()` is a builtin on the type.
+        /// Takes no arena, since `Arena.init()` is a builtin on the type.
         arena_init,
         /// `lhs` is the arena. `arena_create`'s type is already `*T`.
         arena_child,
@@ -108,7 +95,12 @@ pub fn spanOf(nir: Nir, inst: u32) struct { Ast.TokenIndex, Ast.TokenIndex } {
 
 pub fn nameOf(nir: Nir, inst: u32) ?Ast.TokenIndex {
     const token = nir.names[inst];
-    return if (token == no_name) null else token;
+    return if (token == none) null else token;
+}
+
+/// The value a `ret` returns, when it returns one.
+pub fn retOperand(inst: Inst) ?u32 {
+    return if (inst.lhs == none) null else inst.lhs;
 }
 
 pub fn callArgs(nir: Nir, inst: Inst) []const u32 {

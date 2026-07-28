@@ -3,16 +3,15 @@
 //! > Every pointer reachable from a value in some arena points into an arena that
 //! > outlives it.
 //!
-//! Storing preserves that, so the whole check is: a value may only be stored into memory
-//! it outlives. Regions form a tree, since `child` is the only way to make one, and
-//! "outlives" is an ancestor walk. Nothing here crosses a function boundary.
+//! So the whole check is that a value may only be stored into memory it outlives.
+//! Regions form a tree, since `child` is the only way to make one, and "outlives" is an
+//! ancestor walk. Nothing here crosses a function boundary.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
-const InternPool = @import("InternPool.zig");
 const Nir = @import("Nir.zig");
 const Type = @import("Type.zig");
 
@@ -20,7 +19,7 @@ const Region = @This();
 const Token = Ast.TokenIndex;
 
 gpa: Allocator,
-pool: *const InternPool,
+types: *const Type,
 tree: *const Ast,
 diagnostics: *Diagnostic.List,
 nir: Nir,
@@ -45,9 +44,8 @@ const Info = struct {
     }
 };
 
-/// Where a region came from. Every diagnostic reads this to decide its wording, since
-/// what a reader needs told about a borrowed pointer is not what they need told about a
-/// scratch arena.
+/// Where a region came from. Diagnostics read this to decide their wording, since a
+/// borrowed pointer and a scratch arena need different explanations.
 const Kind = enum {
     /// The arena parameter. A result belongs here.
     given,
@@ -63,14 +61,14 @@ const never = std.math.maxInt(u32);
 
 pub fn run(
     gpa: Allocator,
-    pool: *const InternPool,
+    types: *const Type,
     tree: *const Ast,
     diagnostics: *Diagnostic.List,
     nir: Nir,
 ) Allocator.Error!void {
     var region: Region = .{
         .gpa = gpa,
-        .pool = pool,
+        .types = types,
         .tree = tree,
         .diagnostics = diagnostics,
         .nir = nir,
@@ -85,20 +83,20 @@ pub fn run(
 }
 
 /// The arena parameter names the region the caller gave. Every pointer parameter points
-/// into memory that arena outlives, so each becomes a child of it: a sibling of any
-/// scratch this function makes, and therefore not something scratch may be stored into.
+/// into memory that arena outlives, so each becomes a child of it, and so a sibling of
+/// any scratch here rather than somewhere scratch may be stored.
 fn bindParams(region: *Region) Allocator.Error!void {
     var arena: Index = .static;
     for (region.nir.insts, 0..) |inst, at| {
         if (inst.tag != .arg) break;
-        if (inst.ty != .Arena) continue;
+        if (inst.val.ty != .Arena) continue;
         arena = try region.new(.static, inst.token, .given);
         region.of[at] = arena;
     }
     for (region.nir.insts, 0..) |inst, at| {
         if (inst.tag != .arg) break;
-        if (inst.ty == .Arena or inst.ty == .poisoned) continue;
-        if (region.pool.isFlat(inst.ty)) continue; // a number cannot dangle
+        if (inst.val.ty == .Arena or inst.val.ty == .poisoned) continue;
+        if (region.types.isFlat(inst.val.ty)) continue; // a number cannot dangle
         region.of[at] = try region.new(arena, inst.token, .borrowed);
     }
 }
@@ -113,11 +111,11 @@ fn visit(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
         // A value belongs to the arena it was allocated from, and `copy` relabels into
         // the arena it was copied by.
         .arena_create, .arena_copy => region.of[inst.lhs],
-        // One arena in, one arena out: a result lives where the callee allocated.
+        // One arena in, one arena out, so a result lives where the callee allocated.
         .call => region.callRegion(inst),
         // A tag is a lower bound on everything inside, so a field is at least its base
         // when it can reach memory at all. A number read out of an arena is a number.
-        .field, .binary, .unary, .coerce => if (region.holdsPointer(inst.ty))
+        .field, .binary, .unary, .coerce => if (region.holdsPointer(inst.val.ty))
             region.of[inst.lhs]
         else
             .static,
@@ -136,7 +134,7 @@ fn visit(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
 
 fn callRegion(region: *const Region, inst: Nir.Inst) Index {
     for (region.nir.callArgs(inst)) |arg| {
-        if (region.nir.insts[arg].ty == .Arena) return region.of[arg];
+        if (region.nir.insts[arg].val.ty == .Arena) return region.of[arg];
     }
     return .static;
 }
@@ -182,8 +180,7 @@ fn checkStore(region: *Region, inst: Nir.Inst) Allocator.Error!void {
 /// Returning is storing into the caller, so a result may not live in a region this call
 /// made. What a parameter gave us is already the caller's.
 fn checkReturn(region: *Region, inst: Nir.Inst) Allocator.Error!void {
-    const returned = (@as(Nir.OptionalIndex, @enumFromInt(inst.lhs))).unwrap() orelse return;
-    const value: u32 = @intFromEnum(returned);
+    const value = Nir.retOperand(inst) orelse return;
     const of = region.of[value];
     if (of == .static or !region.info(of).isLocal()) return;
 
@@ -217,7 +214,7 @@ fn checkReturn(region: *Region, inst: Nir.Inst) Allocator.Error!void {
 }
 
 /// Releasing kills every value in the region, everywhere in the program, so it needs a
-/// name: an arena parameter, or a local made with `Arena.init` or `child`.
+/// name, meaning an arena parameter or a local made with `Arena.init` or `child`.
 fn release(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
     const receiver = region.nir.insts[inst.lhs];
     switch (receiver.tag) {
@@ -259,8 +256,8 @@ fn release(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
 fn checkLive(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
     var buf: [2]u32 = undefined;
     for (region.operands(inst, &buf)) |operand| {
-        // An arena handle survives its own reset; only what it held is gone.
-        if (region.nir.insts[operand].ty == .Arena) continue;
+        // An arena handle survives its own reset, and only what it held is gone.
+        if (region.nir.insts[operand].val.ty == .Arena) continue;
 
         var walk = region.of[operand];
         while (walk != .static) {
@@ -318,7 +315,7 @@ fn info(region: *const Region, index: Index) *Info {
     return &region.infos.items[@intFromEnum(index) - 1];
 }
 
-/// `static` outlives everything; otherwise `a` must be `b` or an ancestor of it.
+/// `static` outlives everything. Otherwise `a` must be `b` or an ancestor of it.
 fn outlives(region: *const Region, a: Index, b: Index) bool {
     if (a == .static) return true;
     var walk = b;
@@ -330,7 +327,7 @@ fn outlives(region: *const Region, a: Index, b: Index) bool {
 }
 
 fn holdsPointer(region: *const Region, ty: Type.Index) bool {
-    return ty != .poisoned and !region.pool.isFlat(ty);
+    return ty != .poisoned and !region.types.isFlat(ty);
 }
 
 // Wording
@@ -405,7 +402,7 @@ fn why(region: *Region, src: Index, dst: Index) Allocator.Error!Diagnostic.Note 
     return .{ .kind = .note, .text = text };
 }
 
-/// The fix names a real arena: the one the destination lives in, or its parent when the
+/// The fix names a real arena, the one the destination lives in, or its parent when the
 /// destination is memory the caller lent us.
 fn homeArena(region: *const Region, dst: Index) Index {
     if (dst == .static) return dst;
@@ -422,7 +419,7 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
     };
     const arena = region.regionName(home);
     const value = region.name(inst.rhs) orelse "the value";
-    const ty = region.nir.insts[inst.rhs].ty;
+    const ty = region.nir.insts[inst.rhs].val.ty;
 
     // An arena is a value, so the same rule applies, but copying one makes no sense.
     if (ty == .Arena) return .{
@@ -439,12 +436,12 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
             .{ try region.label(region.nir.insts[inst.lhs].lhs), arena },
         ),
         .code = try region.print("{s} = {s}.create({s})", .{
-            try region.destination(inst),                                   arena,
-            try region.typeName(Type.pointeeOf(region.pool, ty) orelse ty),
+            try region.destination(inst),                              arena,
+            try region.typeName(region.types.pointeeOf(ty) orelse ty),
         }),
         .at = region.tree.tokenStart(inst.token),
     };
-    if (Type.isCopyable(region.pool, ty)) return .{
+    if (region.types.isCopyable(ty)) return .{
         .kind = .help,
         .text = try region.print("{s}. One way, copying into '{s}':", .{
             try region.rule(inst), arena,
@@ -488,14 +485,14 @@ fn howToReturn(region: *Region, value: u32) Allocator.Error!Diagnostic.Note {
     };
 }
 
-/// How to make the value in `arena` instead: the call that produced it with its arena
-/// swapped, or a plain `create` when nothing else made it.
+/// How to make the value in `arena` instead, either the call that produced it with its
+/// arena swapped, or a plain `create` when nothing else made it.
 fn allocatedFrom(region: *Region, inst: u32, arena: []const u8) Allocator.Error![]const u8 {
     const it = region.nir.insts[inst];
     if (it.tag != .call) {
-        const ty = it.ty;
+        const ty = it.val.ty;
         return region.print("{s}.create({s})", .{
-            arena, try region.typeName(Type.pointeeOf(region.pool, ty) orelse ty),
+            arena, try region.typeName(region.types.pointeeOf(ty) orelse ty),
         });
     }
 
@@ -505,7 +502,7 @@ fn allocatedFrom(region: *Region, inst: u32, arena: []const u8) Allocator.Error!
     try out.append(gpa, '(');
     for (region.nir.callArgs(it), 0..) |arg, at| {
         if (at > 0) try out.appendSlice(gpa, ", ");
-        if (region.nir.insts[arg].ty == .Arena) {
+        if (region.nir.insts[arg].val.ty == .Arena) {
             try out.appendSlice(gpa, arena);
         } else {
             try out.appendSlice(gpa, region.argText(arg));
@@ -515,17 +512,17 @@ fn allocatedFrom(region: *Region, inst: u32, arena: []const u8) Allocator.Error!
     return out.items;
 }
 
-/// The line a fix replaces: the one that declared the value.
+/// The line a fix replaces, the one that declared the value.
 fn anchor(region: *const Region, inst: u32) ?u32 {
     return region.tree.tokenStart(region.nir.nameOf(inst) orelse return null);
 }
 
-/// What an argument was written as: its name, or the token it came from.
+/// What an argument was written as, its name or the token it came from.
 fn argText(region: *const Region, inst: u32) []const u8 {
     return region.name(inst) orelse region.tree.tokenSlice(region.nir.insts[inst].token);
 }
 
-/// `'probe' has to outlive 'second'`: the thing the code has to satisfy.
+/// The thing the code has to satisfy, as in `'probe' has to outlive 'second'`.
 fn rule(region: *Region, inst: Nir.Inst) Allocator.Error![]const u8 {
     const held = region.label(region.nir.insts[inst.lhs].lhs) catch "this memory";
     return region.print("{s} has to outlive {s}", .{ try region.label(inst.rhs), held });
@@ -566,7 +563,7 @@ fn destination(region: *Region, inst: Nir.Inst) Allocator.Error![]const u8 {
 }
 
 fn typeName(region: *Region, ty: Type.Index) Allocator.Error![]const u8 {
-    return Type.spell(region.pool, ty, region.diagnostics.allocator());
+    return Type.spell(region.types, ty, region.diagnostics.allocator());
 }
 
 fn print(region: *Region, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
@@ -585,9 +582,7 @@ fn operands(region: *const Region, inst: Nir.Inst, buf: *[2]u32) []const u32 {
             break :blk buf[0..1];
         },
         .ret => blk: {
-            const value = (@as(Nir.OptionalIndex, @enumFromInt(inst.lhs))).unwrap() orelse
-                break :blk buf[0..0];
-            buf[0] = @intFromEnum(value);
+            buf[0] = Nir.retOperand(inst) orelse break :blk buf[0..0];
             break :blk buf[0..1];
         },
         // Already contiguous in `extra`, so no buffer is needed.

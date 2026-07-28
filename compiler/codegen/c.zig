@@ -5,24 +5,23 @@ const std = @import("std");
 const Io = std.Io;
 
 const Ast = @import("../Ast.zig");
-const InternPool = @import("../InternPool.zig");
 const Namespace = @import("../Namespace.zig");
 const Nir = @import("../Nir.zig");
 const Type = @import("../Type.zig");
 
 pub fn emit(
-    pool: *const InternPool,
+    types: *const Type,
     tree: *const Ast,
     namespace: *Namespace,
     functions: []const Nir.Function,
     w: *Io.Writer,
 ) Io.Writer.Error!void {
-    const e: Emit = .{ .pool = pool, .tree = tree, .namespace = namespace, .w = w };
+    const e: Emit = .{ .types = types, .tree = tree, .namespace = namespace, .w = w };
     try e.run(functions);
 }
 
 const Emit = struct {
-    pool: *const InternPool,
+    types: *const Type,
     tree: *const Ast,
     namespace: *Namespace,
     w: *Io.Writer,
@@ -50,38 +49,31 @@ const Emit = struct {
     fn structs(e: Emit) Io.Writer.Error!void {
         for (e.namespace.all()) |decl| {
             const ty = e.structOf(decl) orelse continue;
-            const name = e.pool.stringBytes(e.pool.structName(ty));
+            const name = e.types.stringBytes(e.types.structName(ty));
             try e.w.print("typedef struct {s} {s};\n", .{ name, name });
         }
         for (e.namespace.all()) |decl| {
             const ty = e.structOf(decl) orelse continue;
-            if (!e.pool.isDefined(ty)) continue;
+            if (!e.types.isDefined(ty)) continue;
 
-            try e.w.print("\nstruct {s} {{\n", .{e.pool.stringBytes(e.pool.structName(ty))});
-            const names = e.pool.structFieldNames(ty);
-            for (names, e.pool.structFieldTypes(ty)) |field, field_ty| {
+            try e.w.print("\nstruct {s} {{\n", .{e.types.stringBytes(e.types.structName(ty))});
+            const names = e.types.fieldNames(ty);
+            for (names, e.types.fieldTypes(ty)) |field, field_ty| {
                 try e.w.writeAll("    ");
                 try e.writeType(field_ty);
-                try e.w.print(" {s};\n", .{e.pool.stringBytes(field)});
+                try e.w.print(" {s};\n", .{e.types.stringBytes(field)});
             }
             try e.w.writeAll("};\n");
         }
     }
 
     fn structOf(e: Emit, decl: Namespace.Decl) ?Type.Index {
-        const ty = switch (decl.val) {
-            .type => |ty| ty,
-            else => return null,
-        };
-        return if (e.pool.keyOf(ty) == .struct_type) ty else null;
+        const ty = decl.value.asType() orelse return null;
+        return if (e.types.isStruct(ty)) ty else null;
     }
 
     fn signature(e: Emit, b: Nir.Function) Io.Writer.Error!void {
-        const signature_key = e.pool.keyOf(b.decl.ty);
-        const func = switch (signature_key) {
-            .func => |it| it,
-            else => return,
-        };
+        const func = e.types.funcOf(b.decl.value.ty) orelse return;
 
         try e.writeType(func.return_type);
         try e.w.print(" {s}(", .{symbol(e.tree.tokenSlice(b.decl.name_token))});
@@ -118,10 +110,7 @@ const Emit = struct {
     fn entry(e: Emit, functions: []const Nir.Function) Io.Writer.Error!void {
         for (functions) |b| {
             if (!std.mem.eql(u8, e.tree.tokenSlice(b.decl.name_token), "main")) continue;
-            const func = switch (e.pool.keyOf(b.decl.ty)) {
-                .func => |it| it,
-                else => return,
-            };
+            const func = e.types.funcOf(b.decl.value.ty) orelse return;
             const takes_arena = func.params.len == 1 and func.params[0] == .Arena;
             const returns = func.return_type != .void;
 
@@ -139,18 +128,16 @@ const Emit = struct {
     // Instructions
 
     fn instruction(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
-        // A known value never materializes: `ref` spells it at each use instead.
-        if (inst.val != .unknown) return;
+        // A known value never materializes, since `ref` spells it at each use.
+        if (inst.val.isKnown()) return;
         switch (inst.tag) {
             // Parameters are named by the signature, and a declaration is spelled where it is
             // used. Neither needs a local of its own.
             .arg, .decl, .constant => return,
             .ret => {
-                const value = (@as(Nir.OptionalIndex, @enumFromInt(inst.lhs))).unwrap() orelse {
-                    return e.w.writeAll("    return;\n");
-                };
+                const value = Nir.retOperand(inst) orelse return e.w.writeAll("    return;\n");
                 try e.w.writeAll("    return ");
-                try e.ref(nir, @intFromEnum(value));
+                try e.ref(nir, value);
                 return e.w.writeAll(";\n");
             },
             // A store is the one instruction that names a place rather than making a value.
@@ -171,8 +158,8 @@ const Emit = struct {
 
         try e.w.writeAll("    ");
         // A call for its effect has no value to bind, and C has no `void` variables.
-        if (inst.ty != .void) {
-            try e.writeType(inst.ty);
+        if (inst.val.ty != .void) {
+            try e.writeType(inst.val.ty);
             try e.w.print(" t{d} = ", .{at});
         }
         try e.expression(nir, at, inst);
@@ -207,11 +194,11 @@ const Emit = struct {
             .arena_child => try e.w.print("nul_arena_child(t{d})", .{inst.lhs}),
             .arena_create => {
                 try e.w.print("nul_arena_alloc(t{d}, sizeof(", .{inst.lhs});
-                try e.writeType(Type.pointeeOf(e.pool, inst.ty) orelse inst.ty);
+                try e.writeType(e.types.pointeeOf(inst.val.ty) orelse inst.val.ty);
                 try e.w.writeAll("))");
             },
-            // Only `str` owns bytes worth duplicating; anything else flat is already a copy.
-            .arena_copy => if (inst.ty == .str) {
+            // Only `str` owns bytes worth duplicating, and anything flat is already a copy.
+            .arena_copy => if (inst.val.ty == .str) {
                 try e.w.print("nul_arena_copy_str(t{d}, t{d})", .{ inst.lhs, inst.rhs });
             } else {
                 try e.ref(nir, inst.rhs);
@@ -222,11 +209,11 @@ const Emit = struct {
         }
     }
 
-    /// How an operand is spelled: its value when the compiler knows it, its local when
-    /// only the program does.
+    /// How an operand is spelled, its value when the compiler knows it and its local
+    /// when only the program does.
     fn ref(e: Emit, nir: Nir, at: u32) Io.Writer.Error!void {
-        switch (nir.insts[at].val) {
-            .unknown => try e.w.print("t{d}", .{at}),
+        switch (nir.insts[at].val.known) {
+            .runtime => try e.w.print("t{d}", .{at}),
             .int => |x| try e.w.print("{d}", .{x}),
             .float => |x| try e.w.print("{d}", .{x}),
             .bool => |x| try e.w.writeAll(if (x) "true" else "false"),
@@ -237,11 +224,11 @@ const Emit = struct {
     /// `t3->next`, the lvalue a `field` instruction denotes.
     fn place(e: Emit, nir: Nir, at: u32) Io.Writer.Error!void {
         const inst = nir.insts[at];
-        const base = nir.insts[inst.lhs].ty;
-        const owner = Type.pointeeOf(e.pool, base) orelse base;
-        const name = e.pool.structFieldNames(owner)[inst.rhs];
-        const arrow = if (Type.pointeeOf(e.pool, base) == null) "." else "->";
-        try e.w.print("t{d}{s}{s}", .{ inst.lhs, arrow, e.pool.stringBytes(name) });
+        const base = nir.insts[inst.lhs].val.ty;
+        const owner = e.types.pointeeOf(base) orelse base;
+        const name = e.types.fieldNames(owner)[inst.rhs];
+        const arrow = if (e.types.pointeeOf(base) == null) "." else "->";
+        try e.w.print("t{d}{s}{s}", .{ inst.lhs, arrow, e.types.stringBytes(name) });
     }
 
     /// C owns `main`, so the source's own is spelled out of the way.
@@ -258,12 +245,12 @@ const Emit = struct {
     // Types
 
     fn writeType(e: Emit, ty: Type.Index) Io.Writer.Error!void {
-        if (Type.pointeeOf(e.pool, ty)) |pointee| {
+        if (e.types.pointeeOf(ty)) |pointee| {
             try e.writeType(pointee);
             return e.w.writeAll(" *");
         }
-        if (e.pool.keyOf(ty) == .struct_type) {
-            return e.w.writeAll(e.pool.stringBytes(e.pool.structName(ty)));
+        if (e.types.isStruct(ty)) {
+            return e.w.writeAll(e.types.stringBytes(e.types.structName(ty)));
         }
         try e.w.writeAll(switch (ty) {
             .void, .never => "void",
