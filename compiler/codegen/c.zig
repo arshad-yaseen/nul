@@ -99,9 +99,13 @@ const Emit = struct {
     /// Whether a `field` is only ever written through, in which case loading it would be a
     /// dead read of the very memory about to be overwritten.
     fn isPlace(nir: Nir, at: u32) bool {
-        if (nir.insts[at].tag != .field) return false;
+        if (nir.viewOf(nir.insts[at]) != .field) return false;
         for (nir.insts) |inst| {
-            if (inst.tag == .store_field and inst.lhs == at) return true;
+            const store = switch (nir.viewOf(inst)) {
+                .store_field => |it| it,
+                else => continue,
+            };
+            if (store.place == at) return true;
         }
         return false;
     }
@@ -130,28 +134,28 @@ const Emit = struct {
     fn instruction(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
         // A known value never materializes, since `ref` spells it at each use.
         if (inst.val.isKnown()) return;
-        switch (inst.tag) {
+        switch (nir.viewOf(inst)) {
             // Parameters are named by the signature, and a declaration is spelled where it is
             // used. Neither needs a local of its own.
-            .arg, .decl, .constant => return,
-            .ret => {
-                const value = Nir.retOperand(inst) orelse return e.w.writeAll("    return;\n");
+            .parameter, .decl, .constant => return,
+            .returned => |it| {
+                const value = it.value orelse return e.w.writeAll("    return;\n");
                 try e.w.writeAll("    return ");
                 try e.ref(nir, value);
                 return e.w.writeAll(";\n");
             },
             // A store is the one instruction that names a place rather than making a value.
-            .store_field => {
+            .store_field => |it| {
                 try e.w.writeAll("    ");
-                try e.place(nir, inst.lhs);
+                try e.place(nir, it.place);
                 try e.w.writeAll(" = ");
-                try e.ref(nir, inst.rhs);
+                try e.ref(nir, it.value);
                 return e.w.writeAll(";\n");
             },
             // No value, so nothing to bind.
-            .arena_reset => return e.w.print("    nul_arena_reset(t{d});\n", .{inst.lhs}),
-            .arena_destroy, .arena_end => {
-                return e.w.print("    nul_arena_destroy(t{d});\n", .{inst.lhs});
+            .arena_reset => |it| return e.w.print("    nul_arena_reset(t{d});\n", .{it.arena}),
+            .arena_destroy, .arena_end => |it| {
+                return e.w.print("    nul_arena_destroy(t{d});\n", .{it.arena});
             },
             else => {},
         }
@@ -168,44 +172,45 @@ const Emit = struct {
 
     fn expression(e: Emit, nir: Nir, at: u32, inst: Nir.Inst) Io.Writer.Error!void {
         const text = e.tree.tokenSlice(inst.token);
-        switch (inst.tag) {
+        switch (nir.viewOf(inst)) {
             // The token still has its quotes, and the length is what is inside them.
             .str => try e.w.print("(nul_str){{ {s}, {d} }}", .{ text, text.len - 2 }),
-            .binary => {
-                try e.ref(nir, inst.lhs);
+            .binary => |it| {
+                try e.ref(nir, it.lhs);
                 try e.w.print(" {s} ", .{cOperator(text)});
-                try e.ref(nir, inst.rhs);
+                try e.ref(nir, it.rhs);
             },
-            .unary => {
+            .unary => |it| {
                 try e.w.writeAll(cOperator(text));
-                try e.ref(nir, inst.lhs);
+                try e.ref(nir, it.operand);
             },
-            .coerce => try e.ref(nir, inst.lhs),
+            .coerce => |it| try e.ref(nir, it.operand),
             .field => try e.place(nir, at),
-            .call => {
-                try e.w.print("{s}(", .{symbol(e.tree.tokenSlice(nir.insts[inst.lhs].token))});
-                for (nir.callArgs(inst), 0..) |arg, i| {
-                    if (i > 0) try e.w.writeAll(", ");
+            .call => |it| {
+                try e.w.print("{s}(", .{symbol(e.tree.tokenSlice(nir.insts[it.callee].token))});
+                for (it.args, 0..) |arg, position| {
+                    if (position > 0) try e.w.writeAll(", ");
                     try e.ref(nir, arg);
                 }
                 try e.w.writeByte(')');
             },
             .arena_init => try e.w.writeAll("nul_arena_init()"),
-            .arena_child => try e.w.print("nul_arena_child(t{d})", .{inst.lhs}),
-            .arena_create => {
-                try e.w.print("nul_arena_alloc(t{d}, sizeof(", .{inst.lhs});
+            .arena_child => |it| try e.w.print("nul_arena_child(t{d})", .{it.parent}),
+            .arena_create => |it| {
+                try e.w.print("nul_arena_alloc(t{d}, sizeof(", .{it.arena});
                 try e.writeType(e.types.pointeeOf(inst.val.ty) orelse inst.val.ty);
                 try e.w.writeAll("))");
             },
             // Only `str` owns bytes worth duplicating, and anything flat is already a copy.
-            .arena_copy => if (inst.val.ty == .str) {
-                try e.w.print("nul_arena_copy_str(t{d}, t{d})", .{ inst.lhs, inst.rhs });
+            .arena_copy => |it| if (inst.val.ty == .str) {
+                try e.w.print("nul_arena_copy_str(t{d}, t{d})", .{ it.arena, it.value });
             } else {
-                try e.ref(nir, inst.rhs);
+                try e.ref(nir, it.value);
             },
-            .arg, .decl, .constant => unreachable, // never bound to a local
-            .ret, .store_field, .arena_reset, .arena_destroy, .arena_end => unreachable,
             .todo => try e.w.writeAll("0 /* not lowered */"),
+            // Never bound to a local, so `instruction` returned before reaching here.
+            .parameter, .decl, .constant => unreachable,
+            .returned, .store_field, .arena_reset, .arena_destroy, .arena_end => unreachable,
         }
     }
 
@@ -223,12 +228,12 @@ const Emit = struct {
 
     /// `t3->next`, the lvalue a `field` instruction denotes.
     fn place(e: Emit, nir: Nir, at: u32) Io.Writer.Error!void {
-        const inst = nir.insts[at];
-        const base = nir.insts[inst.lhs].val.ty;
+        const it = nir.viewOf(nir.insts[at]).field;
+        const base = nir.insts[it.base].val.ty;
         const owner = e.types.pointeeOf(base) orelse base;
-        const name = e.types.fieldNames(owner)[inst.rhs];
+        const name = e.types.fieldNames(owner)[it.position];
         const arrow = if (e.types.pointeeOf(base) == null) "." else "->";
-        try e.w.print("t{d}{s}{s}", .{ inst.lhs, arrow, e.types.stringBytes(name) });
+        try e.w.print("t{d}{s}{s}", .{ it.base, arrow, e.types.stringBytes(name) });
     }
 
     /// C owns `main`, so the source's own is spelled out of the way.

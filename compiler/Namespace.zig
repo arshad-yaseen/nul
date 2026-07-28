@@ -45,13 +45,30 @@ pub fn collect(
 
         // Imports are exempt, since `use std.mem.Arena` binds the builtin itself.
         if (tree.nodeTag(node) != .use_decl and Type.builtinNamed(name) != null) {
-            try diagnostics.add(.{ .tag = .shadows_builtin, .token = name_token });
+            try diagnostics.add(.{
+                .tag = .shadows_builtin,
+                .token = name_token,
+                .text = "this name belongs to a builtin type",
+                .notes = try diagnostics.notes(&.{.{
+                    .kind = .help,
+                    .text = "pick another name, since a builtin type cannot be rebound",
+                }}),
+            });
             continue;
         }
 
         const found = try ns.by_name.getOrPut(gpa, name);
         if (found.found_existing) {
-            try diagnostics.add(.{ .tag = .redeclared, .token = name_token });
+            const first = ns.decls.items[found.value_ptr.*].name_token;
+            try diagnostics.add(.{
+                .tag = .redeclared,
+                .token = name_token,
+                .text = "declared again here",
+                .marks = try diagnostics.mark(
+                    first,
+                    try diagnostics.print("'{s}' was first declared here", .{name}),
+                ),
+            });
             continue;
         }
         found.value_ptr.* = @intCast(ns.decls.items.len);

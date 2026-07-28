@@ -1,0 +1,19 @@
+error[E0003]: no declaration named 'scratchh'
+
+  ┌─ test/fail/23_did_you_mean.nul:6:12
+  │
+6 │     return scratchh + limitt
+  │            ^^^^^^^^  not found in this scope
+  │
+  = help: did you mean 'scratch'?
+  │
+
+error[E0003]: no declaration named 'limitt'
+
+  ┌─ test/fail/23_did_you_mean.nul:6:23
+  │
+6 │     return scratchh + limitt
+  │                       ^^^^^^  not found in this scope
+  │
+  = help: did you mean 'limit'?
+  │

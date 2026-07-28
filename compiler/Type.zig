@@ -62,12 +62,21 @@ pub fn builtinName(index: Index) ?[]const u8 {
 }
 
 /// Every spelling that names a builtin, the types themselves and the aliases.
-const builtin_map = std.StaticStringMap(Index).initComptime(blk: {
+pub const builtin_names: [@intFromEnum(Index.poisoned) + 2][]const u8 = blk: {
     const fields = @typeInfo(Index).@"enum".fields;
     const count = @intFromEnum(Index.poisoned); // everything before it is spellable
+    var names: [count + 2][]const u8 = undefined;
+    for (names[0..count], fields[0..count]) |*slot, field| slot.* = field.name;
+    names[count] = "int";
+    names[count + 1] = "uint";
+    break :blk names;
+};
+
+const builtin_map = std.StaticStringMap(Index).initComptime(blk: {
+    const count = @intFromEnum(Index.poisoned);
     var kvs: [count + 2]struct { []const u8, Index } = undefined;
-    for (kvs[0..count], fields[0..count]) |*kv, field| {
-        kv.* = .{ field.name, @enumFromInt(field.value) };
+    for (kvs[0..count], builtin_names[0..count], 0..) |*kv, name, at| {
+        kv.* = .{ name, @enumFromInt(at) };
     }
     kvs[count] = .{ "int", .i64 };
     kvs[count + 1] = .{ "uint", .u64 };

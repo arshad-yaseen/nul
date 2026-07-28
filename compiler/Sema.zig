@@ -33,14 +33,67 @@ pub fn typeName(sema: *Sema, ty: Type.Index) Allocator.Error![]const u8 {
     return sema.types.spell(ty, sema.diagnostics.allocator());
 }
 
-fn report(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!void {
-    try sema.diagnostics.add(.{ .tag = tag, .token = token });
+// Suggestions
+
+/// Tracks the nearest spelling seen so far, for a did you mean note. Callers offer every
+/// name in scope, so `Lower` can add its locals to what `Sema` already knows.
+pub const Closest = struct {
+    wanted: []const u8,
+    best: ?[]const u8 = null,
+    distance: usize = std.math.maxInt(usize),
+
+    pub fn offer(closest: *Closest, candidate: []const u8) void {
+        const distance = editDistance(closest.wanted, candidate);
+        if (distance < closest.distance) {
+            closest.distance = distance;
+            closest.best = candidate;
+        }
+    }
+
+    /// Null unless the nearest name is nearer than it is different, so an unrelated
+    /// name is never suggested.
+    pub fn result(closest: Closest) ?[]const u8 {
+        return if (closest.distance <= @max(1, closest.wanted.len / 3)) closest.best else null;
+    }
+};
+
+/// Every name a container declaration or a builtin makes visible.
+pub fn closestTo(sema: *Sema, wanted: []const u8) Closest {
+    var closest: Closest = .{ .wanted = wanted };
+    for (sema.namespace.all()) |decl| closest.offer(sema.tree.tokenSlice(decl.name_token));
+    for (Type.builtin_names) |name| closest.offer(name);
+    return closest;
 }
 
-/// Analysis never stops at the first mistake, so what has no answer becomes poison.
-fn fail(sema: *Sema, tag: Diagnostic.Tag, token: Token) Allocator.Error!Type.Index {
-    try sema.report(tag, token);
-    return .poisoned;
+/// `did you mean 'limit'?`, when something near enough was declared.
+pub fn didYouMean(sema: *Sema, closest: Closest) Allocator.Error![]const Diagnostic.Note {
+    const near = closest.result() orelse return &.{};
+    return sema.diagnostics.notes(&.{.{
+        .kind = .help,
+        .text = try sema.diagnostics.print("did you mean '{s}'?", .{near}),
+    }});
+}
+
+const max_compared = 64;
+
+fn editDistance(a: []const u8, b: []const u8) usize {
+    if (a.len == 0) return b.len;
+    if (b.len == 0) return a.len;
+    if (a.len > max_compared or b.len > max_compared) return std.math.maxInt(usize);
+
+    var prev: [max_compared + 1]usize = undefined;
+    var curr: [max_compared + 1]usize = undefined;
+    for (prev[0 .. b.len + 1], 0..) |*slot, at| slot.* = at;
+
+    for (a, 1..) |from, row| {
+        curr[0] = row;
+        for (b, 1..) |into, col| {
+            const swap: usize = if (from == into) 0 else 1;
+            curr[col] = @min(@min(curr[col - 1] + 1, prev[col] + 1), prev[col - 1] + swap);
+        }
+        @memcpy(prev[0 .. b.len + 1], curr[0 .. b.len + 1]);
+    }
+    return prev[b.len];
 }
 
 // Declarations
@@ -55,7 +108,15 @@ pub fn resolveDecl(sema: *Sema, decl: *Decl) Allocator.Error!void {
     switch (decl.state) {
         .resolved => return,
         .in_progress => {
-            try sema.report(.depends_on_itself, decl.name_token);
+            try sema.diagnostics.add(.{
+                .tag = .depends_on_itself,
+                .token = decl.name_token,
+                .text = "this needs its own value to know what it is",
+                .notes = try sema.diagnostics.notes(&.{.{
+                    .kind = .note,
+                    .text = "resolving it started resolving it again, so no order works",
+                }}),
+            });
             decl.value = .poisoned;
             decl.state = .resolved;
             return;
@@ -107,10 +168,7 @@ pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Value {
     switch (sema.tree.viewOf(node)) {
         .number_literal => |token| {
             return Value.parse(sema.tree.tokenSlice(token)) catch |err| {
-                try sema.report(switch (err) {
-                    error.InvalidDigit => .invalid_digit,
-                    error.TooLarge => .literal_too_large,
-                }, token);
+                try sema.reportBadLiteral(err, token);
                 return .poisoned;
             };
         },
@@ -143,13 +201,42 @@ pub fn evalComptime(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Value {
     }
 }
 
+fn reportBadLiteral(sema: *Sema, err: Value.ParseError, token: Token) Allocator.Error!void {
+    try sema.diagnostics.add(switch (err) {
+        error.InvalidDigit => .{
+            .tag = .invalid_digit,
+            .token = token,
+            .text = "this is not a number the compiler can read",
+            .notes = try sema.diagnostics.notes(&.{.{
+                .kind = .note,
+                .text = "digits have to fit the base. '0b' takes 0 and 1, '0o' takes 0 to 7,\n" ++
+                    "and '0x' takes 0 to 9 and a to f",
+            }}),
+        },
+        error.TooLarge => .{
+            .tag = .literal_too_large,
+            .token = token,
+            .text = "this does not fit in 128 bits",
+            .notes = try sema.diagnostics.notes(&.{.{
+                .kind = .note,
+                .text = "a compile time integer is 128 bits wide, and the widest runtime\ninteger is 64",
+            }}),
+        },
+    });
+}
+
 /// The edge that makes resolution order independent.
 fn evalName(sema: *Sema, token: Token) Allocator.Error!Value {
     const name = sema.tree.tokenSlice(token);
     if (Type.builtinNamed(name)) |builtin| return .ofType(builtin); // nothing can rebind `i64`
 
     const decl = sema.namespace.find(name) orelse {
-        try sema.report(.undefined_name, token);
+        try sema.diagnostics.add(.{
+            .tag = .undefined_name,
+            .token = token,
+            .text = "not found in this scope",
+            .notes = try sema.didYouMean(sema.closestTo(name)),
+        });
         return .poisoned;
     };
     try sema.resolveDecl(decl);
@@ -160,16 +247,31 @@ pub fn evalTypeExpr(sema: *Sema, node: Ast.Node.Index) Allocator.Error!Type.Inde
     const value = try sema.evalComptime(node);
     if (value.ty == .poisoned) return .poisoned;
     return value.asType() orelse {
+        const name = try sema.typeName(value.ty);
         try sema.diagnostics.add(.{
             .tag = .not_a_type,
             .token = sema.tree.firstToken(node),
             .last = sema.tree.lastToken(node),
-            .message = try sema.diagnostics.print("this is '{s}', not a type", .{
-                try sema.typeName(value.ty),
-            }),
+            .message = try sema.diagnostics.print("'{s}' is not a type", .{name}),
+            .text = try sema.diagnostics.print("used as a type, but this is '{s}'", .{name}),
+            .marks = try sema.declaredMark(node),
         });
         return .poisoned;
     };
+}
+
+/// Marks where a named value was declared, so a type position shows what it found.
+fn declaredMark(sema: *Sema, node: Ast.Node.Index) Allocator.Error![]const Diagnostic.Mark {
+    const token = switch (sema.tree.viewOf(node)) {
+        .ident => |it| it,
+        else => return &.{},
+    };
+    const text = sema.tree.tokenSlice(token);
+    const decl = sema.namespace.find(text) orelse return &.{};
+    return sema.diagnostics.mark(
+        decl.name_token,
+        try sema.diagnostics.print("'{s}' is a value, declared here", .{text}),
+    );
 }
 
 // The door
@@ -184,9 +286,7 @@ pub const Expect = union(enum) {
     argument: struct { position: usize, callee: []const u8, site: ?Token },
     /// `name = value`. `site` is where the name was declared.
     assigned: struct { name: Token, site: Token },
-    /// `owner.name = value`.
     field_store: struct { name: Token },
-    /// An operand of `op`.
     operand: struct { op: Token },
 };
 
@@ -290,7 +390,6 @@ fn expectMark(sema: *Sema, ctx: Expect, into: Type.Index) Allocator.Error![]cons
     };
 }
 
-/// A known value that no amount of agreement in kind can save.
 fn reportRange(
     sema: *Sema,
     node: Ast.Node.Index,
@@ -414,6 +513,9 @@ fn reportNotNegatable(sema: *Sema, node: Ast.Node.Index, ty: Type.Index) Allocat
             "'-' works on signed numbers, but this is '{s}'",
             .{try sema.typeName(ty)},
         ),
+        .text = try sema.diagnostics.print("'{s}' has no negative values", .{
+            try sema.typeName(ty),
+        }),
     });
 }
 
@@ -463,6 +565,7 @@ fn reportOperandKind(
             try d.print("'{s}' cannot compare '{s}' values yet", .{ op, name })
         else
             try d.print("'{s}' works on numbers, but '{s}' is not one", .{ op, name }),
+        .text = try d.print("both sides are '{s}'", .{name}),
     });
 }
 
@@ -514,9 +617,10 @@ fn reportFold(sema: *Sema, err: Value.FoldError, token: Token) Allocator.Error!v
         error.Overflow => try sema.diagnostics.add(.{
             .tag = .comptime_overflow,
             .token = token,
+            .text = "this result leaves 128 bits",
             .notes = try sema.diagnostics.notes(&.{.{
                 .kind = .note,
-                .text = "comptime integers hold up to 128 bits",
+                .text = "a compile time integer is 128 bits wide, and folding never wraps",
             }}),
         }),
     }
@@ -536,7 +640,15 @@ fn typedNameIn(
     for (nodes[0..at]) |earlier| {
         const seen = sema.typedNameOf(earlier) orelse continue;
         if (std.mem.eql(u8, sema.tree.tokenSlice(seen.name_token), name)) {
-            try sema.report(.redeclared, declared.name_token);
+            try sema.diagnostics.add(.{
+                .tag = .redeclared,
+                .token = declared.name_token,
+                .text = "declared again here",
+                .marks = try sema.diagnostics.mark(
+                    seen.name_token,
+                    try sema.diagnostics.print("'{s}' was first declared here", .{name}),
+                ),
+            });
             return null;
         }
     }
@@ -592,8 +704,10 @@ fn resolveStructFields(
 
         var field_ty = try sema.evalTypeExpr(field.type_expr);
         // A field held by value needs a size where a pointer to one does not.
-        if (!sema.types.isDefined(field_ty))
-            field_ty = try sema.fail(.depends_on_itself, blame orelse field.name_token);
+        if (!sema.types.isDefined(field_ty)) {
+            try sema.reportSizeCycle(blame orelse field.name_token, field);
+            field_ty = .poisoned;
+        }
 
         try sema.scratch.append(sema.gpa, field_ty);
         try names.append(
@@ -603,6 +717,25 @@ fn resolveStructFields(
     }
 
     try sema.types.defineStruct(sema.gpa, ty, names.items, sema.scratch.items[base..]);
+}
+
+/// A struct holding itself by value has no size, where a pointer to one always does.
+fn reportSizeCycle(sema: *Sema, blame: Token, field: Ast.View.TypedName) Allocator.Error!void {
+    const d = sema.diagnostics;
+    const written = sema.tree.tokenSlice(sema.tree.firstToken(field.type_expr));
+    try d.add(.{
+        .tag = .depends_on_itself,
+        .token = blame,
+        .text = "this has no size, because it contains itself",
+        .marks = try d.mark(field.name_token, try d.print("'{s}' holds one by value", .{
+            sema.tree.tokenSlice(field.name_token),
+        })),
+        .notes = try d.notes(&.{.{
+            .kind = .help,
+            .text = "hold it behind a pointer, which has a size whatever it points at",
+            .code = try d.print("{s}: *{s}", .{ sema.tree.tokenSlice(field.name_token), written }),
+        }}),
+    });
 }
 
 /// The signature and nothing else, which is what lets a call be checked without the body.

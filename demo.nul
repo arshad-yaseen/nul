@@ -3,5 +3,5 @@ use std.mem.Arena
 fn keep(arena: Arena) u8 {
     let cool = 1 + 2.5
 
-    return cool
+    return cool()
 }

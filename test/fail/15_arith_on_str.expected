@@ -3,5 +3,5 @@ error[E0006]: '+' works on numbers, but 'str' is not one
   ┌─ test/fail/15_arith_on_str.nul:3:12
   │
 3 │     return name + "!"
-  │            ^^^^^^^^^^
+  │            ^^^^^^^^^^  both sides are 'str'
   │

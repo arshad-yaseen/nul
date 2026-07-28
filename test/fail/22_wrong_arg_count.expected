@@ -1,0 +1,10 @@
+error[E0015]: 'add' takes 2 arguments, but 1 was given
+
+  ┌─ test/fail/22_wrong_arg_count.nul:4:12
+  │
+1 │ fn add(a: i64, b: i64) i64 { return a }
+  │    ───  'add' is declared here, as 'fn(i64, i64) i64'
+  ·
+4 │     return add(1)
+  │            ^^^^^^  1 given here
+  │

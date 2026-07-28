@@ -1,0 +1,3 @@
+fn go() i64 { return 0 }
+
+fn go() i64 { return 1 }

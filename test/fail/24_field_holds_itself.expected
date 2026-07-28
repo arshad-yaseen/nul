@@ -1,0 +1,13 @@
+error[E0004]: 'Node' depends on itself
+
+  ┌─ test/fail/24_field_holds_itself.nul:2:5
+  │
+2 │ let Node = struct {
+  │     ^^^^  this has no size, because it contains itself
+  ·
+4 │     next: Node
+  │     ────  'next' holds one by value
+  │
+  = help: hold it behind a pointer, which has a size whatever it points at
+            next: *Node
+  │

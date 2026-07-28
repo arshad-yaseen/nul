@@ -88,13 +88,13 @@ pub fn run(
 fn bindParams(region: *Region) Allocator.Error!void {
     var arena: Index = .static;
     for (region.nir.insts, 0..) |inst, at| {
-        if (inst.tag != .arg) break;
+        if (region.nir.viewOf(inst) != .parameter) break;
         if (inst.val.ty != .Arena) continue;
         arena = try region.new(.static, inst.token, .given);
         region.of[at] = arena;
     }
     for (region.nir.insts, 0..) |inst, at| {
-        if (inst.tag != .arg) break;
+        if (region.nir.viewOf(inst) != .parameter) break;
         if (inst.val.ty == .Arena or inst.val.ty == .poisoned) continue;
         if (region.types.isFlat(inst.val.ty)) continue; // a number cannot dangle
         region.of[at] = try region.new(arena, inst.token, .borrowed);
@@ -104,36 +104,44 @@ fn bindParams(region: *Region) Allocator.Error!void {
 fn visit(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
     try region.checkLive(at, inst);
 
-    region.of[at] = switch (inst.tag) {
-        .arg => region.of[at], // bound already
+    region.of[at] = switch (region.nir.viewOf(inst)) {
+        .parameter => region.of[at], // bound already
         .arena_init => try region.new(.static, region.nameToken(at, inst), .made),
-        .arena_child => try region.new(region.of[inst.lhs], region.nameToken(at, inst), .child),
+        .arena_child => |it| try region.new(
+            region.of[it.parent],
+            region.nameToken(at, inst),
+            .child,
+        ),
         // A value belongs to the arena it was allocated from, and `copy` relabels into
         // the arena it was copied by.
-        .arena_create, .arena_copy => region.of[inst.lhs],
+        .arena_create => |it| region.of[it.arena],
+        .arena_copy => |it| region.of[it.arena],
         // One arena in, one arena out, so a result lives where the callee allocated.
-        .call => region.callRegion(inst),
+        .call => |it| region.callRegion(it.args),
         // A tag is a lower bound on everything inside, so a field is at least its base
         // when it can reach memory at all. A number read out of an arena is a number.
-        .field, .binary, .unary, .coerce => if (region.holdsPointer(inst.val.ty))
-            region.of[inst.lhs]
-        else
-            .static,
+        .field => |it| region.through(inst, it.base),
+        .binary => |it| region.through(inst, it.lhs),
+        .unary, .coerce => |it| region.through(inst, it.operand),
         else => .static,
     };
 
-    switch (inst.tag) {
-        .store_field => try region.checkStore(inst),
-        .ret => try region.checkReturn(inst),
-        .arena_reset, .arena_destroy => try region.release(at, inst),
+    switch (region.nir.viewOf(inst)) {
+        .store_field => |it| try region.checkStore(inst, it),
+        .returned => |it| try region.checkReturn(inst, it),
+        .arena_reset, .arena_destroy => |it| try region.release(at, inst, it.arena),
         // Scope end is not a release, nothing can name the arena past here.
-        .arena_end => {},
         else => {},
     }
 }
 
-fn callRegion(region: *const Region, inst: Nir.Inst) Index {
-    for (region.nir.callArgs(inst)) |arg| {
+/// A value that cannot reach memory is static however it was derived.
+fn through(region: *const Region, inst: Nir.Inst, base: u32) Index {
+    return if (region.holdsPointer(inst.val.ty)) region.of[base] else .static;
+}
+
+fn callRegion(region: *const Region, args: []const u32) Index {
+    for (args) |arg| {
         if (region.nir.insts[arg].val.ty == .Arena) return region.of[arg];
     }
     return .static;
@@ -142,21 +150,21 @@ fn callRegion(region: *const Region, inst: Nir.Inst) Index {
 // Rules
 
 /// A value may only be stored into memory it outlives.
-fn checkStore(region: *Region, inst: Nir.Inst) Allocator.Error!void {
-    const src = region.of[inst.rhs];
-    const dst = region.of[inst.lhs];
+fn checkStore(region: *Region, inst: Nir.Inst, store: Nir.View.Store) Allocator.Error!void {
+    const src = region.of[store.value];
+    const dst = region.of[store.place];
     if (src == .static or dst == .static) return;
     if (region.outlives(src, dst)) return;
 
-    const base = region.nir.insts[inst.lhs].lhs;
-    const field = region.nir.spanOf(inst.lhs);
+    const base = region.nir.viewOf(region.nir.insts[store.place]).field.base;
+    const field = region.nir.spanOf(store.place);
 
     var marks: Marks = .empty;
     defer marks.deinit(region.gpa);
     try region.markOrigin(&marks, src);
     try region.markOrigin(&marks, dst);
     try region.markHome(&marks, base, dst);
-    try region.markHome(&marks, inst.rhs, src);
+    try region.markHome(&marks, store.value, src);
     try marks.append(region.gpa, .{
         .token = field[0],
         .last = field[1],
@@ -167,20 +175,22 @@ fn checkStore(region: *Region, inst: Nir.Inst) Allocator.Error!void {
         .tag = .does_not_live_long_enough,
         .token = inst.token,
         .last = inst.last,
-        .message = try region.print("{s} does not live long enough", .{try region.label(inst.rhs)}),
+        .message = try region.print("{s} does not live long enough", .{
+            try region.label(store.value),
+        }),
         .text = try region.print("this {s}", .{try region.livesIn(src)}),
         .marks = try region.diagnostics.marks(marks.items),
         .notes = try region.diagnostics.notes(&.{
             try region.why(src, dst),
-            try region.howToStore(inst, src, dst),
+            try region.howToStore(inst, store, src, dst),
         }),
     });
 }
 
 /// Returning is storing into the caller, so a result may not live in a region this call
 /// made. What a parameter gave us is already the caller's.
-fn checkReturn(region: *Region, inst: Nir.Inst) Allocator.Error!void {
-    const value = Nir.retOperand(inst) orelse return;
+fn checkReturn(region: *Region, inst: Nir.Inst, returned: Nir.View.Returned) Allocator.Error!void {
+    const value = returned.value orelse return;
     const of = region.of[value];
     if (of == .static or !region.info(of).isLocal()) return;
 
@@ -215,12 +225,11 @@ fn checkReturn(region: *Region, inst: Nir.Inst) Allocator.Error!void {
 
 /// Releasing kills every value in the region, everywhere in the program, so it needs a
 /// name, meaning an arena parameter or a local made with `Arena.init` or `child`.
-fn release(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
-    const receiver = region.nir.insts[inst.lhs];
-    switch (receiver.tag) {
-        .arg, .arena_init, .arena_child => {},
+fn release(region: *Region, at: u32, inst: Nir.Inst, arena: u32) Allocator.Error!void {
+    switch (region.nir.viewOf(region.nir.insts[arena])) {
+        .parameter, .arena_init, .arena_child => {},
         else => {
-            const reached = try region.path(inst.lhs);
+            const reached = try region.path(arena);
             return region.diagnostics.add(.{
                 .tag = .release_needs_a_name,
                 .token = inst.token,
@@ -248,14 +257,14 @@ fn release(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
             });
         },
     }
-    const of = region.of[inst.lhs];
+    const of = region.of[arena];
     if (of != .static) region.info(of).released = at;
 }
 
 /// A value made before its arena was released, and used after, is reading freed memory.
 fn checkLive(region: *Region, at: u32, inst: Nir.Inst) Allocator.Error!void {
     var buf: [2]u32 = undefined;
-    for (region.operands(inst, &buf)) |operand| {
+    for (region.nir.operandsOf(inst, &buf)) |operand| {
         // An arena handle survives its own reset, and only what it held is gone.
         if (region.nir.insts[operand].val.ty == .Arena) continue;
 
@@ -334,7 +343,7 @@ fn holdsPointer(region: *const Region, ty: Type.Index) bool {
 
 const Marks = std.ArrayList(Diagnostic.Mark);
 
-/// Where the region came from, said the way that region deserves.
+/// Where the region came from, worded for the kind it is.
 fn markOrigin(region: *Region, marks: *Marks, index: Index) Allocator.Error!void {
     if (index == .static) return;
     const it = region.info(index);
@@ -378,7 +387,7 @@ fn livesIn(region: *Region, index: Index) Allocator.Error![]const u8 {
     };
 }
 
-/// Why the two regions cannot be ordered, which is the whole explanation.
+/// Why the two regions cannot be ordered.
 fn why(region: *Region, src: Index, dst: Index) Allocator.Error!Diagnostic.Note {
     const a = region.regionName(src);
     const b = region.regionName(dst);
@@ -411,15 +420,21 @@ fn homeArena(region: *const Region, dst: Index) Index {
 
 /// Names what has to become true, then shows one way to get there. The compiler cannot
 /// know which way the author meant, so it states the rule and leaves the choice.
-fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator.Error!Diagnostic.Note {
+fn howToStore(
+    region: *Region,
+    inst: Nir.Inst,
+    store: Nir.View.Store,
+    src: Index,
+    dst: Index,
+) Allocator.Error!Diagnostic.Note {
     const home = region.homeArena(dst);
     if (home == .static) return .{
         .kind = .help,
         .text = "take an arena parameter, and allocate what you store from it",
     };
     const arena = region.regionName(home);
-    const value = region.name(inst.rhs) orelse "the value";
-    const ty = region.nir.insts[inst.rhs].val.ty;
+    const value = region.name(store.value) orelse "the value";
+    const ty = region.nir.insts[store.value].val.ty;
 
     // An arena is a value, so the same rule applies, but copying one makes no sense.
     if (ty == .Arena) return .{
@@ -433,10 +448,10 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
         .kind = .help,
         .text = try region.print(
             "{s} has to own what it keeps. One way, copying into '{s}':",
-            .{ try region.label(region.nir.insts[inst.lhs].lhs), arena },
+            .{ try region.label(region.fieldBase(store.place)), arena },
         ),
         .code = try region.print("{s} = {s}.create({s})", .{
-            try region.destination(inst),                              arena,
+            try region.path(store.place),                              arena,
             try region.typeName(region.types.pointeeOf(ty) orelse ty),
         }),
         .at = region.tree.tokenStart(inst.token),
@@ -444,10 +459,10 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
     if (region.types.isCopyable(ty)) return .{
         .kind = .help,
         .text = try region.print("{s}. One way, copying into '{s}':", .{
-            try region.rule(inst), arena,
+            try region.rule(store), arena,
         }),
         .code = try region.print("{s} = {s}.copy({s})", .{
-            try region.destination(inst), arena, value,
+            try region.path(store.place), arena, value,
         }),
         .at = region.tree.tokenStart(inst.token),
     };
@@ -455,10 +470,12 @@ fn howToStore(region: *Region, inst: Nir.Inst, src: Index, dst: Index) Allocator
     return .{
         .kind = .help,
         .text = try region.print("{s}. One way, allocating it from '{s}':", .{
-            try region.rule(inst), arena,
+            try region.rule(store), arena,
         }),
-        .code = try region.print("var {s} = {s}", .{ value, try region.allocatedFrom(inst.rhs, arena) }),
-        .at = region.anchor(inst.rhs),
+        .code = try region.print("var {s} = {s}", .{
+            value, try region.allocatedFrom(store.value, arena),
+        }),
+        .at = region.anchor(store.value),
     };
 }
 
@@ -489,18 +506,21 @@ fn howToReturn(region: *Region, value: u32) Allocator.Error!Diagnostic.Note {
 /// arena swapped, or a plain `create` when nothing else made it.
 fn allocatedFrom(region: *Region, inst: u32, arena: []const u8) Allocator.Error![]const u8 {
     const it = region.nir.insts[inst];
-    if (it.tag != .call) {
-        const ty = it.val.ty;
-        return region.print("{s}.create({s})", .{
-            arena, try region.typeName(region.types.pointeeOf(ty) orelse ty),
-        });
-    }
+    const called = switch (region.nir.viewOf(it)) {
+        .call => |call| call,
+        else => {
+            const ty = it.val.ty;
+            return region.print("{s}.create({s})", .{
+                arena, try region.typeName(region.types.pointeeOf(ty) orelse ty),
+            });
+        },
+    };
 
     const gpa = region.diagnostics.allocator();
     var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(gpa, region.tree.tokenSlice(region.nir.insts[it.lhs].token));
+    try out.appendSlice(gpa, region.tree.tokenSlice(region.nir.insts[called.callee].token));
     try out.append(gpa, '(');
-    for (region.nir.callArgs(it), 0..) |arg, at| {
+    for (called.args, 0..) |arg, at| {
         if (at > 0) try out.appendSlice(gpa, ", ");
         if (region.nir.insts[arg].val.ty == .Arena) {
             try out.appendSlice(gpa, arena);
@@ -523,9 +543,17 @@ fn argText(region: *const Region, inst: u32) []const u8 {
 }
 
 /// The thing the code has to satisfy, as in `'probe' has to outlive 'second'`.
-fn rule(region: *Region, inst: Nir.Inst) Allocator.Error![]const u8 {
-    const held = region.label(region.nir.insts[inst.lhs].lhs) catch "this memory";
-    return region.print("{s} has to outlive {s}", .{ try region.label(inst.rhs), held });
+fn rule(region: *Region, store: Nir.View.Store) Allocator.Error![]const u8 {
+    const held = region.label(region.fieldBase(store.place)) catch "this memory";
+    return region.print("{s} has to outlive {s}", .{ try region.label(store.value), held });
+}
+
+/// The value that owns the memory a field lives in.
+fn fieldBase(region: *const Region, place: u32) u32 {
+    return switch (region.nir.viewOf(region.nir.insts[place])) {
+        .field => |it| it.base,
+        else => place,
+    };
 }
 
 fn regionName(region: *const Region, index: Index) []const u8 {
@@ -552,14 +580,13 @@ fn nameToken(region: *const Region, at: u32, inst: Nir.Inst) Token {
 /// `b.arena`, for an expression a name cannot stand in for.
 fn path(region: *Region, inst: u32) Allocator.Error![]const u8 {
     const it = region.nir.insts[inst];
-    if (it.tag != .field) return region.name(inst) orelse region.tree.tokenSlice(it.token);
-    const base = region.name(it.lhs) orelse region.tree.tokenSlice(region.nir.insts[it.lhs].token);
+    const field = switch (region.nir.viewOf(it)) {
+        .field => |f| f,
+        else => return region.name(inst) orelse region.tree.tokenSlice(it.token),
+    };
+    const owner = region.nir.insts[field.base];
+    const base = region.name(field.base) orelse region.tree.tokenSlice(owner.token);
     return region.print("{s}.{s}", .{ base, region.tree.tokenSlice(it.last) });
-}
-
-/// `box.item`, the destination a fix has to name.
-fn destination(region: *Region, inst: Nir.Inst) Allocator.Error![]const u8 {
-    return region.path(inst.lhs);
 }
 
 fn typeName(region: *Region, ty: Type.Index) Allocator.Error![]const u8 {
@@ -568,25 +595,4 @@ fn typeName(region: *Region, ty: Type.Index) Allocator.Error![]const u8 {
 
 fn print(region: *Region, comptime fmt: []const u8, args: anytype) Allocator.Error![]const u8 {
     return region.diagnostics.print(fmt, args);
-}
-
-fn operands(region: *const Region, inst: Nir.Inst, buf: *[2]u32) []const u32 {
-    return switch (inst.tag) {
-        .store_field, .binary => blk: {
-            buf[0] = inst.lhs;
-            buf[1] = inst.rhs;
-            break :blk buf[0..2];
-        },
-        .field, .unary, .coerce, .arena_copy => blk: {
-            buf[0] = if (inst.tag == .arena_copy) inst.rhs else inst.lhs;
-            break :blk buf[0..1];
-        },
-        .ret => blk: {
-            buf[0] = Nir.retOperand(inst) orelse break :blk buf[0..0];
-            break :blk buf[0..1];
-        },
-        // Already contiguous in `extra`, so no buffer is needed.
-        .call => region.nir.callArgs(inst),
-        else => buf[0..0],
-    };
 }

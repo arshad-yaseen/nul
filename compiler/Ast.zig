@@ -1,4 +1,4 @@
-//! The syntax tree
+//! The syntax tree. `Parse` writes the packed form, `viewOf` reads it back.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -197,7 +197,6 @@ pub const View = union(enum) {
     return_stmt: Node.OptionalIndex,
 
     fn_decl: FnDecl,
-    /// Both `let` and `var`, `is_mutable` distinguishes them.
     var_decl: VarDecl,
     call: Call,
     binary: Binary,
@@ -334,7 +333,6 @@ pub fn nodeTag(tree: Ast, n: Node.Index) Node.Tag {
     return tree.nodes.items(.tag)[@intFromEnum(n)];
 }
 
-/// The first token of a node's source span.
 pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
     return switch (tree.viewOf(node)) {
         .ident, .number_literal, .str_literal => |token| token,

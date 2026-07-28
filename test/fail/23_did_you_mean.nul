@@ -1,0 +1,7 @@
+let limit = 100
+
+/// A near miss names the thing it nearly was.
+fn go() i64 {
+    let scratch = 1
+    return scratchh + limitt
+}

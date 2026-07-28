@@ -259,7 +259,13 @@ fn assign(lower: *Lower, node: Ast.View.Assign) Allocator.Error!u32 {
         .field_access => |access| return lower.assignField(node, access),
         else => return lower.fail(.{
             .tag = .not_assignable,
-            .token = lower.mainToken(node.lhs),
+            .token = lower.tree.firstToken(node.lhs),
+            .last = lower.tree.lastToken(node.lhs),
+            .text = "this is a value, not a place to put one",
+            .notes = try lower.notes(&.{.{
+                .kind = .note,
+                .text = "only a name or a field of one can be assigned to",
+            }}),
         }),
     }
 }
@@ -268,7 +274,7 @@ fn assignLocal(lower: *Lower, token: Token, rhs: Ast.Node.Index) Allocator.Error
     const value = try lower.expr(rhs);
     const text = lower.tree.tokenSlice(token);
     const local = lower.find(text) orelse
-        return lower.fail(.{ .tag = .undefined_name, .token = token });
+        return lower.fail(try lower.undefinedName(token, text));
 
     const declared_at = local.token;
     if (!local.is_mutable) return lower.fail(.{
@@ -346,7 +352,7 @@ fn name(lower: *Lower, token: Token) Allocator.Error!u32 {
     });
 
     const decl = lower.sema.namespace.find(text) orelse
-        return lower.fail(.{ .tag = .undefined_name, .token = token });
+        return lower.fail(try lower.undefinedName(token, text));
     try lower.sema.resolveDecl(decl);
     return lower.add(.{ .tag = .decl, .token = token, .val = decl.value });
 }
@@ -374,8 +380,7 @@ fn unary(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Unary) Allocator.Erro
 }
 
 fn fieldOf(lower: *Lower, base: u32, access: Ast.View.FieldAccess, node: Ast.Node.Index) Allocator.Error!u32 {
-    // Through a pointer as readily as into a value, since `n.next.value` never says
-    // which.
+    // Through a pointer as readily as into a value, since `n.next` never says which.
     const owner = lower.types.pointeeOf(lower.typeOf(base)) orelse lower.typeOf(base);
     // An `Arena` method is not a field, and `call` has already taken those.
     if (!lower.types.isStruct(owner) or !lower.types.isDefined(owner)) {
@@ -418,7 +423,7 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
         .field_access => |access| blk: {
             const receiver = try lower.expr(access.lhs);
             if (lower.typeOf(receiver) == .Arena or lower.isArenaType(receiver)) {
-                return lower.arenaMethod(receiver, access.name_token, it.args, token, span);
+                return lower.arenaMethod(node, receiver, access.name_token, it.args);
             }
             break :blk try lower.fieldOf(receiver, access, it.callee);
         },
@@ -426,19 +431,33 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
     };
 
     const callee_ty = lower.typeOf(callee);
+    // Named after what the source wrote, never after the instruction that produced the
+    // value. A local holding `1 + 2.5` was made by a `+` somewhere else entirely.
+    const written = lower.calleeName(it.callee);
+
     const signature = lower.types.funcOf(callee_ty) orelse {
         for (it.args) |arg| _ = try lower.expr(arg);
         if (callee_ty == .poisoned) return lower.todo(token);
         return lower.fail(.{
             .tag = .not_callable,
-            .token = lower.insts.items[callee].token,
-            .message = try lower.print("this is '{s}', which is not a function", .{
+            .token = lower.tree.firstToken(it.callee),
+            .last = lower.tree.lastToken(it.callee),
+            .message = if (written) |text|
+                try lower.print("'{s}' is '{s}', which cannot be called", .{
+                    text, try lower.typeName(callee_ty),
+                })
+            else
+                try lower.print("this is '{s}', which cannot be called", .{
+                    try lower.typeName(callee_ty),
+                }),
+            .text = try lower.print("called here, but this is '{s}'", .{
                 try lower.typeName(callee_ty),
             }),
+            .marks = try lower.declaredMark(it.callee, callee_ty),
         });
     };
 
-    const callee_name = lower.tree.tokenSlice(lower.insts.items[callee].token);
+    const callee_name = written orelse "this";
     const start: u32 = @intCast(lower.extra.items.len);
     try lower.extra.append(lower.gpa, @intCast(it.args.len));
 
@@ -458,7 +477,8 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
 
     if (it.args.len != signature.params.len) try lower.report(.{
         .tag = .wrong_arg_count,
-        .token = token,
+        .token = span[0],
+        .last = span[1],
         .message = try lower.print("'{s}' takes {d} argument{s}, but {d} {s} given", .{
             callee_name,
             signature.params.len,
@@ -466,9 +486,8 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
             it.args.len,
             if (it.args.len == 1) "was" else "were",
         }),
-        .marks = try lower.mark(lower.insts.items[callee].token, try lower.print("'{s}' is '{s}'", .{
-            callee_name, try lower.typeName(callee_ty),
-        })),
+        .text = try lower.print("{d} given here", .{it.args.len}),
+        .marks = try lower.declaredMark(it.callee, callee_ty),
     });
 
     return lower.add(.{
@@ -479,6 +498,50 @@ fn call(lower: *Lower, node: Ast.Node.Index, it: Ast.View.Call) Allocator.Error!
         .lhs = callee,
         .rhs = start,
     });
+}
+
+/// Locals are offered too, since a misspelled local is the likeliest slip in a body.
+fn undefinedName(lower: *Lower, token: Token, text: []const u8) Allocator.Error!Diagnostic.Entry {
+    var closest = lower.sema.closestTo(text);
+    for (lower.locals.items) |local| closest.offer(local.name);
+    return .{
+        .tag = .undefined_name,
+        .token = token,
+        .text = "not found in this scope",
+        .notes = try lower.sema.didYouMean(closest),
+    };
+}
+
+/// What the source called the callee, which is not what produced its value.
+fn calleeName(lower: *Lower, node: Ast.Node.Index) ?[]const u8 {
+    return switch (lower.tree.viewOf(node)) {
+        .ident => |token| lower.tree.tokenSlice(token),
+        .field_access => |access| lower.tree.tokenSlice(access.name_token),
+        else => null,
+    };
+}
+
+/// Marks where the callee's name was declared, so a bad call shows both ends of itself.
+fn declaredMark(
+    lower: *Lower,
+    node: Ast.Node.Index,
+    ty: Type.Index,
+) Allocator.Error![]const Diagnostic.Mark {
+    const token = switch (lower.tree.viewOf(node)) {
+        .ident => |it| it,
+        else => return &.{},
+    };
+    const text = lower.tree.tokenSlice(token);
+    const at = if (lower.find(text)) |local|
+        local.token
+    else if (lower.sema.namespace.find(text)) |decl|
+        decl.name_token
+    else
+        return &.{};
+
+    return lower.mark(at, try lower.print("'{s}' is declared here, as '{s}'", .{
+        text, try lower.typeName(ty),
+    }));
 }
 
 /// The parameter's declaration site, when the callee names a function directly.
@@ -519,12 +582,12 @@ const methods = std.StaticStringMap(Method).initComptime(.{
 /// The arena operations the memory model is written in terms of.
 fn arenaMethod(
     lower: *Lower,
+    node: Ast.Node.Index,
     receiver: u32,
     name_token: Token,
     args: []const Ast.Node.Index,
-    token: Token,
-    span: Span,
 ) Allocator.Error!u32 {
+    const span: Span = .{ lower.tree.firstToken(node), lower.tree.lastToken(node) };
     const text = lower.tree.tokenSlice(name_token);
     const method = methods.get(text) orelse return lower.fail(.{
         .tag = .no_such_field,
@@ -538,7 +601,8 @@ fn arenaMethod(
     };
     if (args.len != wanted) return lower.fail(.{
         .tag = .wrong_arg_count,
-        .token = token,
+        .token = span[0],
+        .last = span[1],
         .message = try lower.print("'{s}' takes {d} argument{s}, but {d} {s} given", .{
             text,
             wanted,
@@ -546,6 +610,7 @@ fn arenaMethod(
             args.len,
             if (args.len == 1) "was" else "were",
         }),
+        .text = try lower.print("{d} given here", .{args.len}),
     });
 
     return switch (method) {

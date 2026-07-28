@@ -1,0 +1,7 @@
+/// A struct holding itself by value has no size.
+let Node = struct {
+    value: i64
+    next: Node
+}
+
+fn go() i64 { return 0 }

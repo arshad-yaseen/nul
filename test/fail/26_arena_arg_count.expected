@@ -1,0 +1,7 @@
+error[E0015]: 'create' takes 1 argument, but 2 were given
+
+  ┌─ test/fail/26_arena_arg_count.nul:4:13
+  │
+4 │     var b = arena.create(Box, 5)
+  │             ^^^^^^^^^^^^^^^^^^^^  2 given here
+  │

@@ -1,0 +1,9 @@
+error[E0014]: 'cool' is 'comptime_float', which cannot be called
+
+  ┌─ test/fail/21_calling_a_value.nul:4:12
+  │
+3 │     let cool = 1 + 2.5
+  │         ────  'cool' is declared here, as 'comptime_float'
+4 │     return cool()
+  │            ^^^^  called here, but this is 'comptime_float'
+  │
