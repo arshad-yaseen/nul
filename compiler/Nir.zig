@@ -1,9 +1,5 @@
 //! Nul Intermediate Representation: a function body as a flat list of typed instructions.
 //! `Lower` builds it.
-//!
-//! Built once per function, since a generic body is checked at its definition rather than
-//! per instantiation. There is no control flow yet, so an instruction's position is its
-//! execution order.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
