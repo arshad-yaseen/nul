@@ -11,7 +11,6 @@ const Type = @import("Type.zig");
 const Sema = @This();
 const Decl = Namespace.Decl;
 const Token = Ast.TokenIndex;
-const Value = Comptime.Value;
 const TypedValue = Comptime.TypedValue;
 
 gpa: Allocator,
