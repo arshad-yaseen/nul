@@ -1,7 +1,0 @@
-error[E0006]: '-' works on signed numbers, but this is 'u8'
-
-  ┌─ test/fail/16_negate_unsigned.nul:3:12
-  │
-3 │     return -x
-  │            ^^  'u8' has no negative values
-  │

@@ -1,9 +1,0 @@
-error[E0006]: 'name' is declared 'str', but its value is 'comptime_int'
-
-  ┌─ test/fail/20_value_against_annotation.nul:3:21
-  │
-3 │     let name: str = 42
-  │               ───   ^^  this is 42
-  │               │
-  │               └─ declared 'str' here
-  │
