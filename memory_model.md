@@ -116,25 +116,6 @@ fn analyze(long: Arena, short: Arena, input: str) *Report {
 }
 ```
 
-```
-error: 'analyze' takes more than one arena, so its result has no single home
-
-  ┌─ analyze.nul:9:25
-  │
-9 │ fn analyze(long: Arena, short: Arena, input: str) *Report {
-  │            ───────────  ^^^^^^^^^^^^              ───────  which arena is this in?
-  │            │            │
-  │            │            a second arena parameter
-  │            the first arena parameter
-  │
-  = note: a function allocates its results into exactly one arena. That rule is
-          what lets a caller know where a result lives without anyone writing a
-          lifetime down.
-  = help: drop 'short', and create a child inside the body for temporaries
-            fn analyze(long: Arena, input: str) *Report {
-                var short = long.child()
-```
-
 A function that needs scratch space does not take a second arena. It makes a child,
 which dies when the function returns:
 
@@ -207,33 +188,6 @@ fn leak(arena: Arena) *Box {
 
     return box
 }
-```
-
-```
-error: 'temp' does not live long enough
-
-   ┌─ leak.nul:14:16
-   │
- 9 │     var scratch = arena.child()
-   │         ───────  'scratch' is created here, as a child of 'arena'
-   ·
-11 │     var box = arena.create(Box)
-   │         ───  'box' lives in 'arena'
-12 │     var temp = scratch.create(i64)
-   │         ────  'temp' lives in 'scratch'
-   ·
-14 │     box.item = temp
-   │     ────────   ^^^^  this points into 'scratch'
-   │     │
-   │     this memory lives in 'arena'
-   ·
-16 │     return box
-   │            ───  'box' escapes here, so it outlives 'scratch'
-   │
-   = note: 'scratch' is a child of 'arena', and a child dies before its parent.
-           'box.item' would still point into it after line 17.
-   = help: copy the value into the arena that outlives it
-             box.item = arena.copy(temp)
 ```
 
 This is the only situation in which memory can die while a pointer to it survives, so
@@ -527,26 +481,6 @@ and it says so:
     scratch.reset()
 
     return item.weight            // rejected
-```
-
-```
-error: 'item' is read after 'scratch' was released
-
-   ┌─ weigh.nul:17:12
-   │
-12 │     var item = scratch.create(Item)
-   │         ────  'item' lives in 'scratch'
-   ·
-15 │     scratch.reset()
-   │     ───────────────  everything in 'scratch' dies here
-   ·
-17 │     return item.weight
-   │            ^^^^^^^^^^^  read after its memory was released
-   │
-   = help: read the value before the reset
-             let weight = item.weight
-             scratch.reset()
-             return weight
 ```
 
 This distinction is the central design decision of the model. Inferring the correct
