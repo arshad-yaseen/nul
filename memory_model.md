@@ -305,10 +305,14 @@ is the invariant failing. Every later check would then be reading a tag that lie
 the compiler refuses at the copy rather than let a laundered pointer exist at all.
 
 Nothing about this is special cased in the language. `Arena.copy` is an ordinary
-library function whose signature says its argument must be pointer free, and the
-compiler answers that question about a type the way it answers any other compile time
-question. The region of the result needs no special case either: `copy` takes one
-arena, so its result lives in that arena, by the rule already stated.
+library declaration in `std`, and its signature is what every call is checked
+against; write the type or let the value pin it down, `arena.copy(Pair, p)` and
+`arena.copy(p)` alike. The refusal is the one rule of the primitive the declaration
+is bound to, and whether a type holds a pointer is a question the compiler answers
+the way it answers any other compile time question. An `Arena` stored inside a type
+counts as a pointer here, because an arena you can still name is memory you can
+still reach. The region of the result needs no special case either: `copy` takes
+one arena, so its result lives in that arena, by the rule already stated.
 
 To move something that does hold pointers, copy what the pointers reach and rebuild
 around it:
@@ -540,3 +544,34 @@ For the rare case of data with many owners and individually determined lifetimes
 standard library provides a reference counted type. It is a library type rather than a
 language feature, it is written out at every use, and a program that does not import
 it contains none of its machinery. The core language inserts no code, ever.
+
+## Where the surface stands
+
+Everything above describes the finished model; the compiler arrives at it in
+stages, and a few examples use surface the grammar does not carry yet. A reader
+building against this document — human or machine — should take the boundary from
+here rather than guess.
+
+In the language today: nominal structs; pointers `*T` and `*var T` with field
+access reaching through them; functions declared in a type's namespace, called
+through a value or through the type; `use` across files with `pub`; `let` and
+`var`; `if`/`else`, `for` with and without a condition, `break`, `continue`,
+`return`; compile-time evaluation with types as values, comptime parameters, and
+functions returning types; and the whole `Arena` interface exactly as declared in
+`lib/std/mem.nul` — creation, children, `copy` with its refusal, and release by
+name.
+
+Designed, and shown in examples above, but not yet in the grammar: struct
+literals `.{ ... }`, slices `[]T`, iteration `for x in`, error unions `!T` with
+`try`, string interpolation, pointer receivers (`self: *var List(T)`), generic
+containers such as `List`, `io`, and the pool and reference counted types. An
+example using these shows where the language is going, not where the parser is.
+
+Specified here but a later stage of the compiler: the region checker — every
+"rejected" above that names a lifetime, from `box.item = temp` to the reset that
+comes one line too early. The signature-level rules are enforced today: one arena
+per function, `copy` refusing what reaches other memory, release demanding a
+name. The flow-level proofs are the checker's job.
+
+The files under `test/` are the executable record of this boundary: what
+compiles, what is refused, and with exactly which words.
