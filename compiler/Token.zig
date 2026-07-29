@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const Token = @This();
 
 tag: Tag,
+/// Byte offset in the source. The end is rescanned by `Tokenizer.tokenEnd`, never stored.
 start: u32,
 
 comptime {

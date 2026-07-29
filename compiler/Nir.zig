@@ -11,16 +11,23 @@ const Value = @import("Value.zig");
 
 const Nir = @This();
 
+/// Every instruction in the function, flat. A `Ref` is a position here, and a block is
+/// a contiguous run of them.
 insts: []const Inst,
+/// Every block. A `Block.Ref` is a position here, and block 0 is the entry.
 blocks: []const Block,
 /// Argument lists, referenced by `Range`.
 extra: []const Ref,
 
+/// One lowered body, kept beside the declaration it came from.
 pub const Function = struct {
+    /// Where the name and signature are, since neither is repeated here.
     decl: Namespace.Index,
     body: Nir,
 };
 
+/// An instruction, by position in `insts`. Operands are these rather than values, so an
+/// instruction names what produced its input instead of holding a copy.
 pub const Ref = enum(u32) {
     _,
 
@@ -30,11 +37,14 @@ pub const Ref = enum(u32) {
     }
 };
 
+/// A run of `Ref`s in `extra`.
 pub const Range = struct { start: u32, len: u32 };
 
+/// What `Inst.name` holds when no local was bound to the value.
 const no_name = std.math.maxInt(u32);
 
 pub const Inst = struct {
+    /// Which instruction this is, and what it reads.
     data: Data,
     /// What this yields, `.void` when nothing. A known value never materializes, since
     /// a backend spells it at each use instead of binding it.
@@ -61,6 +71,7 @@ pub const Data = union(enum) {
     load: Ref,
     /// The pointer written through, which has to be mutable.
     store: Store,
+    /// The operator is read back off `token`, so no opcode is stored here.
     binary: Binary,
     unary: Ref,
     /// A binding takes its declared type here, and a `var` sheds comptime knownness.
@@ -85,6 +96,7 @@ pub const Data = union(enum) {
 
     pub const Store = struct { ptr: Ref, value: Ref };
     pub const Binary = struct { lhs: Ref, rhs: Ref };
+    /// `index` is the field's position in the owning struct, never its name.
     pub const Field = struct { base: Ref, index: u32 };
     pub const Call = struct { callee: Ref, args: Range };
     pub const Copy = struct { arena: Ref, value: Ref };
@@ -92,10 +104,12 @@ pub const Data = union(enum) {
 
 /// A contiguous run of instructions, `[first..end())`, closed by one terminator.
 pub const Block = struct {
+    /// Where the run starts in `insts`.
     first: u32,
     count: u32,
     term: Term,
 
+    /// A block, by position in `blocks`.
     pub const Ref = enum(u32) { entry = 0, _ };
 
     pub fn end(b: Block) u32 {
@@ -103,11 +117,13 @@ pub const Block = struct {
     }
 };
 
+/// How a block ends, and so where control goes next.
 pub const Term = union(enum) {
     jump: Block.Ref,
     branch: Branch,
     ret: Return,
 
+    /// Both targets are real blocks. An `if` with no `else` points `els` at the join.
     pub const Branch = struct { cond: Ref, then: Block.Ref, els: Block.Ref };
     /// Carries a span because returning is where escaping a region is blamed.
     pub const Return = struct { value: ?Ref, token: Ast.TokenIndex, last: Ast.TokenIndex };
@@ -179,7 +195,9 @@ pub const Builder = struct {
     insts: std.ArrayList(Inst) = .empty,
     blocks: std.ArrayList(Wip) = .empty,
     extra: std.ArrayList(Ref) = .empty,
+    /// The block instructions are appended to, meaningful only while `open`.
     current: Block.Ref = .entry,
+    /// Whether a block is taking instructions. Sealing closes it, activating opens one.
     open: bool = false,
 
     /// A block while it builds. `term` arrives when it seals.

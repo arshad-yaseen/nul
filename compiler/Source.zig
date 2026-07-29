@@ -10,8 +10,11 @@ pub const padding = 1;
 
 pub const max_bytes = std.math.maxInt(u32) - padding - 1;
 
+/// As written on the command line, and as a diagnostic's header spells it.
 path: []const u8,
+/// The file, with `padding` zero bytes past the end.
 bytes: [:0]const u8,
+/// Built on first use, since a file nothing is reported about never needs it.
 line_starts: ?[]u32 = null,
 
 pub const LoadError = error{ SourceTooLarge, OutOfMemory, ReadFailed };

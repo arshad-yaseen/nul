@@ -1,3 +1,6 @@
+//! Source bytes to tokens. A newline where a statement could end becomes a `.semi`, so
+//! the parser never has to know the rule.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -6,6 +9,7 @@ const Token = @import("Token.zig");
 const Tokenizer = @This();
 
 src: [:0]const u8,
+/// Where scanning resumes.
 index: u32,
 /// Last significant tag, for the automatic-semicolon rule. Comments do not update it,
 /// so a newline after `x // note` still ends the statement.
@@ -16,6 +20,7 @@ pub fn init(src: [:0]const u8) Tokenizer {
     return .{ .src = src, .index = bom, .prev = .semi };
 }
 
+/// Where the scan is inside one token, which `next` runs as a labeled switch.
 const State = enum {
     start,
     ident,

@@ -42,6 +42,7 @@ pub const Tag = enum(u16) {
 /// One recorded mistake. Most need only a tag and a token, which costs no allocation;
 /// everything below `token` is owned by the `List` and usually empty.
 pub const Entry = struct {
+    /// Picks the default wording, and is what the `E0007` in the header names.
     tag: Tag,
     /// The primary span, what the header points at and what sorting orders on.
     token: Ast.TokenIndex,
@@ -51,7 +52,9 @@ pub const Entry = struct {
     message: []const u8 = "",
     /// The primary label's text. Empty draws the marker alone.
     text: []const u8 = "",
+    /// Elsewhere in the file, pointed at to explain the primary span.
     marks: []const Mark = &.{},
+    /// Prose below the snippet, which is where a suggested fix goes.
     notes: []const Note = &.{},
 
     /// The tag's default wording. `message` wins when it is set.
@@ -87,8 +90,10 @@ pub const Entry = struct {
     }
 };
 
+/// A secondary span, drawn under its own line in the same snippet.
 pub const Mark = struct {
     token: Ast.TokenIndex,
+    /// Null covers `token` alone.
     last: ?Ast.TokenIndex = null,
     text: []const u8 = "",
 };
@@ -102,13 +107,16 @@ pub const Note = struct {
     /// Byte offset on the line `code` replaces.
     at: ?u32 = null,
 
+    /// A note explains, a help suggests.
     pub const Kind = enum { note, help };
 };
 
 /// Everything a diagnostic points at dies with the compilation, so one arena owns the
 /// entries and every string they reach.
 pub const List = struct {
+    /// Owns the entries and every string they point at.
     arena: std.heap.ArenaAllocator,
+    /// In the order they were recorded, until `sortBySource`.
     items: std.ArrayList(Entry),
 
     pub fn init(gpa: Allocator) List {
@@ -161,7 +169,9 @@ pub const List = struct {
 
 // What the renderer draws
 
+/// The headline, already worded, since the renderer knows nothing about tags.
 message: []const u8,
+/// Drawn as `E0007`. Null leaves it out.
 code: ?u16 = null,
 /// Any order, since the renderer sorts. Exactly one `.primary`, which fixes the header.
 labels: []const Label,
@@ -175,8 +185,10 @@ pub const Label = struct {
     start: u32,
     end: u32,
     style: Style = .secondary,
+    /// Drawn beside the marker. Empty draws the marker alone.
     text: []const u8 = "",
 
+    /// `primary` is what went wrong, and where the header's line and column come from.
     pub const Style = enum { primary, secondary };
 };
 
@@ -258,6 +270,8 @@ pub fn renderAll(
     }
 }
 
+/// The fields an `Entry` has and an `Ast.Error` does not, defaulted so one loop renders
+/// both.
 const Extras = struct {
     message: []const u8 = "",
     last: ?Ast.TokenIndex = null,
@@ -397,6 +411,8 @@ const Render = struct {
     gpa: Allocator,
     src: *Source,
     palette: Palette,
+    /// Width of the line-number column, sized to the largest number drawn, so every row
+    /// lines up.
     gutter: u32,
 
     fn tint(r: Render, color: []const u8, text: []const u8) Io.Writer.Error!void {

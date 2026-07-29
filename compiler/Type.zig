@@ -10,6 +10,7 @@ const Value = @import("Value.zig");
 
 const Type = @This();
 
+/// One per distinct type. An `Index` is a position here.
 entries: std.MultiArrayList(Entry),
 /// Struct bodies and signatures.
 extra: std.ArrayList(u32),
@@ -17,6 +18,7 @@ extra: std.ArrayList(u32),
 strings: std.ArrayList(u8),
 /// In lockstep with `entries`, so map position N describes type N.
 dedup: std.AutoArrayHashMapUnmanaged(void, void),
+/// The next `NominalId`. Only ever counts up, so no two declarations share one.
 next_nominal_id: u32,
 
 /// The types that exist before any source is read, in seeding order. Everything up
@@ -51,8 +53,10 @@ pub const Index = enum(u32) {
 /// Not deduplicated, so a repeated name costs its bytes twice.
 pub const String = enum(u32) { empty = 0, _ };
 
+/// A signature and nothing else, so two functions of the same shape share one type.
 pub const Func = struct { params: []const Index, return_type: Index };
 
+/// `is_mutable` is `*var`, the only pointer that can be written through.
 pub const Pointer = struct { pointee: Index, is_mutable: bool };
 
 // Builtins

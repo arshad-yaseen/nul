@@ -14,9 +14,11 @@ const Decl = Namespace.Decl;
 const Token = Ast.TokenIndex;
 
 gpa: Allocator,
+/// Interns every type this evaluates, and answers what coerces to what.
 types: *Type,
 /// Borrowed, must outlive this.
 tree: *const Ast,
+/// Names already bound. Resolving fills in what each one means.
 namespace: *Namespace,
 diagnostics: *Diagnostic.List,
 /// Type lists under construction. Each user shrinks back to its entry length.

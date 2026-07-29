@@ -18,11 +18,13 @@ const max_errors = 128;
 
 gpa: Allocator,
 tokens: Tokenizer.TokenList.Slice,
+/// The cursor into `tokens`, which only ever moves forward.
 tok_i: TokenIndex,
 nodes: Ast.NodeList,
 extra: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Ast.Error),
+/// Nesting so far, against `max_depth`.
 depth: u32,
 
 pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!Ast {

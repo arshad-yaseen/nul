@@ -12,15 +12,19 @@ const Value = @import("Value.zig");
 
 const Namespace = @This();
 
+/// In source order. An `Index` is a position here.
 decls: std.ArrayList(Decl),
 /// Positions in `decls`, keyed on the name's source bytes.
 by_name: std.StringHashMapUnmanaged(u32),
 
 pub const Decl = struct {
+    /// The name, and what a diagnostic about the declaration points at.
     name_token: Ast.TokenIndex,
+    /// The `var_decl`, `fn_decl`, or `use_decl` it was collected from.
     node: Ast.Node.Index,
     state: State = .unresolved,
-    /// A struct declaration binds a value whose type is `type`.
+    /// Meaningful once `state` is `resolved`. A struct declaration binds a value whose
+    /// type is `type`.
     value: Value = .poisoned,
 
     /// `in_progress` turns a self-dependency into a report instead of a hang.

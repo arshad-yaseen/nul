@@ -15,15 +15,20 @@ const Lower = @This();
 const Token = Ast.TokenIndex;
 const Ref = Nir.Ref;
 const Note = Diagnostic.Note;
+
+/// First and last token of a source range, which is what a label underlines.
 const Span = struct { Token, Token };
 
+/// Types, coercion, and folding are all asked of this, so lowering only decides shape.
 sema: *Sema,
 gpa: Allocator,
 types: *Type,
 tree: *const Ast,
+/// The body being lowered.
 function: Ast.View.FnDecl,
 /// What a `return` is checked against.
 returns: Type.Index,
+/// The graph under construction.
 b: Nir.Builder,
 /// Innermost last, so a backward scan finds the name that shadows.
 locals: std.ArrayList(Local) = .empty,
@@ -32,8 +37,11 @@ loops: std.ArrayList(Loop) = .empty,
 /// Argument lists under construction, committed to the graph in one piece.
 scratch: std.ArrayList(Ref) = .empty,
 
+/// A name in scope, from a parameter or a `let` or `var`.
 const Local = struct {
+    /// Source bytes, borrowed from the tree.
     name: []const u8,
+    /// Where it was declared, which is what a diagnostic points back at.
     token: Token,
     binding: Binding,
     is_mutable: bool,
@@ -46,7 +54,9 @@ const Binding = union(enum) {
 };
 
 const Loop = struct {
+    /// Where the condition is tested, and where `continue` goes.
     head: Nir.Block.Ref,
+    /// Past the loop, where `break` goes.
     exit: Nir.Block.Ref,
     /// Depth at the top of the body, so a jump out knows which scopes it leaves.
     locals_depth: usize,
@@ -904,6 +914,7 @@ fn isArenaType(lower: *const Lower, ref: Ref) bool {
     return lower.b.dataOf(ref) == .decl and lower.b.valOf(ref).asType() == .Arena;
 }
 
+/// `Arena`'s operations
 const Method = enum { init, child, create, copy, reset, destroy };
 
 fn arenaMethod(

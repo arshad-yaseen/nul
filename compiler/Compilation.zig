@@ -16,8 +16,11 @@ const Source = @import("Source.zig");
 
 const Compilation = @This();
 
+/// Kept because every diagnostic quotes the line it points at.
 src: Source,
 tree: Ast,
+/// What analysis found. `tree.errors` wins over these, since a tree with holes in it
+/// would only produce errors about the holes.
 diagnostics: Diagnostic.List,
 
 pub const Error = Allocator.Error || Source.LoadError || Io.Writer.Error;

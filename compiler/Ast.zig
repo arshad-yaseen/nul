@@ -12,14 +12,19 @@ const Ast = @This();
 
 /// Borrowed, so the caller's `Source` must outlive the tree.
 source: [:0]const u8,
+/// In source order, ending in one `.eof`. A `TokenIndex` is a position here.
 tokens: Tokenizer.TokenList.Slice,
+/// A `Node.Index` is a position here, and node 0 is the root.
 nodes: NodeList.Slice,
 /// Variable-length children, in source order.
 extra: []u32,
+/// Empty when the file parsed. Anything here stops the tree from being analyzed.
 errors: []const Error,
 
 pub const NodeList = std.MultiArrayList(Node);
+/// A token, by position in `tokens`.
 pub const TokenIndex = u32;
+/// A position in `extra`.
 pub const ExtraIndex = enum(u32) { _ };
 
 pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Ast {
@@ -106,6 +111,8 @@ pub const Node = struct {
         /// `main_token` is `true` or `false`.
         bool_literal,
 
+        /// A hole where parsing failed. It keeps the tree's shape, so a later walk still
+        /// reaches everything around it.
         err,
     };
 
@@ -129,6 +136,7 @@ comptime {
 
 // The view
 
+/// What a `binary` node means, read back off its `main_token` rather than stored.
 pub const BinaryOp = enum(u4) {
     add,
     sub,
@@ -147,6 +155,7 @@ pub const BinaryOp = enum(u4) {
 
 pub const UnaryOp = enum { negate, bool_not };
 
+/// `none` bans chaining, so `a < b < c` is reported rather than nested.
 pub const Assoc = enum(u1) { left, none };
 
 /// `prec` 0 means the token is not an infix operator.
@@ -179,6 +188,7 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
     break :blk t;
 };
 
+/// A node in the shape a reader wants
 pub const View = union(enum) {
     root: []const Node.Index,
     block: []const Node.Index,
@@ -213,13 +223,16 @@ pub const View = union(enum) {
         name_token: TokenIndex,
         is_pub: bool,
         params: []const Node.Index,
+        /// `.none` is a function returning nothing.
         return_type: Node.OptionalIndex,
         body: Node.Index,
     };
     pub const VarDecl = struct {
         name_token: TokenIndex,
+        /// `var` rather than `let`.
         is_mutable: bool,
         is_pub: bool,
+        /// `.none` when nothing was written, and the initializer decides the type.
         type_expr: Node.OptionalIndex,
         init_expr: Node.Index,
     };
@@ -425,7 +438,9 @@ pub fn tokenSlice(tree: Ast, i: TokenIndex) []const u8 {
 
 pub const Error = struct {
     tag: Tag,
+    /// What the message points at, and where the parser gave up.
     token: TokenIndex,
+    /// Only `expected_token` reads this, and it is set whenever that tag is.
     expected: ?Token.Tag = null,
 
     /// Explicit and permanent, like `Diagnostic.Tag`'s. Parse errors own E01xx.

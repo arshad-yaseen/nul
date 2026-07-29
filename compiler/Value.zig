@@ -9,6 +9,7 @@ const Type = @import("Type.zig");
 
 const Value = @This();
 
+/// Always present. `poisoned` stands in once a reason has been reported.
 ty: Type.Index,
 known: Known = .runtime,
 
@@ -18,6 +19,7 @@ pub const Known = union(enum) {
     int: i128,
     float: f64,
     bool: bool,
+    /// Types are values, which is what lets one walk evaluate both.
     type: Type.Index,
     /// A named function. Identity, so a call's callee survives any binding.
     func: Namespace.Index,
