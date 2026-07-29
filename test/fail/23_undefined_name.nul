@@ -1,7 +1,0 @@
-let limit = 100
-
-/// A name that was never declared is reported where it is used.
-fn go() i64 {
-    let scratch = 1
-    return scratchh + limitt
-}

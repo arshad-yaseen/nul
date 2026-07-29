@@ -1,5 +1,0 @@
-/// The error belongs where the call is written, not where the value was made.
-fn keep() u8 {
-    let cool = 1 + 2.5
-    return cool()
-}

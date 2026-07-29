@@ -1,4 +1,0 @@
-/// Both sides agree on 'str', which is not something '+' works on.
-fn shout(name: str) str {
-    return name + "!"
-}

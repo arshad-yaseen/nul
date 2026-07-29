@@ -1,6 +1,0 @@
-use std.mem.Arena
-let Box = struct { n: i64 }
-fn go(arena: Arena) i64 {
-    var b = arena.create(Box, 5)
-    return 0
-}

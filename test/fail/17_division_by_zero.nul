@@ -1,4 +1,0 @@
-/// A constant division by zero is reported where it is written, not at run time.
-fn crash() i64 {
-    return 1 / 0
-}

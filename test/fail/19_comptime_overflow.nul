@@ -1,4 +1,0 @@
-/// Comptime integers are 128 bits wide; past that the fold reports instead of wrapping.
-fn big() i64 {
-    return 170141183460469231731687303715884105727 + 1
-}

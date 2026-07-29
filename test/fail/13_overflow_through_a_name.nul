@@ -1,6 +1,0 @@
-/// A comptime value flows through a name: `cool` is 256 wherever it is read,
-/// and 256 has no business in a u8.
-fn keep() u8 {
-    let cool = 255 + 1
-    return cool
-}

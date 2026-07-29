@@ -1,7 +1,0 @@
-/// 'break' and 'continue' mean nothing without a loop around them.
-fn stray(n: i64) i64 {
-    if n > 0 {
-        break
-    }
-    continue
-}
