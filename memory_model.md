@@ -36,7 +36,7 @@ There is no way for two names to disagree about the state of one object, because
 is no way for two names to *be* one object, unless you wrote a pointer:
 
 ```nul
-var a = arena.create(Point)       // a is a *Point
+var a = arena.create[Point]()    // a is a *Point
 var b = a                         // b is the same pointer
 b.x = 99
 
@@ -74,7 +74,7 @@ fn parse(arena: Arena, path: str) !*Tree {
     var scratch = arena.child()          // dies at the end of this function
 
     let text = try io.read_file(scratch, path)   // temporary
-    var tree = arena.create(Tree)                // the result
+    var tree = arena.create[Tree]()             // the result
 
     // ... fill in tree from text ...
 
@@ -110,7 +110,7 @@ second is rejected:
 
 ```nul
 fn analyze(long: Arena, short: Arena, input: str) *Report {
-    var r = long.create(Report)
+    var r = long.create[Report]()
     r.lines = 0
     return r
 }
@@ -137,7 +137,7 @@ like, because a pointer carries the region it came from and a `*var` one says so
 the signature:
 
 ```nul
-fn record(out: *var List(Entry), arena: Arena, e: Entry)
+fn record(out: *var List[Entry], arena: Arena, e: Entry)
 ```
 
 Only allocation needs an arena, and results come from exactly one of them. That single
@@ -158,8 +158,8 @@ let Node = struct {
 }
 
 fn link(arena: Arena) *Node {
-    var a = arena.create(Node)
-    var b = arena.create(Node)
+    var a = arena.create[Node]()
+    var b = arena.create[Node]()
 
     a.next = b
     b.parent = a                  // a and b point at each other, and that is fine
@@ -181,8 +181,8 @@ belonging to another, or returned to a scope that does not own the arena it live
 fn leak(arena: Arena) *Box {
     var scratch = arena.child()
 
-    var box = arena.create(Box)
-    var temp = scratch.create(i64)
+    var box = arena.create[Box]()
+    var temp = scratch.create[i64]()
 
     box.item = temp               // rejected: 'temp' dies before 'box' does
 
@@ -213,8 +213,8 @@ memory, always:
 fn stash(arena: Arena) {
     var scratch = arena.child()
 
-    var holder = scratch.create(Ref)
-    holder.target = arena.create(i64)     // fine, 'arena' outlives 'scratch'
+    var holder = scratch.create[Ref]()
+    holder.target = arena.create[i64]()   // fine, 'arena' outlives 'scratch'
 }
 ```
 
@@ -246,12 +246,12 @@ would otherwise be this model's most common annoyance. A container that keeps th
 arena it was built from does not have to be handed one again:
 
 ```nul
-var list = List(Node).init(arena, .{ cap: 8 })
+var list = List[Node].init(arena, .{ cap: 8 })
 ```
 
 ```nul
-fn push(self: *var List(Node), value: i64) *Node {
-    var n = self.arena.create(Node)
+fn push(self: *var List[Node], value: i64) *Node {
+    var n = self.arena.create[Node]()
     n.value = value
     // ... put n in the buffer ...
     return n
@@ -306,7 +306,7 @@ the compiler refuses at the copy rather than let a laundered pointer exist at al
 
 Nothing about this is special cased in the language. `Arena.copy` is an ordinary
 library declaration in `std`, and its signature is what every call is checked
-against; write the type or let the value pin it down, `arena.copy(Pair, p)` and
+against; write the type or let the value pin it down, `arena.copy[Pair](p)` and
 `arena.copy(p)` alike. The refusal is the one rule of the primitive the declaration
 is bound to, and whether a type holds a pointer is a question the compiler answers
 the way it answers any other compile time question. An `Arena` stored inside a type
@@ -318,9 +318,9 @@ To move something that does hold pointers, copy what the pointers reach and rebu
 around it:
 
 ```nul
-var q = arena.create(Pair)
+var q = arena.create[Pair]()
 
-q.left = arena.create(Inner)
+q.left = arena.create[Inner]()
 q.left.value = p.left.value
 q.count = p.count
 ```
@@ -399,7 +399,7 @@ let Entry = struct {
     count: i64
 }
 
-var list = List(Entry).init(arena, .{ cap: 2 })
+var list = List[Entry].init(arena, .{ cap: 2 })
 list.push(.{ count: 1 })
 
 var first = list.at(0)            // a pointer into the list's buffer
@@ -479,7 +479,7 @@ arena is used after the point where the arena dies. Move the reset one line too 
 and it says so:
 
 ```nul
-    var item = scratch.create(Item)
+    var item = scratch.create[Item]()
     item.weight = 42
 
     scratch.reset()
@@ -528,7 +528,7 @@ let Handle = struct {
 }
 
 fn remember(arena: Arena, position: usize) *Handle {
-    var h = arena.create(Handle)
+    var h = arena.create[Handle]()
     h.slot = position             // a plain number crosses arenas freely
     return h
 }
@@ -549,29 +549,40 @@ it contains none of its machinery. The core language inserts no code, ever.
 
 Everything above describes the finished model; the compiler arrives at it in
 stages, and a few examples use surface the grammar does not carry yet. A reader
-building against this document — human or machine — should take the boundary from
-here rather than guess.
+building against this document — human or machine — should take the boundary
+from here rather than guess.
 
-In the language today: nominal structs; pointers `*T` and `*var T` with field
-access reaching through them; functions declared in a type's namespace, called
+The language's compile time holds exactly two kinds of thing: constants and
+types. Nothing executes at compile time — no function runs, no loop spins —
+and a type is a name, never a value. That is a decision, not a gap: this model
+asks questions of types (does this one reach other memory?) and questions have
+answers without an interpreter. Generics are type parameters in brackets —
+`Box[T]`, `List[Node]` — instantiated by substitution and memoized, so
+`Box[i64]` names one type however often and wherever it is written.
+
+In the language today: nominal structs, declared at the top level and generic
+over bracketed type parameters; pointers `*T` and `*var T`, with field access
+reaching through them; functions declared in a type's namespace, called
 through a value or through the type; `use` across files with `pub`; `let` and
-`var`; `if`/`else`, `for` with and without a condition, `break`, `continue`,
-`return`; compile-time evaluation with types as values, comptime parameters, and
-functions returning types; and the whole `Arena` interface exactly as declared in
-`lib/std/mem.nul` — creation, children, `copy` with its refusal, and release by
-name.
+`var`; untyped constants that fold at 128 bits and take any type they fit;
+`if`/`else`, `for` with and without a condition, `break`, `continue`,
+`return`; and the whole `Arena` interface exactly as declared in
+`lib/std/mem.nul` — creation, children, `copy` with its refusal, and release
+by name. A call writes its type arguments, `arena.create[Node]()`, or omits
+them when a value pins them down, `arena.copy(p)`.
 
 Designed, and shown in examples above, but not yet in the grammar: struct
-literals `.{ ... }`, slices `[]T`, iteration `for x in`, error unions `!T` with
-`try`, string interpolation, pointer receivers (`self: *var List(T)`), generic
-containers such as `List`, `io`, and the pool and reference counted types. An
-example using these shows where the language is going, not where the parser is.
+literals `.{ ... }`, slices `[]T`, iteration `for x in`, error unions `!T`
+with `try`, string interpolation, pointer receivers (`self: *var List[T]`),
+and the library that needs them — `List`, `io`, the pool and reference
+counted types. An example using these shows where the language is going, not
+where the parser is.
 
 Specified here but a later stage of the compiler: the region checker — every
-"rejected" above that names a lifetime, from `box.item = temp` to the reset that
-comes one line too early. The signature-level rules are enforced today: one arena
-per function, `copy` refusing what reaches other memory, release demanding a
-name. The flow-level proofs are the checker's job.
+"rejected" above that names a lifetime, from `box.item = temp` to the reset
+that comes one line too early. The signature-level rules are enforced today:
+one arena per function, `copy` refusing what reaches other memory, release
+demanding a name. The flow-level proofs are the checker's job.
 
 The files under `test/` are the executable record of this boundary: what
 compiles, what is refused, and with exactly which words.
