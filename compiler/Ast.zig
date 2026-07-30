@@ -351,7 +351,12 @@ pub const View = union(enum) {
         else_node: Node.OptionalIndex,
     };
     /// No condition is `while { }`, which only a `break` or `return` leaves.
-    pub const While = struct { cond: Node.OptionalIndex, body: Node.Index };
+    /// `capture` names what the optional held, the same shape `if` uses.
+    pub const While = struct {
+        cond: Node.OptionalIndex,
+        capture: Node.OptionalIndex,
+        body: Node.Index,
+    };
     pub const Instance = struct { base: Node.Index, args: []const Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     /// `rhs` is a value, or the block of `a catch |err| { }`.
@@ -434,10 +439,14 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
                 .else_node = payload.optNode(),
             } };
         },
-        .while_stmt => .{ .while_stmt = .{
-            .cond = data.opt_node_and_node[0],
-            .body = data.opt_node_and_node[1],
-        } },
+        .while_stmt => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .while_stmt = .{
+                .cond = payload.optNode(),
+                .capture = payload.optNode(),
+                .body = payload.node(),
+            } };
+        },
         .break_stmt => .{ .break_stmt = main },
         .continue_stmt => .{ .continue_stmt = main },
         .return_stmt => .{ .return_stmt = data.opt_node },

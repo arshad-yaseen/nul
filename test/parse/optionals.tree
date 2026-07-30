@@ -53,3 +53,44 @@ root
       assign
         lhs: ident _
         rhs: ident nothing
+  fn_decl walk
+    param first
+      type: optional_type
+        child: pointer_type var
+          child: ident Cell
+    ret: ident i64
+    body: block
+      var_decl total var
+        init: number_literal 0
+      var_decl next var
+        init: ident first
+      while_stmt
+        cond: ident next
+        capture: capture cell
+        body: block
+          assign
+            lhs: ident total
+            rhs: binary add
+              lhs: ident total
+              rhs: field_access value
+                lhs: ident cell
+          assign
+            lhs: ident next
+            rhs: field_access next
+              lhs: ident cell
+      return_stmt
+        value: ident total
+  fn_decl guard
+    param opt
+      type: optional_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      var_decl v let
+        init: orelse_expr
+          lhs: ident opt
+          rhs: block
+            return_stmt
+              value: number_literal 0
+      return_stmt
+        value: ident v

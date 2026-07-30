@@ -19,3 +19,20 @@ fn plain(opt: ?i64) {
     let nothing: ?i64 = null
     _ = nothing
 }
+
+fn walk(first: ?*var Cell) i64 {
+    var total = 0
+    var next = first
+    while next |cell| {
+        total = total + cell.value
+        next = cell.next
+    }
+    return total
+}
+
+fn guard(opt: ?i64) i64 {
+    let v = opt orelse {
+        return 0
+    }
+    return v
+}

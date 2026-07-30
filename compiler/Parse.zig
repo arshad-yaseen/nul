@@ -428,9 +428,7 @@ fn parseRoot(self: *Parse) Allocator.Error!void {
     while (self.eof() == false) {
         const before = self.token_index;
         switch (self.current()) {
-            // doc comments stay in the token stream, where `AST.docComment`
-            // finds them above the declaration they belong to
-            .semi, .doc_comment => self.token_index = self.token_index.after(1),
+            .semi, .doc_comment, .file_doc_comment => self.token_index = self.token_index.after(1),
             else => try self.scratch.append(self.gpa, try self.parseDecl()),
         }
         self.ensureProgress(before);
@@ -539,7 +537,7 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
 
     while (self.at(.r_brace) == false and self.eof() == false) {
         const before = self.token_index;
-        if (self.at(.semi) or self.at(.doc_comment)) {
+        if (self.at(.semi) or self.at(.doc_comment) or self.at(.file_doc_comment)) {
             self.token_index = self.token_index.after(1);
         } else if (self.at(.ident)) {
             try self.scratch.append(self.gpa, try self.parseField());
@@ -714,7 +712,7 @@ fn parseBlock(self: *Parse) Allocator.Error!Node.Index {
 
     while (self.at(.r_brace) == false and self.eof() == false) {
         const before = self.token_index;
-        if (self.at(.semi) or self.at(.doc_comment)) {
+        if (self.at(.semi) or self.at(.doc_comment) or self.at(.file_doc_comment)) {
             self.token_index = self.token_index.after(1);
         } else if (self.at(.kw_else)) {
             try self.scratch.append(self.gpa, try self.parseStrayElse());
@@ -867,12 +865,20 @@ fn parseWhile(self: *Parse) Allocator.Error!Node.Index {
         .none
     else
         (try self.parseExpr()).toOptional();
+    const capture = try self.parseCapture();
     const body = try self.parseBlock();
-    return self.addNode(.{
+
+    const start = self.extraStart();
+    try self.extraOpt(cond);
+    try self.extraOpt(capture);
+    try self.extraNode(body);
+    const node = try self.addNode(.{
         .tag = .while_stmt,
         .main_token = while_token,
-        .data = .{ .opt_node_and_node = .{ cond, body } },
+        .data = .{ .extra = start },
     });
+    assert(self.nodes.items(.tag)[node.int()] == .while_stmt);
+    return node;
 }
 
 fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
@@ -969,7 +975,11 @@ fn parseExprPrec(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
         node = switch (op_tag) {
             .kw_catch => try self.parseCatchTail(node, op_token, min),
             .kw_orelse => orelse_expr: {
-                const rhs = try self.parseExprPrec(min);
+                // `a orelse { }`
+                const rhs = if (self.at(.l_brace))
+                    try self.parseBlock()
+                else
+                    try self.parseExprPrec(min);
                 break :orelse_expr try self.addPair(.orelse_expr, op_token, node, rhs);
             },
             else => try self.addPair(.binary, op_token, node, try self.parseExprPrec(min)),

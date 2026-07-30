@@ -18,6 +18,7 @@ pub const Tag = enum(u8) {
     str_escaped,
     /// `///` and the rest of its line. Belongs to the declaration below it.
     doc_comment,
+    file_doc_comment,
 
     // `lexeme` below is the one place a keyword's spelling lives
     kw_and,
@@ -78,7 +79,7 @@ pub const Tag = enum(u8) {
     pub fn lexeme(tag: Tag) ?[]const u8 {
         return switch (tag) {
             .invalid, .unterminated_str, .eof => null,
-            .ident, .number, .str, .str_escaped, .doc_comment => null,
+            .ident, .number, .str, .str_escaped, .doc_comment, .file_doc_comment => null,
 
             .kw_and => "and",
             .kw_break => "break",
@@ -248,8 +249,7 @@ const symbols: [tag_count][]const u8 = blk: {
             .number => "a number",
             .str, .str_escaped => "a string literal",
             .doc_comment => "a doc comment",
-            // nearly always an inserted newline, so naming it ';' would name
-            // something nobody typed
+            .file_doc_comment => "a file doc comment",
             .semi => "the end of the line",
             else => quoted: {
                 const text = tag.lexeme() orelse

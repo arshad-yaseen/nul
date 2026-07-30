@@ -175,7 +175,9 @@ pub fn next(tokenizer: *Tokenizer) Token {
         .comment_start => {
             assert(source[cursor] == '/');
             cursor += 1;
-            // `///` is documentation, `////` and beyond is just a comment
+            // `//!` documents the file itself, `///` the declaration below it,
+            // `////` and beyond is just a comment
+            if (source[cursor] == '!') continue :state .file_doc_comment;
             if (source[cursor] == '/') {
                 if (source[cursor + 1] == '/') continue :state .line_comment;
                 continue :state .doc_comment;
@@ -196,8 +198,12 @@ pub fn next(tokenizer: *Tokenizer) Token {
             break :state .doc_comment;
         },
 
-        // gathered into one token so a binary file is a handful of reports
-        // rather than one per byte
+        .file_doc_comment => {
+            cursor = endOfLine(source, cursor);
+            assert(cursor >= start + 3);
+            break :state .file_doc_comment;
+        },
+
         .invalid => {
             @branchHint(.cold);
             cursor += 1;
@@ -247,6 +253,7 @@ const State = enum {
     comment_start,
     line_comment,
     doc_comment,
+    file_doc_comment,
     invalid,
 };
 
@@ -336,6 +343,14 @@ test "a doc comment is its own token" {
         .doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
     });
     try expectTags("//// not doc\nfn", &.{.kw_fn});
+}
+
+test "a file doc comment is a tag of its own" {
+    try expectTags("//! about this file\nfn f() {}", &.{
+        .file_doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
+    });
+    // three kinds of comment, told apart by the character after the slashes
+    try expectTags("//! a\n/// b\n// c\nfn", &.{ .file_doc_comment, .doc_comment, .kw_fn });
 }
 
 test "blank lines and leading newlines emit nothing" {

@@ -1,0 +1,11 @@
+root
+  use_decl
+    path: field_access Arena
+      lhs: field_access mem
+        lhs: ident std
+  fn_decl named pub
+    doc /// This one documents the declaration below it.
+    ret: ident i64
+    body: block
+      return_stmt
+        value: number_literal 1

@@ -100,6 +100,7 @@ fn node(
         .while_stmt => |it| {
             try writer.writeByte('\n');
             if (it.cond.unwrap()) |cond| try node(tree, writer, cond, below, "cond");
+            if (it.capture.unwrap()) |capture| try node(tree, writer, capture, below, "capture");
             try node(tree, writer, it.body, below, "body");
         },
         .break_stmt, .continue_stmt, .null_literal, .err => {
