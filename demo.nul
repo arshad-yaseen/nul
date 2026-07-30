@@ -1,23 +1,36 @@
 use std.mem.Arena
 
-pub struct Box[T] {
-    item: T
+struct Order {
+    name: str
+    grams: u32
+
+    fn postage(self: *Order) u32 {
+        return self.grams / 500 + 3
+    }
 }
 
-pub struct Pair[K, V] {
-    key: K
-    value: V
+fn place(arena: Arena, name: str, grams: u32) !*var Order {
+    if grams > 30000 {
+        return error.TooHeavy
+    }
+    var order = arena.create[Order]()
+    order.name = name
+    order.grams = grams
+    return order
 }
 
-pub type IntBox = Box[i64]
-pub type Nested = Box[Box[i64]]
+fn quote(arena: Arena, grams: u32) u32 {
+    var scratch = arena.child()
 
-pub fn make[T](arena: Arena, v: T) *var Box[T] {
-    let b = arena.create[Box[T]]()
-    return b
+    let draft = place(scratch, "draft", grams) catch {
+        return 0
+    }
+    return draft.postage()
 }
 
-fn use_them(arena: Arena) {
-    _ = make[i64](arena, 1)
-    _ = arena.create[Pair[i64, str]]()
+fn main() !u32 {
+    var arena = Arena.init()
+
+    let order = try place(arena, "keyboard", 900)
+    return order.postage() + quote(arena, 120)
 }
