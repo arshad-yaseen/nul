@@ -1,0 +1,977 @@
+fn Config.add_route(self: *var Config, path: str, port: u16, weight: u32)
+b0:
+  %0 = param self : *var Config
+  %1 = param path : str
+  %2 = param port : u16
+  %3 = param weight : u32
+  %4 = scope_begin
+  %5 = field_ptr %0, .arena : *var Arena
+  %6 = load %5 : Arena
+  %7 = arena_create %6 : *var Route
+  %8 = local node : *var *var Route
+  %9 = store %8, %7
+  %10 = load %8 : *var Route
+  %11 = field_ptr %10, .path : *var str
+  %12 = store %11, %1
+  %13 = load %8 : *var Route
+  %14 = field_ptr %13, .port : *var u16
+  %15 = store %14, %2
+  %16 = load %8 : *var Route
+  %17 = field_ptr %16, .weight : *var u32
+  %18 = store %17, %3
+  %19 = load %8 : *var Route
+  %20 = field_ptr %19, .next : *var ?*var Route
+  %21 = field_ptr %0, .routes : *var ?*var Route
+  %22 = load %21 : ?*var Route
+  %23 = store %20, %22
+  %24 = field_ptr %0, .routes : *var ?*var Route
+  %25 = load %8 : *var Route
+  %26 = wrap_optional %25 : ?*var Route
+  %27 = store %24, %26
+  %28 = field_ptr %0, .route_count : *var usize
+  %29 = field_ptr %0, .route_count : *var usize
+  %30 = load %29 : usize
+  %31 = add %30, 1:usize : usize
+  %32 = store %28, %31
+  %33 = scope_end %4
+  return
+
+fn Config.find(self: *Config, path: str) ?*var Route
+b0:
+  %0 = param self : *Config
+  %1 = param path : str
+  %2 = scope_begin
+  %3 = field_ptr %0, .routes : *?*var Route
+  %4 = load %3 : ?*var Route
+  %5 = local cursor : *var ?*var Route
+  %6 = store %5, %4
+  jump b1
+b1:
+  %7 = load %5 : ?*var Route
+  %8 = has_value %7 : bool
+  branch %8, b2, b3
+b2:
+  %9 = unwrap_value %7 : *var Route
+  %10 = scope_begin
+  %11 = field_ptr %9, .path : *var str
+  %12 = load %11 : str
+  %13 = cmp_eq %12, %1 : bool
+  branch %13, b4, b5
+b3:
+  %14 = scope_end %2
+  return null
+b4:
+  %15 = scope_begin
+  %16 = wrap_optional %9 : ?*var Route
+  %17 = scope_end %15
+  %18 = scope_end %10
+  %19 = scope_end %2
+  return %16
+b5:
+  jump b6
+b6:
+  %20 = field_ptr %9, .next : *var ?*var Route
+  %21 = load %20 : ?*var Route
+  %22 = store %5, %21
+  %23 = scope_end %10
+  jump b1
+
+fn Config.at(self: *Config, index: usize) ?*var Route
+b0:
+  %0 = param self : *Config
+  %1 = param index : usize
+  %2 = scope_begin
+  %3 = field_ptr %0, .routes : *?*var Route
+  %4 = load %3 : ?*var Route
+  %5 = local cursor : *var ?*var Route
+  %6 = store %5, %4
+  %7 = local seen : *var usize
+  %8 = store %7, 0:usize
+  jump b1
+b1:
+  %9 = load %5 : ?*var Route
+  %10 = has_value %9 : bool
+  branch %10, b2, b3
+b2:
+  %11 = unwrap_value %9 : *var Route
+  %12 = scope_begin
+  %13 = load %7 : usize
+  %14 = cmp_eq %13, %1 : bool
+  branch %14, b4, b5
+b3:
+  %15 = scope_end %2
+  return null
+b4:
+  %16 = scope_begin
+  %17 = wrap_optional %11 : ?*var Route
+  %18 = scope_end %16
+  %19 = scope_end %12
+  %20 = scope_end %2
+  return %17
+b5:
+  jump b6
+b6:
+  %21 = load %7 : usize
+  %22 = add %21, 1:usize : usize
+  %23 = store %7, %22
+  %24 = field_ptr %11, .next : *var ?*var Route
+  %25 = load %24 : ?*var Route
+  %26 = store %5, %25
+  %27 = scope_end %12
+  jump b1
+
+fn Config.heaviest(self: *Config) ?*var Route
+b0:
+  %0 = param self : *Config
+  %1 = scope_begin
+  %2 = field_ptr %0, .routes : *?*var Route
+  %3 = load %2 : ?*var Route
+  %4 = local cursor : *var ?*var Route
+  %5 = store %4, %3
+  %6 = local best : *var ?*var Route
+  %7 = store %6, null
+  %8 = local best_weight : *var u32
+  %9 = store %8, 0:u32
+  jump b1
+b1:
+  %10 = load %4 : ?*var Route
+  %11 = has_value %10 : bool
+  branch %11, b2, b3
+b2:
+  %12 = unwrap_value %10 : *var Route
+  %13 = scope_begin
+  %14 = field_ptr %12, .weight : *var u32
+  %15 = load %14 : u32
+  %16 = load %8 : u32
+  %17 = cmp_gt %15, %16 : bool
+  branch %17, b4, b5
+b3:
+  %18 = load %6 : ?*var Route
+  %19 = scope_end %1
+  return %18
+b4:
+  %20 = scope_begin
+  %21 = field_ptr %12, .weight : *var u32
+  %22 = load %21 : u32
+  %23 = store %8, %22
+  %24 = wrap_optional %12 : ?*var Route
+  %25 = store %6, %24
+  %26 = scope_end %20
+  jump b6
+b5:
+  jump b6
+b6:
+  %27 = field_ptr %12, .next : *var ?*var Route
+  %28 = load %27 : ?*var Route
+  %29 = store %4, %28
+  %30 = scope_end %13
+  jump b1
+
+fn Problems.init(arena: Arena) Problems
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = struct_init .{ arena: %0, first: null, count: 0:usize, penalty_total: 0:u32 } : Problems
+  %3 = scope_end %1
+  return %2
+
+fn Problems.record(self: *var Problems, code: u32, penalty: u32)
+b0:
+  %0 = param self : *var Problems
+  %1 = param code : u32
+  %2 = param penalty : u32
+  %3 = scope_begin
+  %4 = field_ptr %0, .arena : *var Arena
+  %5 = load %4 : Arena
+  %6 = arena_create %5 : *var Problem
+  %7 = local problem : *var *var Problem
+  %8 = store %7, %6
+  %9 = load %7 : *var Problem
+  %10 = field_ptr %9, .code : *var u32
+  %11 = store %10, %1
+  %12 = load %7 : *var Problem
+  %13 = field_ptr %12, .penalty : *var u32
+  %14 = store %13, %2
+  %15 = load %7 : *var Problem
+  %16 = field_ptr %15, .next : *var ?*var Problem
+  %17 = field_ptr %0, .first : *var ?*var Problem
+  %18 = load %17 : ?*var Problem
+  %19 = store %16, %18
+  %20 = field_ptr %0, .first : *var ?*var Problem
+  %21 = load %7 : *var Problem
+  %22 = wrap_optional %21 : ?*var Problem
+  %23 = store %20, %22
+  %24 = field_ptr %0, .count : *var usize
+  %25 = field_ptr %0, .count : *var usize
+  %26 = load %25 : usize
+  %27 = add %26, 1:usize : usize
+  %28 = store %24, %27
+  %29 = field_ptr %0, .penalty_total : *var u32
+  %30 = field_ptr %0, .penalty_total : *var u32
+  %31 = load %30 : u32
+  %32 = add %31, %2 : u32
+  %33 = store %29, %32
+  %34 = scope_end %3
+  return
+
+fn Problems.worst(self: *Problems) u32
+b0:
+  %0 = param self : *Problems
+  %1 = scope_begin
+  %2 = field_ptr %0, .first : *?*var Problem
+  %3 = load %2 : ?*var Problem
+  %4 = local cursor : *var ?*var Problem
+  %5 = store %4, %3
+  %6 = local top : *var u32
+  %7 = store %6, 0:u32
+  jump b1
+b1:
+  %8 = load %4 : ?*var Problem
+  %9 = has_value %8 : bool
+  branch %9, b2, b3
+b2:
+  %10 = unwrap_value %8 : *var Problem
+  %11 = scope_begin
+  %12 = field_ptr %10, .penalty : *var u32
+  %13 = load %12 : u32
+  %14 = load %6 : u32
+  %15 = cmp_gt %13, %14 : bool
+  branch %15, b4, b5
+b3:
+  %16 = load %6 : u32
+  %17 = scope_end %1
+  return %16
+b4:
+  %18 = scope_begin
+  %19 = field_ptr %10, .penalty : *var u32
+  %20 = load %19 : u32
+  %21 = store %6, %20
+  %22 = scope_end %18
+  jump b6
+b5:
+  jump b6
+b6:
+  %23 = field_ptr %10, .next : *var ?*var Problem
+  %24 = load %23 : ?*var Problem
+  %25 = store %4, %24
+  %26 = scope_end %11
+  jump b1
+
+fn default_timeouts() Timeouts
+b0:
+  %0 = scope_begin
+  %1 = struct_init .{ connect_ms: 250:u32, read_ms: 1000:u32, write_ms: 1000:u32 } : Timeouts
+  %2 = scope_end %0
+  return %1
+
+fn default_limits() Limits
+b0:
+  %0 = scope_begin
+  %1 = struct_init .{ requests: 1000:u32, request_bytes: 8388608:u32, header_bytes: 65536:u32 } : Limits
+  %2 = scope_end %0
+  return %1
+
+fn default_retry() Retry
+b0:
+  %0 = scope_begin
+  %1 = struct_init .{ attempts: 3:u32, delay_ms: 100:u32, exponential: true } : Retry
+  %2 = scope_end %0
+  return %1
+
+fn build_default(arena: Arena) *var Config
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = arena_create %0 : *var Config
+  %3 = local config : *var *var Config
+  %4 = store %3, %2
+  %5 = load %3 : *var Config
+  %6 = field_ptr %5, .arena : *var Arena
+  %7 = store %6, %0
+  %8 = load %3 : *var Config
+  %9 = field_ptr %8, .name : *var str
+  %10 = store %9, "gateway"
+  %11 = load %3 : *var Config
+  %12 = field_ptr %11, .server : *var Server
+  %13 = struct_init .{ host: "0.0.0.0", port: 8080:u16, backlog: 128:u32, reuse_address: true } : Server
+  %14 = store %12, %13
+  %15 = load %3 : *var Config
+  %16 = field_ptr %15, .timeouts : *var Timeouts
+  %17 = call default_timeouts() : Timeouts
+  %18 = store %16, %17
+  %19 = load %3 : *var Config
+  %20 = field_ptr %19, .limits : *var Limits
+  %21 = call default_limits() : Limits
+  %22 = store %20, %21
+  %23 = load %3 : *var Config
+  %24 = field_ptr %23, .retry : *var Retry
+  %25 = call default_retry() : Retry
+  %26 = store %24, %25
+  %27 = load %3 : *var Config
+  %28 = field_ptr %27, .routes : *var ?*var Route
+  %29 = store %28, null
+  %30 = load %3 : *var Config
+  %31 = field_ptr %30, .route_count : *var usize
+  %32 = store %31, 0:usize
+  %33 = load %3 : *var Config
+  %34 = scope_end %1
+  return %33
+
+fn build_gateway(arena: Arena) *var Config
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = call build_default(%0) : *var Config
+  %3 = local config : *var *var Config
+  %4 = store %3, %2
+  %5 = load %3 : *var Config
+  %6 = call Config.add_route(%5, "/health", 8081:u16, 1:u32)
+  %7 = load %3 : *var Config
+  %8 = call Config.add_route(%7, "/metrics", 8081:u16, 1:u32)
+  %9 = load %3 : *var Config
+  %10 = call Config.add_route(%9, "/api", 9000:u16, 10:u32)
+  %11 = load %3 : *var Config
+  %12 = scope_end %1
+  return %11
+
+fn slow_timeouts(config: *var Config, template: Timeouts)
+b0:
+  %0 = param config : *var Config
+  %1 = param template : Timeouts
+  %2 = scope_begin
+  %3 = field_ptr %0, .arena : *var Arena
+  %4 = load %3 : Arena
+  %5 = arena_copy %4, %1 : Timeouts
+  %6 = local stretched : *var Timeouts
+  %7 = store %6, %5
+  %8 = field_ptr %6, .read_ms : *var u32
+  %9 = load %6 : Timeouts
+  %10 = field_val %9, .read_ms : u32
+  %11 = mul %10, 4:u32 : u32
+  %12 = store %8, %11
+  %13 = field_ptr %6, .write_ms : *var u32
+  %14 = load %6 : Timeouts
+  %15 = field_val %14, .write_ms : u32
+  %16 = mul %15, 4:u32 : u32
+  %17 = store %13, %16
+  %18 = field_ptr %0, .timeouts : *var Timeouts
+  %19 = load %6 : Timeouts
+  %20 = store %18, %19
+  %21 = scope_end %2
+  return
+
+fn checked_port(port: u16) !u16
+b0:
+  %0 = param port : u16
+  %1 = scope_begin
+  %2 = cmp_lt %0, 1024:u16 : bool
+  branch %2, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = wrap_err error.PortReserved : !u16
+  %5 = scope_end %3
+  %6 = scope_end %1
+  return %4
+b2:
+  jump b3
+b3:
+  %7 = wrap_ok %0 : !u16
+  %8 = scope_end %1
+  return %7
+
+fn checked_name(name: str) !str
+b0:
+  %0 = param name : str
+  %1 = scope_begin
+  %2 = str_len %0 : usize
+  %3 = cmp_eq %2, 0:usize : bool
+  branch %3, b1, b2
+b1:
+  %4 = scope_begin
+  %5 = wrap_err error.NameEmpty : !str
+  %6 = scope_end %4
+  %7 = scope_end %1
+  return %5
+b2:
+  jump b3
+b3:
+  %8 = str_len %0 : usize
+  %9 = cmp_gt %8, 48:usize : bool
+  branch %9, b4, b5
+b4:
+  %10 = scope_begin
+  %11 = wrap_err error.NameTooLong : !str
+  %12 = scope_end %10
+  %13 = scope_end %1
+  return %11
+b5:
+  jump b6
+b6:
+  %14 = wrap_ok %0 : !str
+  %15 = scope_end %1
+  return %14
+
+fn penalty_of(err_code: u32) u32
+b0:
+  %0 = param err_code : u32
+  %1 = scope_begin
+  %2 = cmp_eq %0, 1:u32 : bool
+  branch %2, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = scope_end %3
+  %5 = scope_end %1
+  return 25:u32
+b2:
+  %6 = cmp_eq %0, 2:u32 : bool
+  branch %6, b3, b4
+b3:
+  %7 = scope_begin
+  %8 = scope_end %7
+  %9 = scope_end %1
+  return 10:u32
+b4:
+  %10 = scope_begin
+  %11 = scope_end %10
+  %12 = scope_end %1
+  return 50:u32
+
+fn validate(config: *Config, problems: *var Problems)
+b0:
+  %0 = param config : *Config
+  %1 = param problems : *var Problems
+  %2 = scope_begin
+  %3 = field_ptr %0, .name : *str
+  %4 = load %3 : str
+  %5 = call checked_name(%4) : !str
+  %6 = is_error %5 : bool
+  branch %6, b2, b1
+b1:
+  jump b3
+b2:
+  %7 = scope_begin
+  %8 = call penalty_of(1:u32) : u32
+  %9 = call Problems.record(%1, 1:u32, %8)
+  %10 = scope_end %7
+  jump b3
+b3:
+  %11 = field_ptr %0, .server : *Server
+  %12 = load %11 : Server
+  %13 = field_val %12, .port : u16
+  %14 = call checked_port(%13) : !u16
+  %15 = is_error %14 : bool
+  branch %15, b5, b4
+b4:
+  jump b6
+b5:
+  %16 = scope_begin
+  %17 = call penalty_of(2:u32) : u32
+  %18 = call Problems.record(%1, 2:u32, %17)
+  %19 = scope_end %16
+  jump b6
+b6:
+  %20 = field_ptr %0, .server : *Server
+  %21 = load %20 : Server
+  %22 = field_val %21, .backlog : u32
+  %23 = cmp_eq %22, 0:u32 : bool
+  branch %23, b7, b8
+b7:
+  %24 = scope_begin
+  %25 = call penalty_of(3:u32) : u32
+  %26 = call Problems.record(%1, 3:u32, %25)
+  %27 = scope_end %24
+  jump b9
+b8:
+  jump b9
+b9:
+  %28 = field_ptr %0, .limits : *Limits
+  %29 = load %28 : Limits
+  %30 = field_val %29, .request_bytes : u32
+  %31 = cmp_gt %30, 8388608:u32 : bool
+  branch %31, b10, b11
+b10:
+  %32 = scope_begin
+  %33 = call penalty_of(4:u32) : u32
+  %34 = call Problems.record(%1, 4:u32, %33)
+  %35 = scope_end %32
+  jump b12
+b11:
+  jump b12
+b12:
+  %36 = field_ptr %0, .limits : *Limits
+  %37 = load %36 : Limits
+  %38 = field_val %37, .header_bytes : u32
+  %39 = field_ptr %0, .limits : *Limits
+  %40 = load %39 : Limits
+  %41 = field_val %40, .request_bytes : u32
+  %42 = cmp_gt %38, %41 : bool
+  branch %42, b13, b14
+b13:
+  %43 = scope_begin
+  %44 = call penalty_of(5:u32) : u32
+  %45 = call Problems.record(%1, 5:u32, %44)
+  %46 = scope_end %43
+  jump b15
+b14:
+  jump b15
+b15:
+  %47 = field_ptr %0, .retry : *Retry
+  %48 = load %47 : Retry
+  %49 = field_val %48, .attempts : u32
+  %50 = cmp_gt %49, 6:u32 : bool
+  branch %50, b16, b17
+b16:
+  %51 = scope_begin
+  %52 = call penalty_of(6:u32) : u32
+  %53 = call Problems.record(%1, 6:u32, %52)
+  %54 = scope_end %51
+  jump b18
+b17:
+  jump b18
+b18:
+  %55 = field_ptr %0, .retry : *Retry
+  %56 = load %55 : Retry
+  %57 = field_val %56, .exponential : bool
+  %58 = local : *var bool
+  %59 = store %58, %57
+  branch %57, b22, b23
+b19:
+  %60 = scope_begin
+  %61 = call penalty_of(7:u32) : u32
+  %62 = call Problems.record(%1, 7:u32, %61)
+  %63 = scope_end %60
+  jump b21
+b20:
+  jump b21
+b21:
+  %64 = field_ptr %0, .route_count : *usize
+  %65 = load %64 : usize
+  %66 = cmp_eq %65, 0:usize : bool
+  branch %66, b24, b25
+b22:
+  %67 = field_ptr %0, .retry : *Retry
+  %68 = load %67 : Retry
+  %69 = field_val %68, .delay_ms : u32
+  %70 = cmp_eq %69, 0:u32 : bool
+  %71 = store %58, %70
+  jump b23
+b23:
+  %72 = load %58 : bool
+  branch %72, b19, b20
+b24:
+  %73 = scope_begin
+  %74 = call penalty_of(8:u32) : u32
+  %75 = call Problems.record(%1, 8:u32, %74)
+  %76 = scope_end %73
+  jump b26
+b25:
+  jump b26
+b26:
+  %77 = field_ptr %0, .route_count : *usize
+  %78 = load %77 : usize
+  %79 = cmp_gt %78, 64:usize : bool
+  branch %79, b27, b28
+b27:
+  %80 = scope_begin
+  %81 = call penalty_of(9:u32) : u32
+  %82 = call Problems.record(%1, 9:u32, %81)
+  %83 = scope_end %80
+  jump b29
+b28:
+  jump b29
+b29:
+  %84 = field_ptr %0, .routes : *?*var Route
+  %85 = load %84 : ?*var Route
+  %86 = local cursor : *var ?*var Route
+  %87 = store %86, %85
+  jump b30
+b30:
+  %88 = load %86 : ?*var Route
+  %89 = has_value %88 : bool
+  branch %89, b31, b32
+b31:
+  %90 = unwrap_value %88 : *var Route
+  %91 = scope_begin
+  %92 = field_ptr %90, .port : *var u16
+  %93 = load %92 : u16
+  %94 = call checked_port(%93) : !u16
+  %95 = is_error %94 : bool
+  branch %95, b34, b33
+b32:
+  %96 = scope_end %2
+  return
+b33:
+  jump b38
+b34:
+  %97 = unwrap_err %94 : an error
+  %98 = scope_begin
+  %99 = cmp_eq %97, error.PortReserved : bool
+  branch %99, b35, b36
+b35:
+  %100 = scope_begin
+  %101 = call penalty_of(10:u32) : u32
+  %102 = call Problems.record(%1, 10:u32, %101)
+  %103 = scope_end %100
+  jump b37
+b36:
+  jump b37
+b37:
+  %104 = scope_end %98
+  jump b38
+b38:
+  %105 = field_ptr %90, .path : *var str
+  %106 = load %105 : str
+  %107 = str_len %106 : usize
+  %108 = cmp_eq %107, 0:usize : bool
+  branch %108, b39, b40
+b39:
+  %109 = scope_begin
+  %110 = call penalty_of(11:u32) : u32
+  %111 = call Problems.record(%1, 11:u32, %110)
+  %112 = scope_end %109
+  jump b41
+b40:
+  jump b41
+b41:
+  %113 = field_ptr %90, .weight : *var u32
+  %114 = load %113 : u32
+  %115 = cmp_eq %114, 0:u32 : bool
+  branch %115, b42, b43
+b42:
+  %116 = scope_begin
+  %117 = call penalty_of(12:u32) : u32
+  %118 = call Problems.record(%1, 12:u32, %117)
+  %119 = scope_end %116
+  jump b44
+b43:
+  jump b44
+b44:
+  %120 = field_ptr %90, .next : *var ?*var Route
+  %121 = load %120 : ?*var Route
+  %122 = store %86, %121
+  %123 = scope_end %91
+  jump b30
+
+fn deployable(config: *Config, arena: Arena) bool
+b0:
+  %0 = param config : *Config
+  %1 = param arena : Arena
+  %2 = scope_begin
+  %3 = arena_child %1 : Arena
+  %4 = call Problems.init(%3) : Problems
+  %5 = local problems : *var Problems
+  %6 = store %5, %4
+  %7 = call validate(%0, %5)
+  %8 = load %5 : Problems
+  %9 = field_val %8, .count : usize
+  %10 = cmp_eq %9, 0:usize : bool
+  branch %10, b1, b2
+b1:
+  %11 = scope_begin
+  %12 = scope_end %11
+  %13 = scope_end %2
+  return true
+b2:
+  jump b3
+b3:
+  %14 = call Problems.worst(%5) : u32
+  %15 = cmp_lt %14, 25:u32 : bool
+  %16 = scope_end %2
+  return %15
+
+fn weight_behind(config: *Config, port: u16, arena: Arena) u32
+b0:
+  %0 = param config : *Config
+  %1 = param port : u16
+  %2 = param arena : Arena
+  %3 = scope_begin
+  %4 = arena_child %2 : Arena
+  %5 = local scratch : *var Arena
+  %6 = store %5, %4
+  %7 = local total : *var u32
+  %8 = store %7, 0:u32
+  %9 = field_ptr %0, .routes : *?*var Route
+  %10 = load %9 : ?*var Route
+  %11 = local cursor : *var ?*var Route
+  %12 = store %11, %10
+  jump b1
+b1:
+  %13 = load %11 : ?*var Route
+  %14 = has_value %13 : bool
+  branch %14, b2, b3
+b2:
+  %15 = unwrap_value %13 : *var Route
+  %16 = scope_begin
+  %17 = load %5 : Arena
+  %18 = arena_create %17 : *var Route
+  %19 = local probe : *var *var Route
+  %20 = store %19, %18
+  %21 = load %19 : *var Route
+  %22 = field_ptr %21, .path : *var str
+  %23 = field_ptr %15, .path : *var str
+  %24 = load %23 : str
+  %25 = store %22, %24
+  %26 = load %19 : *var Route
+  %27 = field_ptr %26, .port : *var u16
+  %28 = field_ptr %15, .port : *var u16
+  %29 = load %28 : u16
+  %30 = store %27, %29
+  %31 = load %19 : *var Route
+  %32 = field_ptr %31, .weight : *var u32
+  %33 = field_ptr %15, .weight : *var u32
+  %34 = load %33 : u32
+  %35 = store %32, %34
+  %36 = load %19 : *var Route
+  %37 = field_ptr %36, .next : *var ?*var Route
+  %38 = store %37, null
+  %39 = load %19 : *var Route
+  %40 = field_ptr %39, .port : *var u16
+  %41 = load %40 : u16
+  %42 = cmp_eq %41, %1 : bool
+  branch %42, b4, b5
+b3:
+  %43 = load %7 : u32
+  %44 = scope_end %3
+  return %43
+b4:
+  %45 = scope_begin
+  %46 = load %7 : u32
+  %47 = load %19 : *var Route
+  %48 = field_ptr %47, .weight : *var u32
+  %49 = load %48 : u32
+  %50 = add %46, %49 : u32
+  %51 = store %7, %50
+  %52 = scope_end %45
+  jump b6
+b5:
+  jump b6
+b6:
+  %53 = load %5 : Arena
+  %54 = arena_reset %53
+  %55 = field_ptr %15, .next : *var ?*var Route
+  %56 = load %55 : ?*var Route
+  %57 = store %11, %56
+  %58 = scope_end %16
+  jump b1
+
+fn gateway_route_count(arena: Arena) usize
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = arena_child %0 : Arena
+  %3 = local work : *var Arena
+  %4 = store %3, %2
+  %5 = load %3 : Arena
+  %6 = call build_gateway(%5) : *var Config
+  %7 = local config : *var *var Config
+  %8 = store %7, %6
+  %9 = load %7 : *var Config
+  %10 = field_ptr %9, .route_count : *var usize
+  %11 = load %10 : usize
+  %12 = load %3 : Arena
+  %13 = arena_destroy %12
+  %14 = scope_end %1
+  return %11
+
+fn busiest_port(config: *Config) u16
+b0:
+  %0 = param config : *Config
+  %1 = scope_begin
+  %2 = call Config.heaviest(%0) : ?*var Route
+  %3 = has_value %2 : bool
+  branch %3, b1, b2
+b1:
+  %4 = unwrap_value %2 : *var Route
+  %5 = field_ptr %4, .port : *var u16
+  %6 = load %5 : u16
+  %7 = scope_end %1
+  return %6
+b2:
+  %8 = scope_begin
+  %9 = field_ptr %0, .server : *Server
+  %10 = load %9 : Server
+  %11 = field_val %10, .port : u16
+  %12 = scope_end %8
+  %13 = scope_end %1
+  return %11
+
+fn printable_name(config: *Config) str
+b0:
+  %0 = param config : *Config
+  %1 = scope_begin
+  %2 = field_ptr %0, .name : *str
+  %3 = load %2 : str
+  %4 = call checked_name(%3) : !str
+  %5 = is_error %4 : bool
+  %6 = local : *var str
+  branch %5, b2, b1
+b1:
+  %7 = unwrap_ok %4 : str
+  %8 = store %6, %7
+  jump b3
+b2:
+  %9 = store %6, "unnamed"
+  jump b3
+b3:
+  %10 = load %6 : str
+  %11 = scope_end %1
+  return %10
+
+fn route_pressure(config: *Config) usize
+b0:
+  %0 = param config : *Config
+  %1 = scope_begin
+  %2 = field_ptr %0, .route_count : *usize
+  %3 = load %2 : usize
+  %4 = mul %3, 100:usize : usize
+  %5 = div %4, 64:usize : usize
+  %6 = scope_end %1
+  return %5
+
+fn Box[u32].of(arena: Arena, value: u32) *var Box[u32]
+b0:
+  %0 = param arena : Arena
+  %1 = param value : u32
+  %2 = scope_begin
+  %3 = arena_create %0 : *var Box[u32]
+  %4 = local box : *var *var Box[u32]
+  %5 = store %4, %3
+  %6 = load %4 : *var Box[u32]
+  %7 = field_ptr %6, .value : *var u32
+  %8 = store %7, %1
+  %9 = load %4 : *var Box[u32]
+  %10 = scope_end %2
+  return %9
+
+fn boxed[u32](arena: Arena, value: u32) *var Box[u32]
+b0:
+  %0 = param arena : Arena
+  %1 = param value : u32
+  %2 = scope_begin
+  %3 = call Box[u32].of(%0, %1) : *var Box[u32]
+  %4 = scope_end %2
+  return %3
+
+fn Box[u32].get(self: *Box[u32]) u32
+b0:
+  %0 = param self : *Box[u32]
+  %1 = scope_begin
+  %2 = field_ptr %0, .value : *u32
+  %3 = load %2 : u32
+  %4 = scope_end %1
+  return %3
+
+fn Box[u32].set(self: *var Box[u32], value: u32)
+b0:
+  %0 = param self : *var Box[u32]
+  %1 = param value : u32
+  %2 = scope_begin
+  %3 = field_ptr %0, .value : *var u32
+  %4 = store %3, %1
+  %5 = scope_end %2
+  return
+
+fn audit(arena: Arena) u32
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = call build_gateway(%0) : *var Config
+  %3 = local config : *var *var Config
+  %4 = store %3, %2
+  %5 = load %3 : *var Config
+  %6 = call Config.add_route(%5, "/admin", 800:u16, 2:u32)
+  %7 = load %3 : *var Config
+  %8 = call default_timeouts() : Timeouts
+  %9 = call slow_timeouts(%7, %8)
+  %10 = arena_child %0 : Arena
+  %11 = call Problems.init(%10) : Problems
+  %12 = local problems : *var Problems
+  %13 = store %12, %11
+  %14 = load %3 : *var Config
+  %15 = call validate(%14, %12)
+  %16 = load %12 : Problems
+  %17 = field_val %16, .penalty_total : u32
+  %18 = local score : *var u32
+  %19 = store %18, %17
+  %20 = load %3 : *var Config
+  %21 = call deployable(%20, %0) : bool
+  %22 = cmp_eq %21, false : bool
+  branch %22, b1, b2
+b1:
+  %23 = scope_begin
+  %24 = load %18 : u32
+  %25 = add %24, 100:u32 : u32
+  %26 = store %18, %25
+  %27 = scope_end %23
+  jump b3
+b2:
+  jump b3
+b3:
+  %28 = load %3 : *var Config
+  %29 = call Config.find(%28, "/admin") : ?*var Route
+  %30 = has_value %29 : bool
+  branch %30, b4, b5
+b4:
+  %31 = unwrap_value %29 : *var Route
+  %32 = field_ptr %31, .port : *var u16
+  %33 = load %32 : u16
+  %34 = cmp_lt %33, 1024:u16 : bool
+  branch %34, b6, b7
+b5:
+  %35 = scope_begin
+  %36 = load %18 : u32
+  %37 = add %36, 1000:u32 : u32
+  %38 = scope_end %35
+  %39 = scope_end %1
+  return %37
+b6:
+  %40 = scope_begin
+  %41 = load %18 : u32
+  %42 = add %41, 5:u32 : u32
+  %43 = store %18, %42
+  %44 = scope_end %40
+  jump b8
+b7:
+  jump b8
+b8:
+  %45 = load %3 : *var Config
+  %46 = call Config.at(%45, 0:usize) : ?*var Route
+  %47 = load %3 : *var Config
+  %48 = call weight_behind(%47, 8081:u16, %0) : u32
+  %49 = call gateway_route_count(%0) : usize
+  %50 = load %3 : *var Config
+  %51 = call busiest_port(%50) : u16
+  %52 = load %3 : *var Config
+  %53 = call printable_name(%52) : str
+  %54 = load %3 : *var Config
+  %55 = call route_pressure(%54) : usize
+  %56 = load %18 : u32
+  %57 = call boxed[u32](%0, %56) : *var Box[u32]
+  %58 = call Box[u32].get(%57) : u32
+  %59 = add %58, 1:u32 : u32
+  %60 = call Box[u32].set(%57, %59)
+  %61 = call Box[u32].get(%57) : u32
+  %62 = sub %61, 1:u32 : u32
+  %63 = scope_end %1
+  return %62
+
+fn start() u32
+b0:
+  %0 = scope_begin
+  %1 = arena_init : Arena
+  %2 = local arena : *var Arena
+  %3 = store %2, %1
+  %4 = load %2 : Arena
+  %5 = call audit(%4) : u32
+  %6 = cmp_gt %5, 255:u32 : bool
+  branch %6, b1, b2
+b1:
+  %7 = scope_begin
+  %8 = scope_end %7
+  %9 = scope_end %0
+  return 255:u32
+b2:
+  jump b3
+b3:
+  %10 = scope_end %0
+  return %5

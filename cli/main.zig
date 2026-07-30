@@ -29,16 +29,18 @@ const usage =
     \\usage: nul <command> <file>
     \\
     \\commands:
-    \\  tree <file>    print the syntax tree
     \\  check <file>   report what is wrong with the file
+    \\  tree <file>    print the syntax tree
+    \\  ir <file>      print the typed IR
     \\
     \\options:
+    \\  --std <dir>           where the standard library lives
     \\  --color auto|on|off   colour the output (default: auto)
     \\  --version             print the version
     \\
 ;
 
-const Command = enum { tree, check };
+const Command = enum { tree, check, ir };
 
 const ColorChoice = enum { auto, on, off };
 
@@ -47,6 +49,7 @@ const Request = struct {
     command: Command,
     path: []const u8,
     color: ColorChoice,
+    std_dir: ?[]const u8,
 };
 
 fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *Writer) !u8 {
@@ -73,26 +76,79 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
         },
         error.OutOfMemory => return err,
     };
-    defer source.deinit(init.gpa);
 
+    if (request.command == .tree) {
+        defer source.deinit(init.gpa);
+        return runTree(init, &source, out, log, request.color);
+    }
+
+    var comp: compiler.Compilation = undefined;
+    try comp.init(init.gpa, init.io, .{
+        .root_path = request.path,
+        .std_dir = request.std_dir orelse try findStd(init),
+    });
+    defer comp.deinit();
+
+    // the compilation owns the root source from here
+    try comp.compile(source);
+
+    if (comp.diagnostics.items.len > 0) {
+        const color = try resolve(request.color, init.io, std.Io.File.stderr());
+        try comp.renderAll(log, color);
+        return 1;
+    }
+
+    switch (request.command) {
+        .check => {},
+        .ir => try comp.dumpIR(out),
+        .tree => unreachable,
+    }
+    return 0;
+}
+
+fn runTree(
+    init: std.process.Init,
+    source: *compiler.Source,
+    out: *Writer,
+    log: *Writer,
+    color_choice: ColorChoice,
+) !u8 {
     var tree = try compiler.AST.parse(init.gpa, source.bytes);
     defer tree.deinit(init.gpa);
     assert(tree.nodes.len > 0);
 
     if (tree.errors.len > 0) {
-        const color = try resolve(request.color, init.io, std.Io.File.stderr());
+        const color = try resolve(color_choice, init.io, std.Io.File.stderr());
         for (tree.errors) |diagnostic| {
-            try diagnostic.render(init.gpa, &source, log, color);
+            try diagnostic.render(init.gpa, source, log, color);
         }
         return 1;
     }
-
-    // a tree with errors is never walked by anything but the renderer
-    switch (request.command) {
-        .tree => try compiler.dump(tree, out),
-        .check => {},
-    }
+    try compiler.dump(tree, out);
     return 0;
+}
+
+/// Where the standard library is. Beside the binary as `../lib/std`, or a
+/// `lib/std` under the working directory for work inside the repository.
+fn findStd(init: std.process.Init) !?[]const u8 {
+    const arena = init.arena.allocator();
+
+    if (std.process.executablePathAlloc(init.io, arena)) |exe_path| {
+        if (std.fs.path.dirname(exe_path)) |exe_dir| {
+            const beside = try std.fs.path.join(arena, &.{ exe_dir, "..", "lib", "std" });
+            if (dirExists(init.io, beside)) return beside;
+        }
+    } else |_| {}
+
+    if (dirExists(init.io, "lib/std")) return "lib/std";
+    return null;
+}
+
+fn dirExists(io: std.Io, path: []const u8) bool {
+    assert(path.len > 0);
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    dir.close(io);
+    return true;
 }
 
 const ArgsResult = union(enum) { ready: Request, done: u8 };
@@ -104,6 +160,7 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
     var command: ?Command = null;
     var path: ?[]const u8 = null;
     var color: ColorChoice = .auto;
+    var std_dir: ?[]const u8 = null;
 
     var index: u32 = 1;
     while (index < args.len) : (index += 1) {
@@ -123,6 +180,13 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
             continue;
         }
 
+        if (std.mem.eql(u8, argument, "--std")) {
+            index += 1;
+            if (index == args.len) return .{ .done = try misuse(log, "--std needs a directory") };
+            std_dir = args[index];
+            continue;
+        }
+
         if (command == null) {
             command = std.meta.stringToEnum(Command, argument) orelse {
                 return .{ .done = try misuse(log, "no such command") };
@@ -137,6 +201,7 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
         .command = command orelse return .{ .done = try misuse(log, "no command given") },
         .path = path orelse return .{ .done = try misuse(log, "no file given") },
         .color = color,
+        .std_dir = std_dir,
     } };
 }
 

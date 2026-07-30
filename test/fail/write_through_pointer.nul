@@ -1,0 +1,7 @@
+struct Counter {
+    hits: i64
+}
+
+fn frozen(counter: *Counter) {
+    counter.hits = 0
+}

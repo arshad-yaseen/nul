@@ -1,0 +1,51 @@
+fn Counter.total(self: Counter) i64
+b0:
+  %0 = param self : Counter
+  %1 = scope_begin
+  %2 = field_val %0, .hits : i64
+  %3 = scope_end %1
+  return %2
+
+fn Counter.peek(self: *Counter) i64
+b0:
+  %0 = param self : *Counter
+  %1 = scope_begin
+  %2 = field_ptr %0, .hits : *i64
+  %3 = load %2 : i64
+  %4 = scope_end %1
+  return %3
+
+fn Counter.bump(self: *var Counter, by: i64)
+b0:
+  %0 = param self : *var Counter
+  %1 = param by : i64
+  %2 = scope_begin
+  %3 = field_ptr %0, .hits : *var i64
+  %4 = field_ptr %0, .hits : *var i64
+  %5 = load %4 : i64
+  %6 = add %5, %1 : i64
+  %7 = store %3, %6
+  %8 = scope_end %2
+  return
+
+fn Counter.zero() Counter
+b0:
+  %0 = scope_begin
+  %1 = struct_init .{ hits: 0:i64 } : Counter
+  %2 = scope_end %0
+  return %1
+
+fn drive() i64
+b0:
+  %0 = scope_begin
+  %1 = call Counter.zero() : Counter
+  %2 = local counter : *var Counter
+  %3 = store %2, %1
+  %4 = call Counter.bump(%2, 2:i64)
+  %5 = call Counter.bump(%2, 3:i64)
+  %6 = load %2 : Counter
+  %7 = call Counter.total(%6) : i64
+  %8 = call Counter.peek(%2) : i64
+  %9 = add %7, %8 : i64
+  %10 = scope_end %0
+  return %9

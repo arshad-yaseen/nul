@@ -1,0 +1,22 @@
+use builtin
+
+pub struct Arena {
+    /// A root arena. It dies at the end of the scope that made it.
+    pub fn init() Arena = builtin.arena_init
+
+    /// A child drawing from this arena, for memory that dies sooner.
+    pub fn child(self: Arena) Arena = builtin.arena_child
+
+    /// One value of type T, uninitialized, living in this arena.
+    pub fn create[T](self: Arena) *var T = builtin.arena_create
+
+    /// A copy of a value into this arena. Refused for any type that reaches
+    /// other memory, because the copy would relabel what its pointers reach.
+    pub fn copy[T](self: Arena, value: T) T = builtin.arena_copy
+
+    /// Discard everything in the arena and keep it usable.
+    pub fn reset(self: Arena) = builtin.arena_reset
+
+    /// End the arena now, earlier than its scope would.
+    pub fn destroy(self: Arena) = builtin.arena_destroy
+}

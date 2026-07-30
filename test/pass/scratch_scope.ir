@@ -1,0 +1,30 @@
+fn measure(arena: Arena, deep: bool) i64
+b0:
+  %0 = param arena : Arena
+  %1 = param deep : bool
+  %2 = scope_begin
+  branch %1, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = arena_child %0 : Arena
+  %5 = local scratch : *var Arena
+  %6 = store %5, %4
+  %7 = load %5 : Arena
+  %8 = arena_create %7 : *var Work
+  %9 = local probe : *var *var Work
+  %10 = store %9, %8
+  %11 = load %9 : *var Work
+  %12 = field_ptr %11, .weight : *var i64
+  %13 = store %12, 40:i64
+  %14 = load %9 : *var Work
+  %15 = field_ptr %14, .weight : *var i64
+  %16 = load %15 : i64
+  %17 = add %16, 2:i64 : i64
+  %18 = scope_end %3
+  %19 = scope_end %2
+  return %17
+b2:
+  jump b3
+b3:
+  %20 = scope_end %2
+  return 0:i64

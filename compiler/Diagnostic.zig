@@ -22,10 +22,13 @@ pub const Note = struct {
     message: []const u8,
     /// Without one, the note is a bare line with no snippet.
     span: ?Span = null,
+    /// The file the span is in, when it is not the diagnostic's own. Analysis
+    /// points across modules, and parsing never does.
+    source: ?*Source = null,
 };
 
 /// Permanent. A code is never renumbered and never reused, because it is what a
-/// program reading build output matches on. Parse owns E01xx.
+/// program reading build output matches on. Parse owns E01xx, analysis E02xx.
 pub const Code = enum(u16) {
     expected_token = 101,
     expected_expression = 102,
@@ -43,6 +46,56 @@ pub const Code = enum(u16) {
     unterminated_string = 114,
     invalid_escape = 115,
     var_at_top_level = 116,
+
+    undefined_name = 201,
+    not_a_type = 202,
+    type_as_value = 203,
+    redeclared = 204,
+    shadows = 205,
+    type_mismatch = 206,
+    mixed_types = 207,
+    does_not_fit = 208,
+    overflow = 209,
+    division_by_zero = 210,
+    bad_operand = 211,
+    not_a_function = 212,
+    wrong_arity = 213,
+    not_constant = 214,
+    var_needs_type = 215,
+    no_literal_context = 216,
+    no_such_field = 217,
+    missing_field = 218,
+    no_such_member = 219,
+    private = 220,
+    not_assignable = 221,
+    write_through_pointer = 222,
+    address_position = 223,
+    optional_not_unwrapped = 224,
+    not_optional = 225,
+    not_error_union = 226,
+    error_ignored = 227,
+    try_needs_error_return = 228,
+    condition_not_bool = 229,
+    value_unused = 230,
+    missing_return = 231,
+    outside_loop = 232,
+    size_cycle = 233,
+    value_cycle = 234,
+    module_not_found = 235,
+    two_arenas = 236,
+    copy_reaches_memory = 237,
+    release_needs_name = 238,
+    redundant_destroy = 239,
+    destroy_in_loop = 240,
+    instantiates_too_deep = 241,
+    inference_failed = 242,
+    builtin_outside_std = 243,
+    discard_reserved = 244,
+    defer_cannot_leave = 245,
+    generic_arguments = 246,
+    bad_number = 247,
+    not_a_number = 248,
+    analysis_too_deep = 249,
 };
 
 pub const Color = enum { off, on };
@@ -92,7 +145,8 @@ pub fn render(
             tint(color, reset),
         });
         if (note.span) |span| {
-            try renderSnippet(gpa, source, writer, color, gutter, span, "", blue);
+            const where = note.source orelse source;
+            try renderSnippet(gpa, where, writer, color, gutter, span, "", blue);
         }
     }
 
@@ -105,7 +159,8 @@ fn gutterWidth(diagnostic: Diagnostic, gpa: Allocator, source: *Source) Allocato
 
     for (diagnostic.notes) |note| {
         if (note.span) |span| {
-            const line = (try source.lineColumn(gpa, span.start)).line;
+            const noted = note.source orelse source;
+            const line = (try noted.lineColumn(gpa, span.start)).line;
             widest = @max(widest, line);
         }
     }

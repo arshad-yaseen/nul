@@ -1,0 +1,27 @@
+use std.mem.Arena
+
+pub struct Pair[K, V] {
+    key: K
+    value: V
+
+    pub fn swap_value(self: *var Pair[K, V], value: V) V {
+        let old = self.value
+        self.value = value
+        return old
+    }
+}
+
+pub type Named = Pair[str, i64]
+
+fn make(arena: Arena) *var Named {
+    var pair = arena.create[Pair[str, i64]]()
+    pair.key = "answer"
+    pair.value = 41
+    return pair
+}
+
+fn use_them(arena: Arena) i64 {
+    var pair = make(arena)
+    let old = pair.swap_value(42)
+    return old + pair.value
+}

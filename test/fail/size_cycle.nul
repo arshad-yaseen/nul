@@ -1,0 +1,4 @@
+struct Tree {
+    label: str
+    left: Tree
+}

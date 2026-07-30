@@ -1,0 +1,8 @@
+error[E0242]: a bare number has no type to read
+ --> test/fail/inference_bare_number.nul:8:25
+  |
+8 |     return plant(arena, 5)
+  |                         ^ what type is 'T'?
+  |
+  = help: write the type argument, 'plant[i64](...)', or type the value first
+

@@ -1,0 +1,18 @@
+fn taxicab(point: Point) i64
+b0:
+  %0 = param point : Point
+  %1 = scope_begin
+  %2 = field_val %0, .x : i64
+  %3 = field_val %0, .y : i64
+  %4 = add %2, %3 : i64
+  %5 = scope_end %1
+  return %4
+
+fn drive() i64
+b0:
+  %0 = scope_begin
+  %1 = struct_init .{ x: 3:i64, y: 4:i64 } : Point
+  %2 = call taxicab(%1) : i64
+  %3 = add %2, 0:i64 : i64
+  %4 = scope_end %0
+  return %3

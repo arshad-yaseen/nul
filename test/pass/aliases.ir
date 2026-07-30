@@ -1,0 +1,23 @@
+fn fill(arena: Arena, value: i64) *var Box[i64]
+b0:
+  %0 = param arena : Arena
+  %1 = param value : i64
+  %2 = scope_begin
+  %3 = arena_create %0 : *var Box[i64]
+  %4 = local box : *var *var Box[i64]
+  %5 = store %4, %3
+  %6 = load %4 : *var Box[i64]
+  %7 = field_ptr %6, .item : *var i64
+  %8 = store %7, %1
+  %9 = load %4 : *var Box[i64]
+  %10 = scope_end %2
+  return %9
+
+fn read(box: *Box[i64]) i64
+b0:
+  %0 = param box : *Box[i64]
+  %1 = scope_begin
+  %2 = field_ptr %0, .item : *i64
+  %3 = load %2 : i64
+  %4 = scope_end %1
+  return %3

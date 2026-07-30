@@ -1,0 +1,8 @@
+error[E0243]: only the standard library can reach 'builtin'
+ --> test/fail/use_builtin.nul:1:5
+  |
+1 | use builtin
+  |     ^^^^^^^ not available here
+  |
+  = help: the primitives are ordinary declarations in std; call those instead
+

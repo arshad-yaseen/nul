@@ -1,0 +1,13 @@
+use std.mem.Arena
+
+pub struct Box[T] {
+    item: T
+}
+
+fn dig[T](arena: Arena, value: *var T) i64 {
+    return dig(arena, arena.create[Box[T]]())
+}
+
+fn start(arena: Arena) i64 {
+    return dig(arena, arena.create[i64]())
+}

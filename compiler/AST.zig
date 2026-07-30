@@ -604,3 +604,150 @@ pub fn tokenSlice(tree: AST, index: Token.Index) []const u8 {
     assert(end <= tree.source.len);
     return tree.source[start..end];
 }
+
+// spans, where a node is, for the carets
+
+/// The extent of a node, from its leftmost token's start to its rightmost
+/// child's end. Closing brackets are not counted, which a caret can bear.
+pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
+    const first = edgeToken(tree, node, .leftmost);
+    const last = edgeToken(tree, node, .rightmost);
+    const start = tree.tokenStart(first);
+    const end = tree.tokenEnd(last);
+    if (start > end) {
+        // a hole node can straddle repaired positions, so point at its start
+        return .{ .start = start, .end = start };
+    }
+    return .{ .start = start, .end = end };
+}
+
+const Edgewise = enum { leftmost, rightmost };
+
+/// Walk down one side of a node to the token that bounds it. Iterative, and
+/// bounded by the walk always descending into a child.
+fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
+    var current = node;
+    var depth: u32 = 0;
+    const depth_cap = 4096;
+
+    while (depth < depth_cap) : (depth += 1) {
+        const main = tree.nodeMainToken(current);
+        switch (tree.viewOf(current)) {
+            .root => return if (side == .leftmost) .first else main,
+            .err, .type_param, .capture, .break_stmt, .continue_stmt => return main,
+            .ident, .number_literal, .str_literal, .null_literal => return main,
+            .bool_literal => |it| return it.token,
+            .error_value => |token| {
+                // the name token. the `error` keyword sits two before it
+                return if (side == .leftmost) token.before(2) else token;
+            },
+
+            .use_decl => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.path,
+            },
+            .struct_decl => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => {
+                    if (it.members.len > 0) {
+                        current = it.members[it.members.len - 1];
+                    } else return main.after(1);
+                },
+            },
+            .type_decl => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.aliased,
+            },
+            .fn_decl => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.body,
+            },
+            .var_decl => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.init_expr,
+            },
+            .param, .field => |it| switch (side) {
+                .leftmost => return it.name_token,
+                .rightmost => current = it.type_expr,
+            },
+            .block => |children| switch (side) {
+                .leftmost => return main,
+                .rightmost => {
+                    if (children.len > 0) {
+                        current = children[children.len - 1];
+                    } else return main.after(1);
+                },
+            },
+            .assign, .orelse_expr => |it| {
+                current = if (side == .leftmost) it.lhs else it.rhs;
+            },
+            .defer_stmt, .try_expr => |child| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = child,
+            },
+            .if_stmt => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.else_node.unwrap() orelse it.then_block,
+            },
+            .while_stmt => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.body,
+            },
+            .return_stmt => |operand| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = operand.unwrap() orelse return main,
+            },
+            .field_access => |it| switch (side) {
+                .leftmost => current = it.lhs,
+                .rightmost => return it.name_token,
+            },
+            .instance => |it| switch (side) {
+                .leftmost => current = it.base,
+                .rightmost => {
+                    if (it.args.len > 0) {
+                        current = it.args[it.args.len - 1];
+                    } else return main;
+                },
+            },
+            .call => |it| switch (side) {
+                .leftmost => current = it.callee,
+                .rightmost => {
+                    if (it.args.len > 0) {
+                        current = it.args[it.args.len - 1];
+                    } else return main.after(1);
+                },
+            },
+            .struct_literal => |children| switch (side) {
+                .leftmost => return main,
+                .rightmost => {
+                    if (children.len > 0) {
+                        current = children[children.len - 1];
+                    } else return main.after(2);
+                },
+            },
+            .struct_field_init => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.value,
+            },
+            .catch_expr => |it| {
+                current = if (side == .leftmost) it.lhs else it.rhs;
+            },
+            .binary => |it| {
+                current = if (side == .leftmost) it.lhs else it.rhs;
+            },
+            .unary => |it| switch (side) {
+                .leftmost => return it.op_token,
+                .rightmost => current = it.operand,
+            },
+            .grouped, .optional_type, .error_union_type => |child| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = child,
+            },
+            .pointer_type => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => current = it.child,
+            },
+        }
+    }
+    return tree.nodeMainToken(current);
+}

@@ -1,0 +1,8 @@
+error[E0240]: 'scratch' was made outside this loop, and the next iteration would reach into a destroyed arena
+ --> test/fail/destroy_in_loop.nul:9:9
+  |
+9 |         scratch.destroy()
+  |         ^^^^^^^^^^^^^^^^^ destroyed inside a loop
+  |
+  = help: 'reset' discards everything and keeps the arena usable, which is what a scratch loop wants
+

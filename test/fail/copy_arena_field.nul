@@ -1,0 +1,10 @@
+use std.mem.Arena
+
+struct Holder {
+    kept: Arena
+    label: str
+}
+
+fn keep(arena: Arena, holder: Holder) Holder {
+    return arena.copy(holder)
+}

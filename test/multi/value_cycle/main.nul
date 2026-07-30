@@ -1,0 +1,4 @@
+use helper
+
+let here = helper.there + 1
+pub let anchor = here

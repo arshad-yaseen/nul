@@ -1,0 +1,22 @@
+use std.mem.Arena
+
+struct Node {
+    value: i64
+    next: ?*var Node
+}
+
+fn link(arena: Arena) *var Node {
+    var a = arena.create[Node]()
+    var b = arena.create[Node]()
+    a.value = 1
+    a.next = b
+    b.value = 2
+    b.next = null
+    return a
+}
+
+fn start() i64 {
+    var arena = Arena.init()
+    let first = link(arena)
+    return first.value
+}

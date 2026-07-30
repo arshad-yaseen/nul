@@ -1,0 +1,11 @@
+error[E0201]: nothing named 'missing' is in scope here
+  --> test/fail/instantiation_trail.nul:5:28
+   |
+ 5 |         return self.item + missing
+   |                            ^^^^^^^ unknown name
+note: while checking 'Box[i64].broken', needed here
+  --> test/fail/instantiation_trail.nul:11:12
+   |
+11 |     return box.broken()
+   |            ^^^^^^^^^^^^
+

@@ -57,12 +57,13 @@ is an object you create, choose the backing storage for, and pass down to anythi
 that needs to allocate.
 
 ```nul
-pub fn main() !void {
+pub fn main() !i64 {
     var arena = Arena.init()
 
     let tree = try parse(arena, "input.txt")
 
     io.print("{tree.count} nodes\n")
+    return tree.count
 }
 ```
 
@@ -562,13 +563,22 @@ stages, and a few examples use surface the grammar does not carry yet. A reader
 building against this document — human or machine — should take the boundary
 from here rather than guess.
 
+The compiler now checks whole programs. One pass over the tree produces a
+typed control-flow graph per function — locals, loads, stores, scope entry
+and exit, and the six arena operations all visible as instructions — and
+`nul ir <file>` prints it. Every error is a diagnostic with a permanent code;
+no input crashes the compiler.
+
 The language's compile time holds exactly two kinds of thing: constants and
 types. Nothing executes at compile time — no function runs, no loop spins —
 and a type is a name, never a value. That is a decision, not a gap: this model
 asks questions of types (does this one reach other memory?) and questions have
 answers without an interpreter. Generics are type parameters in brackets —
-`Box[T]`, `List[Node]` — instantiated by substitution and memoized, so
-`Box[i64]` names one type however often and wherever it is written.
+`Box[T]` — instantiated by substitution and memoized, so `Box[i64]` names one
+type however often and wherever it is written, and a `type` alias of it is the
+same type again. A generic body is checked once per instantiation, on demand,
+and an error inside one carries the trail back to the call that caused it.
+Checking a call reads the substituted signature and never a body.
 
 A declaration says its own kind, and each keyword means one thing: `use` and
 `pub use` import and re-export, `struct` declares a type, `type` names an
@@ -576,35 +586,49 @@ existing one, `fn` declares a function, and `let` and `var` bind values —
 immutable and mutable. A type is never spelled like a value, because it is not
 one. There is no separate keyword for a compile-time constant: a top-level
 `let` must have one, and the compiler reads that off the initializer rather
-than asking the author to announce it.
+than asking the author to announce it. A top-level `let` bound to a call is
+refused, because a call happens at run time.
 
-In the language today: nominal structs, declared at the top level and generic
-over bracketed type parameters; pointers `*T` and `*var T`, with field access
-reaching through them, and `&place` as a call argument; optionals `?T` with
-`orelse` and `if x |v|`; error unions `!T` over one universal error set, with
-`try` and `catch`; struct literals `.{ ... }`; `defer` at scope exit;
-functions declared in a type's namespace, called through a value or through
-the type; `use` across files with `pub`; untyped constants that fold at 128
-bits and take any type they fit, with one name per type and no synonyms —
-no `int`, no `uint`, no `byte`; `if`/`else`, `while` with and without a
-condition, `break`, `continue`, `return`, and `_ = e` to drop a value on
-purpose; and the whole `Arena` interface exactly as declared in
-`lib/std/mem.nul` — creation, children, `copy` with its refusal, and release
-by name. A call writes its type arguments, `arena.create[Node]()`, or omits
-them when a value pins them down, `arena.copy(p)`.
+In the language today, checked end to end: nominal structs, generic over
+bracketed type parameters, whose names bind before their fields resolve, so
+`next: ?*var Node` works inside `Node` and a struct that holds itself by
+value is refused at the field that closes the cycle; methods with all three
+receiver forms — `self: T` a copy, `self: *T` a read-only pointer, `self:
+*var T` for writing, on plain and generic structs alike; pointers `*T` and
+`*var T` with field access reaching through them, `*var T` serving wherever
+`*T` is expected, and a write through `*T` told to take `*var T`; `&place`
+as a call argument and nowhere else; optionals `?T` with `orelse` in both
+forms and `if x |v|` / `while x |v|` capture; error unions `!T` over one
+universal error set, with `try`, all three `catch` forms, and an ignored
+`!T` reported at the call site; struct literals `.{ ... }` taking their type
+from context, every field named and present; `defer` running at scope exit
+on every path out, once per loop iteration, and on the path a `try` takes;
+untyped constants folding at 128 bits, flowing through `let`, and taking any
+type their value fits, with one name per type and no synonyms; `str` as a
+distinct immutable primitive with `==`, `!=`, and `.len`; modules on disk
+with `pub` enforced across files and value cycles reported with their chain;
+and the whole `Arena` interface exactly as declared in `lib/std/mem.nul` —
+creation, children, `copy` with its refusal, and release by name. A call
+writes its type arguments, `arena.create[Node]()`, or omits them when a
+value argument pins them down, `arena.copy(p)`.
 
 Designed, and shown in examples above, but not yet in the grammar: slices
 `[]T`, iteration `for x in` — `for` is not a keyword yet, and loops are
-`while` — string interpolation, pointer receivers on a generic container
-(`self: *var List[T]`), and the library that needs them: `List`, `io`, the
-pool and reference counted types. An example using these shows where the
-language is going, not where the parser is.
+`while` — string interpolation, and the library that needs them: `List`,
+`io`, the pool and reference counted types. A function that can fail returns
+`!T` with a real payload; a fail-with-nothing form is not spellable yet. An
+example using these shows where the language is going, not where the parser
+is.
 
-Specified here but a later stage of the compiler: the region checker — every
+Specified here but the next stage of the compiler: the region checker — every
 "rejected" above that names a lifetime, from `box.item = temp` to the reset
 that comes one line too early. The signature-level rules are enforced today:
 one arena per function, `copy` refusing what reaches other memory, release
-demanding a name. The flow-level proofs are the checker's job.
+demanding a name — and so are the mistakes worth naming early: a redundant
+`defer x.destroy()`, and a `destroy` inside a loop where `reset` was meant.
+The flow-level proofs are the checker's job, and the IR it will read — scope
+ends, arena instructions, places — is already built.
 
 The files under `test/` are the executable record of this boundary: what
-compiles, what is refused, and with exactly which words.
+compiles and to which IR (`test/pass/`, `test/program/`), what is refused and
+with exactly which words (`test/fail/`, `test/multi/`).

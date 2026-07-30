@@ -1,0 +1,4 @@
+fn drive() {
+    let t = i64
+    _ = t
+}

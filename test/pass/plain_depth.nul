@@ -1,0 +1,78 @@
+// seventy structs nested by value, and a walk down the first three.
+// depth without instantiation is plain code, not a runaway generic.
+
+struct S0 { f: S1 }
+struct S1 { f: S2 }
+struct S2 { f: S3 }
+struct S3 { f: S4 }
+struct S4 { f: S5 }
+struct S5 { f: S6 }
+struct S6 { f: S7 }
+struct S7 { f: S8 }
+struct S8 { f: S9 }
+struct S9 { f: S10 }
+struct S10 { f: S11 }
+struct S11 { f: S12 }
+struct S12 { f: S13 }
+struct S13 { f: S14 }
+struct S14 { f: S15 }
+struct S15 { f: S16 }
+struct S16 { f: S17 }
+struct S17 { f: S18 }
+struct S18 { f: S19 }
+struct S19 { f: S20 }
+struct S20 { f: S21 }
+struct S21 { f: S22 }
+struct S22 { f: S23 }
+struct S23 { f: S24 }
+struct S24 { f: S25 }
+struct S25 { f: S26 }
+struct S26 { f: S27 }
+struct S27 { f: S28 }
+struct S28 { f: S29 }
+struct S29 { f: S30 }
+struct S30 { f: S31 }
+struct S31 { f: S32 }
+struct S32 { f: S33 }
+struct S33 { f: S34 }
+struct S34 { f: S35 }
+struct S35 { f: S36 }
+struct S36 { f: S37 }
+struct S37 { f: S38 }
+struct S38 { f: S39 }
+struct S39 { f: S40 }
+struct S40 { f: S41 }
+struct S41 { f: S42 }
+struct S42 { f: S43 }
+struct S43 { f: S44 }
+struct S44 { f: S45 }
+struct S45 { f: S46 }
+struct S46 { f: S47 }
+struct S47 { f: S48 }
+struct S48 { f: S49 }
+struct S49 { f: S50 }
+struct S50 { f: S51 }
+struct S51 { f: S52 }
+struct S52 { f: S53 }
+struct S53 { f: S54 }
+struct S54 { f: S55 }
+struct S55 { f: S56 }
+struct S56 { f: S57 }
+struct S57 { f: S58 }
+struct S58 { f: S59 }
+struct S59 { f: S60 }
+struct S60 { f: S61 }
+struct S61 { f: S62 }
+struct S62 { f: S63 }
+struct S63 { f: S64 }
+struct S64 { f: S65 }
+struct S65 { f: S66 }
+struct S66 { f: S67 }
+struct S67 { f: S68 }
+struct S68 { f: S69 }
+struct S69 { f: S70 }
+struct S70 { f: i64 }
+
+fn probe(s: S67) i64 {
+    return s.f.f.f.f
+}

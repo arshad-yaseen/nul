@@ -1,0 +1,84 @@
+fn fallback(maybe: ?i64) i64
+b0:
+  %0 = param maybe : ?i64
+  %1 = scope_begin
+  %2 = has_value %0 : bool
+  %3 = local : *var i64
+  branch %2, b1, b2
+b1:
+  %4 = unwrap_value %0 : i64
+  %5 = store %3, %4
+  jump b3
+b2:
+  %6 = store %3, 0:i64
+  jump b3
+b3:
+  %7 = load %3 : i64
+  %8 = scope_end %1
+  return %7
+
+fn guarded(maybe: ?i64) i64
+b0:
+  %0 = param maybe : ?i64
+  %1 = scope_begin
+  %2 = has_value %0 : bool
+  branch %2, b1, b2
+b1:
+  %3 = unwrap_value %0 : i64
+  %4 = scope_end %1
+  return %3
+b2:
+  %5 = scope_begin
+  %6 = scope_end %5
+  %7 = scope_end %1
+  return -1:i64
+
+fn tested(maybe: ?i64) i64
+b0:
+  %0 = param maybe : ?i64
+  %1 = scope_begin
+  %2 = has_value %0 : bool
+  branch %2, b1, b2
+b1:
+  %3 = unwrap_value %0 : i64
+  %4 = scope_begin
+  %5 = mul %3, 2:i64 : i64
+  %6 = scope_end %4
+  %7 = scope_end %1
+  return %5
+b2:
+  %8 = scope_begin
+  %9 = scope_end %8
+  %10 = scope_end %1
+  return 0:i64
+
+fn drain(first: ?*var Cell) i64
+b0:
+  %0 = param first : ?*var Cell
+  %1 = scope_begin
+  %2 = local total : *var i64
+  %3 = store %2, 0:i64
+  %4 = local cursor : *var ?*var Cell
+  %5 = store %4, %0
+  jump b1
+b1:
+  %6 = load %4 : ?*var Cell
+  %7 = has_value %6 : bool
+  branch %7, b2, b3
+b2:
+  %8 = unwrap_value %6 : *var Cell
+  %9 = scope_begin
+  %10 = load %2 : i64
+  %11 = field_ptr %8, .value : *var i64
+  %12 = load %11 : i64
+  %13 = add %10, %12 : i64
+  %14 = store %2, %13
+  %15 = field_ptr %8, .next : *var ?*var Cell
+  %16 = load %15 : ?*var Cell
+  %17 = store %4, %16
+  %18 = scope_end %9
+  jump b1
+b3:
+  %19 = load %2 : i64
+  %20 = scope_end %1
+  return %19

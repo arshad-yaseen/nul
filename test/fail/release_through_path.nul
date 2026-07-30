@@ -1,0 +1,11 @@
+use std.mem.Arena
+
+struct List {
+    arena: Arena
+    count: i64
+}
+
+fn wipe(list: *var List) {
+    list.arena.reset()
+    list.count = 0
+}

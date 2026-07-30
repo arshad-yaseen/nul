@@ -1,0 +1,18 @@
+struct Tally {
+    hits: i64
+}
+
+fn read(tally: *Tally) i64 {
+    return tally.hits
+}
+
+fn bump(tally: *var Tally) {
+    tally.hits = tally.hits + 1
+}
+
+fn drive() i64 {
+    var mine: Tally = .{ hits: 0 }
+    bump(&mine)
+    let frozen: Tally = .{ hits: 5 }
+    return read(&mine) + read(&frozen)
+}

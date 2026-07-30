@@ -1,0 +1,39 @@
+fn refuse(over: i64) !i64 {
+    if over > 100 {
+        return error.TooMuch
+    }
+    return over
+}
+
+fn propagate(seed: i64) !i64 {
+    let value = try refuse(seed)
+    return value + 1
+}
+
+fn supplied(seed: i64) i64 {
+    return refuse(seed) catch 0
+}
+
+fn inspected(seed: i64) i64 {
+    return refuse(seed) catch |err| {
+        if err == error.TooMuch {
+            return 100
+        }
+        return -1
+    }
+}
+
+fn handled(seed: i64) {
+    _ = refuse(seed) catch {
+        return
+    }
+}
+
+fn shrugged(seed: i64) {
+    refuse(seed) catch {
+        report()
+    }
+}
+
+fn report() {
+}

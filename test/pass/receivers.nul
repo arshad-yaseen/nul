@@ -1,0 +1,28 @@
+struct Counter {
+    hits: i64
+
+    fn total(self: Counter) i64 {
+        return self.hits
+    }
+
+    fn peek(self: *Counter) i64 {
+        return self.hits
+    }
+
+    fn bump(self: *var Counter, by: i64) {
+        self.hits = self.hits + by
+    }
+
+    fn zero() Counter {
+        return .{ hits: 0 }
+    }
+}
+
+fn drive() i64 {
+    var counter = Counter.zero()
+    counter.bump(2)
+    counter.bump(3)
+    let through_value = counter.total()
+    let through_pointer = counter.peek()
+    return through_value + through_pointer
+}

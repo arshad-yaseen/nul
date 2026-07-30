@@ -2,12 +2,18 @@ const std = @import("std");
 
 const zon = @import("build.zig.zon");
 
-const test_dirs = [_][]const u8{ "test/parse", "test/parse-error", "test/hostile" };
+const test_dirs = [_][]const u8{
+    "test/parse",
+    "test/parse-error",
+    "test/hostile",
+    "test/pass",
+    "test/fail",
+    "test/multi",
+    "test/program",
+};
 
 const unit_test_roots = [_][]const u8{
-    "compiler/Tokenizer.zig",
-    "compiler/util/string_literal.zig",
-    "compiler/Diagnostic.zig",
+    "compiler/root.zig",
 };
 
 pub fn build(b: *std.Build) void {
@@ -36,6 +42,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe);
+
+    // the standard library ships as source beside the binary
+    b.installDirectory(.{
+        .source_dir = b.path("lib"),
+        .install_dir = .prefix,
+        .install_subdir = "lib",
+    });
 
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
@@ -84,6 +97,13 @@ fn addTestFiles(b: *std.Build, run: *std.Build.Step.Run) void {
         var names: std.ArrayList([]const u8) = .empty;
         var walk = dir.iterate();
         while (walk.next(io) catch null) |entry| {
+            // a multi-module case is a directory whose entry file is main.nul
+            if (entry.kind == .directory) {
+                const main_path = b.fmt("{s}/{s}/main.nul", .{ sub, entry.name });
+                dir.access(io, b.fmt("{s}/main.nul", .{entry.name}), .{}) catch continue;
+                names.append(b.allocator, main_path) catch @panic("OOM");
+                continue;
+            }
             if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".nul")) continue;
             names.append(b.allocator, b.fmt("{s}/{s}", .{ sub, entry.name })) catch @panic("OOM");
         }

@@ -1,0 +1,8 @@
+error[E0231]: not every path through 'sometimes' returns its i64
+ --> test/fail/missing_return.nul:1:4
+  |
+1 | fn sometimes(flag: bool) i64 {
+  |    ^^^^^^^^^ a path falls off the end
+  |
+  = help: every path must end in 'return', or loop forever
+
