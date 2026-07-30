@@ -1,5 +1,4 @@
-//! The syntax tree. `Parse` writes the packed form, `viewOf` reads one node back
-//! in the shape a reader wants, and the token helpers say where it sits.
+//! The syntax tree.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
