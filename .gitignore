@@ -2,8 +2,4 @@
 zig-out/
 zig-pkg/
 
-node_modules/
-
-editor/zed/grammars/
-
 .DS_Store
