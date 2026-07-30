@@ -1,41 +1,23 @@
-use std.io
 use std.mem.Arena
 
-struct Order {
-    name: str
-    grams: u32
-
-    fn postage(self: *Order) u32 {
-        return self.grams / 500 + 3
-    }
+pub struct Box[T] {
+    item: T
 }
 
-fn place(arena: Arena, name: str, grams: u32) !*var Order {
-    if grams > 30000 {
-        return error.TooHeavy
-    }
-    var order = arena.create[Order]()
-    order.name = name
-    order.grams = grams
-    return order
+pub struct Pair[K, V] {
+    key: K
+    value: V
 }
 
-fn quote(arena: Arena, grams: u32) !u32 {
-    var scratch = arena.child()
+pub type IntBox = Box[i64]
+pub type Nested = Box[Box[i64]]
 
-    let draft = try place(scratch, "draft", grams)
-    return draft.postage()
+pub fn make[T](arena: Arena, v: T) *var Box[T] {
+    let b = arena.create[Box[T]]()
+    return b
 }
 
-fn main() {
-    var arena = Arena.init()
-
-    let order = place(arena, "keyboard", 900) catch {
-        io.print("too heavy to ship\n")
-        return
-    }
-    io.print("{order.name} ships for {order.postage()}\n")
-
-    let trial = quote(arena, 960) catch 0
-    io.print("with a cable it would be {trial}\n")
+fn use_them(arena: Arena) {
+    _ = make[i64](arena, 1)
+    _ = arena.create[Pair[i64, str]]()
 }
