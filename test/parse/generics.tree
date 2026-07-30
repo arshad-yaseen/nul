@@ -1,0 +1,65 @@
+root
+  struct_decl Box pub
+    type_param T
+    field item
+      type: ident T
+  struct_decl Pair pub
+    type_param K
+    type_param V
+    field key
+      type: ident K
+    field value
+      type: ident V
+  type_decl IntBox pub
+    type: instance
+      base: ident Box
+      arg: ident i64
+  type_decl Nested pub
+    type: instance
+      base: ident Box
+      arg: instance
+        base: ident Box
+        arg: ident i64
+  fn_decl make pub
+    type_param T
+    param arena
+      type: ident Arena
+    param v
+      type: ident T
+    ret: pointer_type var
+      child: instance
+        base: ident Box
+        arg: ident T
+    body: block
+      var_decl b let
+        init: call
+          callee: instance
+            base: field_access create
+              lhs: ident arena
+            arg: instance
+              base: ident Box
+              arg: ident T
+      return_stmt
+        value: ident b
+  fn_decl use_them
+    param arena
+      type: ident Arena
+    body: block
+      assign
+        lhs: ident _
+        rhs: call
+          callee: instance
+            base: ident make
+            arg: ident i64
+          arg: ident arena
+          arg: number_literal 1
+      assign
+        lhs: ident _
+        rhs: call
+          callee: instance
+            base: field_access create
+              lhs: ident arena
+            arg: instance
+              base: ident Pair
+              arg: ident i64
+              arg: ident str

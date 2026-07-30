@@ -1,0 +1,27 @@
+struct Point {
+    x: i64
+    y: i64
+}
+
+fn build(a: i64) Point {
+    let p: Point = .{ x: a, y: 2 }
+    let nested: Wrapper = .{ inner: .{ x: 1, y: 2 }, tag: "n" }
+    let empty: Point = .{}
+    let spread: Point = .{
+        x: 1,
+        y: 2,
+    }
+    _ = nested
+    _ = empty
+    _ = spread
+    return p
+}
+
+fn places(p: *var Point, a: i64) {
+    let address = &a
+    let field_address = &p.x
+    _ = address
+    _ = field_address
+    p.x = 1
+    _ = a
+}

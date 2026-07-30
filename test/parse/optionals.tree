@@ -1,0 +1,55 @@
+root
+  fn_decl defaults
+    param opt
+      type: optional_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      var_decl a let
+        init: orelse_expr
+          lhs: ident opt
+          rhs: number_literal 0
+      var_decl b let
+        init: orelse_expr
+          lhs: ident opt
+          rhs: orelse_expr
+            lhs: ident a
+            rhs: number_literal 0
+      return_stmt
+        value: binary add
+          lhs: ident a
+          rhs: ident b
+  fn_decl capture
+    param opt
+      type: optional_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      if_stmt
+        cond: ident opt
+        capture: capture v
+        then: block
+          return_stmt
+            value: ident v
+        else: block
+          return_stmt
+            value: number_literal 0
+  fn_decl plain
+    param opt
+      type: optional_type
+        child: ident i64
+    body: block
+      if_stmt
+        cond: ident opt
+        capture: capture v
+        then: block
+          assign
+            lhs: ident _
+            rhs: ident v
+      var_decl nothing let
+        type: optional_type
+          child: ident i64
+        init: null_literal
+      assign
+        lhs: ident _
+        rhs: ident nothing

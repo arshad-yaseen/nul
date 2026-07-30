@@ -1,0 +1,48 @@
+root
+  use_decl
+    path: field_access mem
+      lhs: ident std
+  struct_decl Node
+    field plain
+      type: ident i64
+    field read_only
+      type: pointer_type
+        child: ident Node
+    field writable
+      type: pointer_type var
+        child: ident Node
+    field maybe
+      type: optional_type
+        child: ident Node
+    field maybe_pointer
+      type: optional_type
+        child: pointer_type var
+          child: ident Node
+    field qualified
+      type: field_access Arena
+        lhs: ident mem
+    field deep
+      type: optional_type
+        child: pointer_type var
+          child: field_access Buffer
+            lhs: ident mem
+  fn_decl signatures
+    param a
+      type: pointer_type
+        child: ident Node
+    param b
+      type: pointer_type var
+        child: ident Node
+    param c
+      type: optional_type
+        child: ident i64
+    ret: error_union_type
+      child: pointer_type var
+        child: ident Node
+    body: block
+      return_stmt
+        value: ident b
+  fn_decl returns_nothing
+    param a
+      type: ident i64
+    body: block

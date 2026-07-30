@@ -1,0 +1,25 @@
+fn read(arena: Arena, path: str) !str {
+    let text = try io.read_file(arena, path)
+    return text
+}
+
+fn fallback(arena: Arena) str {
+    return read(arena, "a") catch "default"
+}
+
+fn handled(arena: Arena) {
+    let text = read(arena, "a") catch |e| {
+        report(e)
+    }
+    _ = text
+}
+
+fn named() !i64 {
+    let e = error.NotFound
+    _ = e
+    return error.OutOfRange
+}
+
+fn chained(arena: Arena) str {
+    return read(arena, "a") catch read(arena, "b") catch "last"
+}

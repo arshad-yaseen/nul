@@ -1,0 +1,3 @@
+root
+  var_decl after_bom let pub
+    init: number_literal 1

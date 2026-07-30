@@ -1,0 +1,60 @@
+root
+  fn_decl continuation
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl sum let
+        init: binary add
+          lhs: ident a
+          rhs: ident b
+      var_decl call let
+        init: call
+          callee: ident wrap
+          arg: ident a
+          arg: ident b
+      var_decl compared let
+        init: binary less_than
+          lhs: ident a
+          rhs: ident b
+      assign
+        lhs: ident _
+        rhs: ident call
+      assign
+        lhs: ident _
+        rhs: ident compared
+      return_stmt
+        value: ident sum
+  fn_decl commented
+    param a
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl x let
+        init: ident a
+      var_decl y let
+        init: binary add
+          lhs: ident a
+          rhs: number_literal 1
+      return_stmt
+        value: binary add
+          lhs: ident x
+          rhs: ident y
+  fn_decl one_liner
+    param a
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_stmt
+        value: ident a
+  fn_decl packed_block
+    param a
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl b let
+        init: ident a
+      return_stmt
+        value: ident b

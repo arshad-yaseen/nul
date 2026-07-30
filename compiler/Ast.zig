@@ -1,118 +1,144 @@
-//! The syntax tree. `Parse` writes the packed form, `viewOf` reads it back.
+//! The syntax tree. `Parse` writes the packed form, `viewOf` reads one node back
+//! in the shape a reader wants, and the token helpers say where it sits.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const Diagnostic = @import("Diagnostic.zig");
+const Parse = @import("Parse.zig");
 const Token = @import("Token.zig");
 const Tokenizer = @import("Tokenizer.zig");
-const Parse = @import("Parse.zig");
 
-const Ast = @This();
+const AST = @This();
 
 /// Borrowed, so the caller's `Source` must outlive the tree.
 source: [:0]const u8,
-/// In source order, ending in one `.eof`. A `TokenIndex` is a position here.
+/// In source order, ending in one `.eof`.
 tokens: Tokenizer.TokenList.Slice,
-/// A `Node.Index` is a position here, and node 0 is the root.
+/// Node 0 is the root.
 nodes: NodeList.Slice,
-/// Variable-length children, in source order.
-extra: []u32,
+/// Every variable-length payload, read back through `Fields`.
+extra: []const u32,
 /// Empty when the file parsed. Anything here stops the tree from being analyzed.
-errors: []const Error,
+errors: []const Diagnostic,
+/// Backs `errors` and every string in it, so freeing them is one call.
+error_text: std.heap.ArenaAllocator.State,
 
 pub const NodeList = std.MultiArrayList(Node);
-/// A token, by position in `tokens`.
-pub const TokenIndex = u32;
-/// A position in `extra`.
+/// Where a node's payload starts in `extra`.
 pub const ExtraIndex = enum(u32) { _ };
 
-pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Ast {
-    return Parse.run(gpa, source);
+pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
+    const tree = try Parse.run(gpa, source);
+
+    assert(tree.nodes.len > 0);
+    assert(tree.nodeTag(.root) == .root);
+    return tree;
 }
 
-pub fn deinit(tree: *Ast, gpa: Allocator) void {
+pub fn deinit(tree: *AST, gpa: Allocator) void {
+    assert(tree.nodes.len > 0);
+    assert(tree.tokens.len > 0);
+
     tree.tokens.deinit(gpa);
     tree.nodes.deinit(gpa);
     gpa.free(tree.extra);
-    gpa.free(tree.errors);
+    tree.error_text.promote(gpa).deinit();
     tree.* = undefined;
 }
 
-// Storage
+// storage
 
 pub const Node = struct {
     tag: Tag,
-    /// An operator, a keyword, or a call's `(`. Every other position derives from it.
-    main_token: TokenIndex,
+    /// The keyword or operator the node is named by. Every other token position
+    /// is derived from it or stored in `extra`.
+    main_token: Token.Index,
     data: Data,
 
-    /// Index into `nodes`. Node 0 is always the root.
     pub const Index = enum(u32) {
         root = 0,
         _,
 
+        pub fn int(index: Index) u32 {
+            return @intFromEnum(index);
+        }
+
         pub fn toOptional(i: Index) OptionalIndex {
-            const r: OptionalIndex = @enumFromInt(@intFromEnum(i));
-            assert(r != .none);
-            return r;
+            const optional: OptionalIndex = @enumFromInt(@intFromEnum(i));
+            assert(optional != .none);
+            return optional;
         }
     };
 
-    /// `?Index` would be 8 bytes and blow the payload budget. One stolen `u32` value
-    /// keeps it at 4 and still forces an `unwrap()`.
+    /// `?Index` would be eight bytes and blow the payload budget. One stolen
+    /// value keeps it at four and still forces an `unwrap()`.
     pub const OptionalIndex = enum(u32) {
-        root = 0,
         none = std.math.maxInt(u32),
         _,
 
-        pub fn unwrap(oi: OptionalIndex) ?Index {
-            return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+        pub fn unwrap(optional: OptionalIndex) ?Index {
+            if (optional == .none) return null;
+            assert(@intFromEnum(optional) != @intFromEnum(OptionalIndex.none));
+            return @enumFromInt(@intFromEnum(optional));
         }
     };
-
-    /// A contiguous run of children in `extra`.
-    pub const ExtraRange = struct { start: ExtraIndex, end: ExtraIndex };
 
     pub const Tag = enum(u8) {
         root,
         use_decl,
+        struct_decl,
+        type_decl,
         fn_decl,
-        param,
-        block,
-        /// Both `let` and `var`, where `main_token` is the keyword.
+        /// Both `let` and `var`, told apart by `main_token`.
         var_decl,
-        return_stmt,
-        /// `extra_range` is the condition, the then block, and the else node when there
-        /// is one, itself a block or another `if_stmt`.
+        /// One name in a `[T, U]` list. A constraint is reported, never stored.
+        type_param,
+        param,
+        field,
+
+        block,
+        assign,
+        defer_stmt,
         if_stmt,
-        /// `for { }` and `for cond { }`.
-        for_stmt,
+        while_stmt,
         break_stmt,
         continue_stmt,
-        assign,
-        call,
-        field_access,
-        grouped,
-        /// A struct type, whose `extra_range` holds the fields.
-        struct_type,
-        /// One named field inside a struct, where `main_token` is the name.
-        field,
-        /// A pointer type, where `main_token` is `*` and `node` is the pointee.
-        pointer_type,
-
-        /// `main_token` is the operator.
-        binary,
-        unary,
+        return_stmt,
+        /// The `v` of `|v|`, on an `if` or a `catch`.
+        capture,
 
         ident,
         number_literal,
         str_literal,
-        /// `main_token` is `true` or `false`.
         bool_literal,
+        null_literal,
 
-        /// A hole where parsing failed. It keeps the tree's shape, so a later walk still
-        /// reaches everything around it.
+        field_access,
+        /// `Name[A, B]` in a type, `f[T]` in a call. One concept, one node.
+        instance,
+        call,
+        /// `.{ ... }`, whose type comes from context.
+        struct_literal,
+        struct_field_init,
+        /// `error.Name`, a member of the one universal error set.
+        error_value,
+
+        try_expr,
+        orelse_expr,
+        catch_expr,
+        binary,
+        unary,
+        grouped,
+
+        pointer_type,
+        optional_type,
+        /// `!T`, over the one universal error set, so it names nothing.
+        error_union_type,
+
+        /// A hole where parsing failed. It keeps the tree's shape, so a walk
+        /// still reaches everything around it.
         err,
     };
 
@@ -123,21 +149,58 @@ pub const Node = struct {
         opt_node: OptionalIndex,
         node_and_node: struct { Index, Index },
         opt_node_and_node: struct { OptionalIndex, Index },
-        extra_range: ExtraRange,
+        /// Where `Fields` starts reading.
+        extra: ExtraIndex,
     };
 };
 
 comptime {
+    // every tag has exactly one view, matched by name, so adding a tag without
+    // teaching `viewOf` about it is a compile error rather than a wrong read
+    const tags = @typeInfo(Node.Tag).@"enum".fields;
+    const views = @typeInfo(View).@"union".fields;
+    assert(tags.len == views.len);
+    for (tags, views) |tag, view| assert(std.mem.eql(u8, tag.name, view.name));
+
     assert(@sizeOf(Node.Tag) == 1);
-    // Eight bytes of indexes, never pointers, so a payload means the same thing
-    // wherever the tree is.
-    if (!std.debug.runtime_safety) assert(@sizeOf(Node.Data) == 8);
+    assert(@sizeOf(Node.Index) == 4);
+    assert(@sizeOf(ExtraIndex) == 4);
+    // indexes, never pointers, so a payload means the same wherever the tree is
+    // safe builds add a tag to the bare union
+    if (std.debug.runtime_safety == false) assert(@sizeOf(Node.Data) == 8);
 }
 
-// The view
+/// Reads a payload back in the order `Parse` wrote it. A list is a count
+/// followed by that many indexes.
+const Fields = struct {
+    extra: []const u32,
+    cursor: u32,
 
-/// What a `binary` node means, read back off its `main_token` rather than stored.
-pub const BinaryOp = enum(u4) {
+    fn node(payload: *Fields) Node.Index {
+        assert(payload.cursor < payload.extra.len);
+        defer payload.cursor += 1;
+        return @enumFromInt(payload.extra[payload.cursor]);
+    }
+
+    fn optNode(payload: *Fields) Node.OptionalIndex {
+        assert(payload.cursor < payload.extra.len);
+        defer payload.cursor += 1;
+        return @enumFromInt(payload.extra[payload.cursor]);
+    }
+
+    fn list(payload: *Fields) []const Node.Index {
+        assert(payload.cursor < payload.extra.len);
+        const length = payload.extra[payload.cursor];
+        assert(payload.cursor + 1 + length <= payload.extra.len);
+
+        defer payload.cursor += 1 + length;
+        return @ptrCast(payload.extra[payload.cursor + 1 ..][0..length]);
+    }
+};
+
+// the view
+
+pub const BinaryOp = enum {
     add,
     sub,
     mul,
@@ -153,23 +216,22 @@ pub const BinaryOp = enum(u4) {
     bool_or,
 };
 
-pub const UnaryOp = enum { negate, bool_not };
+pub const UnaryOp = enum { negate, bool_not, address_of };
 
 /// `none` bans chaining, so `a < b < c` is reported rather than nested.
-pub const Assoc = enum(u1) { left, none };
+pub const Assoc = enum { left, right, none };
 
-/// `prec` 0 means the token is not an infix operator.
-pub const OperInfo = packed struct(u16) {
-    prec: u5 = 0,
+pub const OperInfo = struct {
+    /// Zero means the token is not an infix operator.
+    prec: u8 = 0,
     assoc: Assoc = .left,
-    op: BinaryOp = .add,
-    _pad: u6 = 0,
+    /// Null for the tokens whose node is not `.binary`.
+    op: ?BinaryOp = null,
 };
 
-/// The one place a token maps to the operator it means. `Parse` reads `prec` and
-/// `assoc`; `viewOf` reads `op` back off the token.
+/// The one place a token maps to the infix operator it means.
 pub const oper_table: [Token.tag_count]OperInfo = blk: {
-    var t: [Token.tag_count]OperInfo = @splat(.{});
+    var table: [Token.tag_count]OperInfo = @splat(.{});
     for (.{
         .{ Token.Tag.kw_or, 1, Assoc.left, BinaryOp.bool_or },
         .{ Token.Tag.kw_and, 2, Assoc.left, BinaryOp.bool_and },
@@ -179,170 +241,208 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
         .{ Token.Tag.lt_eq, 3, Assoc.none, BinaryOp.less_or_equal },
         .{ Token.Tag.gt, 3, Assoc.none, BinaryOp.greater_than },
         .{ Token.Tag.gt_eq, 3, Assoc.none, BinaryOp.greater_or_equal },
-        .{ Token.Tag.plus, 4, Assoc.left, BinaryOp.add },
-        .{ Token.Tag.minus, 4, Assoc.left, BinaryOp.sub },
-        .{ Token.Tag.star, 5, Assoc.left, BinaryOp.mul },
-        .{ Token.Tag.slash, 5, Assoc.left, BinaryOp.div },
-        .{ Token.Tag.percent, 5, Assoc.left, BinaryOp.mod },
-    }) |e| t[@intFromEnum(e[0])] = .{ .prec = e[1], .assoc = e[2], .op = e[3] };
-    break :blk t;
+        .{ Token.Tag.plus, 5, Assoc.left, BinaryOp.add },
+        .{ Token.Tag.minus, 5, Assoc.left, BinaryOp.sub },
+        .{ Token.Tag.star, 6, Assoc.left, BinaryOp.mul },
+        .{ Token.Tag.slash, 6, Assoc.left, BinaryOp.div },
+        .{ Token.Tag.percent, 6, Assoc.left, BinaryOp.mod },
+    }) |entry| table[@intFromEnum(entry[0])] = .{
+        .prec = entry[1],
+        .assoc = entry[2],
+        .op = entry[3],
+    };
+    // supplying a value binds looser than arithmetic and tighter than comparison,
+    // and nests right, so `a orelse b orelse c` tries each in turn
+    for (.{ Token.Tag.kw_orelse, Token.Tag.kw_catch }) |tag| {
+        table[@intFromEnum(tag)] = .{ .prec = 4, .assoc = .right };
+    }
+    break :blk table;
 };
 
-/// A node in the shape a reader wants
+/// The one place a token maps to the prefix operator it means.
+pub const unary_table: [Token.tag_count]?UnaryOp = blk: {
+    var table: [Token.tag_count]?UnaryOp = @splat(null);
+    table[@intFromEnum(Token.Tag.minus)] = .negate;
+    table[@intFromEnum(Token.Tag.bang)] = .bool_not;
+    table[@intFromEnum(Token.Tag.ampersand)] = .address_of;
+    break :blk table;
+};
+
 pub const View = union(enum) {
     root: []const Node.Index,
-    block: []const Node.Index,
-    struct_type: []const Node.Index,
-    use_decl: Node.Index,
-    grouped: Node.Index,
-    pointer_type: Pointer,
-    return_stmt: Node.OptionalIndex,
-    break_stmt: TokenIndex,
-    continue_stmt: TokenIndex,
-
+    use_decl: Use,
+    struct_decl: StructDecl,
+    type_decl: TypeDecl,
     fn_decl: FnDecl,
     var_decl: VarDecl,
-    if_stmt: If,
-    for_stmt: For,
-    call: Call,
-    binary: Binary,
-    unary: Unary,
+    type_param: Token.Index,
     param: TypedName,
     field: TypedName,
-    field_access: FieldAccess,
-    assign: Assign,
 
-    ident: TokenIndex,
-    number_literal: TokenIndex,
-    str_literal: TokenIndex,
-    bool_literal: struct { value: bool, token: TokenIndex },
+    block: []const Node.Index,
+    assign: Pair,
+    defer_stmt: Node.Index,
+    if_stmt: If,
+    while_stmt: While,
+    break_stmt: Token.Index,
+    continue_stmt: Token.Index,
+    return_stmt: Node.OptionalIndex,
+    capture: Token.Index,
+
+    ident: Token.Index,
+    number_literal: Token.Index,
+    str_literal: Token.Index,
+    bool_literal: Bool,
+    null_literal: Token.Index,
+
+    field_access: FieldAccess,
+    instance: Instance,
+    call: Call,
+    struct_literal: []const Node.Index,
+    struct_field_init: NamedValue,
+    error_value: Token.Index,
+
+    try_expr: Node.Index,
+    orelse_expr: Pair,
+    catch_expr: Catch,
+    binary: Binary,
+    unary: Unary,
+    grouped: Node.Index,
+
+    pointer_type: Pointer,
+    optional_type: Node.Index,
+    error_union_type: Node.Index,
 
     err,
 
-    pub const FnDecl = struct {
-        name_token: TokenIndex,
+    pub const Use = struct { is_pub: bool, path: Node.Index };
+    pub const StructDecl = struct {
+        name_token: Token.Index,
         is_pub: bool,
+        type_params: []const Node.Index,
+        members: []const Node.Index,
+    };
+    pub const TypeDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
+    pub const FnDecl = struct {
+        name_token: Token.Index,
+        is_pub: bool,
+        type_params: []const Node.Index,
         params: []const Node.Index,
         /// `.none` is a function returning nothing.
         return_type: Node.OptionalIndex,
+        /// A block, or the expression of an `= expr` body.
         body: Node.Index,
     };
     pub const VarDecl = struct {
-        name_token: TokenIndex,
-        /// `var` rather than `let`.
+        name_token: Token.Index,
         is_mutable: bool,
         is_pub: bool,
-        /// `.none` when nothing was written, and the initializer decides the type.
+        /// `.none` when the initializer decides the type.
         type_expr: Node.OptionalIndex,
         init_expr: Node.Index,
     };
-    /// Mutability is a token, never a stored bit.
-    pub const Pointer = struct { is_mutable: bool, child: Node.Index };
-    /// `else_node` is a block, or an `if_stmt` when the source chained `else if`.
-    pub const If = struct { cond: Node.Index, then_block: Node.Index, else_node: Node.OptionalIndex };
-    /// No condition is `for { }`, which only a `break` or `return` leaves.
-    pub const For = struct { cond: Node.OptionalIndex, body: Node.Index };
-    pub const TypedName = struct { name_token: TokenIndex, type_expr: Node.Index };
+    pub const TypedName = struct { name_token: Token.Index, type_expr: Node.Index };
+    pub const NamedValue = struct { name_token: Token.Index, value: Node.Index };
+    pub const Pair = struct { lhs: Node.Index, rhs: Node.Index };
+    /// `else_node` is a block, or another `if_stmt` for a chained `else if`.
+    pub const If = struct {
+        cond: Node.Index,
+        capture: Node.OptionalIndex,
+        then_block: Node.Index,
+        else_node: Node.OptionalIndex,
+    };
+    /// No condition is `while { }`, which only a `break` or `return` leaves.
+    pub const While = struct { cond: Node.OptionalIndex, body: Node.Index };
+    pub const Instance = struct { base: Node.Index, args: []const Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
-    pub const FieldAccess = struct { lhs: Node.Index, name_token: TokenIndex };
-    pub const Assign = struct { lhs: Node.Index, rhs: Node.Index };
-    pub const Binary = struct { op: BinaryOp, op_token: TokenIndex, lhs: Node.Index, rhs: Node.Index };
-    pub const Unary = struct { op: UnaryOp, op_token: TokenIndex, operand: Node.Index };
+    /// `rhs` is a value, or the block of `a catch |err| { }`.
+    pub const Catch = struct { lhs: Node.Index, capture: Node.OptionalIndex, rhs: Node.Index };
+    pub const FieldAccess = struct { lhs: Node.Index, name_token: Token.Index };
+    pub const Pointer = struct { is_mutable: bool, child: Node.Index };
+    pub const Bool = struct { value: bool, token: Token.Index };
+    pub const Binary = struct {
+        op: BinaryOp,
+        op_token: Token.Index,
+        lhs: Node.Index,
+        rhs: Node.Index,
+    };
+    pub const Unary = struct { op: UnaryOp, op_token: Token.Index, operand: Node.Index };
 };
 
-pub fn viewOf(tree: Ast, n: Node.Index) View {
-    const main = tree.nodeMainToken(n);
-    const data = tree.nodes.items(.data)[@intFromEnum(n)];
-    return switch (tree.nodeTag(n)) {
-        .root => .{ .root = tree.nodesIn(data.extra_range) },
-        .block => .{ .block = tree.nodesIn(data.extra_range) },
-        .struct_type => .{ .struct_type = tree.nodesIn(data.extra_range) },
-        .use_decl => .{ .use_decl = data.node },
-        .grouped => .{ .grouped = data.node },
-        .pointer_type => .{ .pointer_type = .{
-            .is_mutable = tree.tokenTag(main + 1) == .kw_var,
-            .child = data.node,
-        } },
-        .return_stmt => .{ .return_stmt = data.opt_node },
-        .break_stmt => .{ .break_stmt = main },
-        .continue_stmt => .{ .continue_stmt = main },
-        .err => .err,
+pub fn viewOf(tree: AST, node: Node.Index) View {
+    assert(node.int() < tree.nodes.len);
 
-        // `if cond { } else ...`. `extra` is the condition, then block, and else.
-        .if_stmt => blk: {
-            const s = @intFromEnum(data.extra_range.start);
-            const e = @intFromEnum(data.extra_range.end);
-            assert(e - s >= 2); // the parser always appends the condition and then block
-            break :blk .{ .if_stmt = .{
-                .cond = @enumFromInt(tree.extra[s]),
-                .then_block = @enumFromInt(tree.extra[s + 1]),
-                .else_node = if (e - s > 2) @enumFromInt(tree.extra[s + 2]) else .none,
+    const main = tree.nodeMainToken(node);
+    const data = tree.nodes.items(.data)[node.int()];
+    const view = unpack(tree, tree.nodeTag(node), main, data);
+
+    assert(std.mem.eql(u8, @tagName(view), @tagName(tree.nodeTag(node))));
+    return view;
+}
+
+fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) View {
+    return switch (node_tag) {
+        .root => .{ .root = tree.listAt(data.extra) },
+        .use_decl => .{ .use_decl = .{ .is_pub = tree.isPub(main), .path = data.node } },
+        .struct_decl => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .struct_decl = .{
+                .name_token = main.after(1),
+                .is_pub = tree.isPub(main),
+                .type_params = payload.list(),
+                .members = payload.list(),
             } };
         },
-        .for_stmt => .{ .for_stmt = .{
-            .cond = data.opt_node_and_node[0],
-            .body = data.opt_node_and_node[1],
+        .type_decl => .{ .type_decl = .{
+            .name_token = main.after(1),
+            .is_pub = tree.isPub(main),
+            .aliased = data.node,
         } },
-
+        .fn_decl => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .fn_decl = .{
+                .name_token = main.after(1),
+                .is_pub = tree.isPub(main),
+                .type_params = payload.list(),
+                .params = payload.list(),
+                .return_type = payload.optNode(),
+                .body = payload.node(),
+            } };
+        },
+        .var_decl => .{ .var_decl = .{
+            .name_token = main.after(1),
+            .is_mutable = tree.tokenTag(main) == .kw_var,
+            .is_pub = tree.isPub(main),
+            .type_expr = data.opt_node_and_node[0],
+            .init_expr = data.opt_node_and_node[1],
+        } },
+        .type_param => .{ .type_param = main },
         .param => .{ .param = .{ .name_token = main, .type_expr = data.node } },
         .field => .{ .field = .{ .name_token = main, .type_expr = data.node } },
-        .field_access => .{ .field_access = .{ .lhs = data.node, .name_token = main + 1 } },
+
+        .block => .{ .block = tree.listAt(data.extra) },
         .assign => .{ .assign = .{
             .lhs = data.node_and_node[0],
             .rhs = data.node_and_node[1],
         } },
-
-        // `fn name(params) Ret { body }`. `extra` is params, return type, body.
-        .fn_decl => blk: {
-            const s = @intFromEnum(data.extra_range.start);
-            const e = @intFromEnum(data.extra_range.end);
-            assert(e - s >= 2); // the parser always appends the return type and body
-            break :blk .{ .fn_decl = .{
-                .name_token = main + 1,
-                .is_pub = main > 0 and tree.tokenTag(main - 1) == .kw_pub,
-                .params = @ptrCast(tree.extra[s .. e - 2]),
-                .return_type = @enumFromInt(tree.extra[e - 2]),
-                .body = @enumFromInt(tree.extra[e - 1]),
+        .defer_stmt => .{ .defer_stmt = data.node },
+        .if_stmt => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .if_stmt = .{
+                .cond = payload.node(),
+                .capture = payload.optNode(),
+                .then_block = payload.node(),
+                .else_node = payload.optNode(),
             } };
         },
-        // `callee(args)`. `extra` is the callee, then the arguments.
-        .call => blk: {
-            const s = @intFromEnum(data.extra_range.start);
-            const e = @intFromEnum(data.extra_range.end);
-            assert(e > s); // the parser always appends the callee
-            break :blk .{ .call = .{
-                .callee = @enumFromInt(tree.extra[s]),
-                .args = @ptrCast(tree.extra[s + 1 .. e]),
-            } };
-        },
-
-        .var_decl => .{ .var_decl = .{
-            .name_token = main + 1,
-            .is_mutable = tree.tokenTag(main) == .kw_var,
-            .is_pub = main > 0 and tree.tokenTag(main - 1) == .kw_pub,
-            .type_expr = data.opt_node_and_node[0],
-            .init_expr = data.opt_node_and_node[1],
+        .while_stmt => .{ .while_stmt = .{
+            .cond = data.opt_node_and_node[0],
+            .body = data.opt_node_and_node[1],
         } },
-
-        .binary => blk: {
-            const info = oper_table[@intFromEnum(tree.tokenTag(main))];
-            assert(info.prec != 0); // a binary node's main_token is an infix operator
-            break :blk .{ .binary = .{
-                .op = info.op,
-                .op_token = main,
-                .lhs = data.node_and_node[0],
-                .rhs = data.node_and_node[1],
-            } };
-        },
-        .unary => .{ .unary = .{
-            .op = switch (tree.tokenTag(main)) {
-                .minus => .negate,
-                .bang => .bool_not,
-                else => unreachable,
-            },
-            .op_token = main,
-            .operand = data.node,
-        } },
+        .break_stmt => .{ .break_stmt = main },
+        .continue_stmt => .{ .continue_stmt = main },
+        .return_stmt => .{ .return_stmt = data.opt_node },
+        .capture => .{ .capture = main },
 
         .ident => .{ .ident = main },
         .number_literal => .{ .number_literal = main },
@@ -351,132 +451,148 @@ pub fn viewOf(tree: Ast, n: Node.Index) View {
             .value = tree.tokenTag(main) == .kw_true,
             .token = main,
         } },
+        .null_literal => .{ .null_literal = main },
+
+        .field_access => .{ .field_access = .{ .lhs = data.node, .name_token = main.after(1) } },
+        .instance => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .instance = .{ .base = payload.node(), .args = payload.list() } };
+        },
+        .call => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .call = .{ .callee = payload.node(), .args = payload.list() } };
+        },
+        .struct_literal => .{ .struct_literal = tree.listAt(data.extra) },
+        .struct_field_init => .{ .struct_field_init = .{ .name_token = main, .value = data.node } },
+        .error_value => .{ .error_value = main },
+
+        .try_expr => .{ .try_expr = data.node },
+        .orelse_expr => .{ .orelse_expr = .{
+            .lhs = data.node_and_node[0],
+            .rhs = data.node_and_node[1],
+        } },
+        .catch_expr => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .catch_expr = .{
+                .lhs = payload.node(),
+                .capture = payload.optNode(),
+                .rhs = payload.node(),
+            } };
+        },
+        .binary => .{
+            .binary = .{
+                // `.binary` is only built for tokens the table names an operator for
+                .op = oper_table[@intFromEnum(tree.tokenTag(main))].op.?,
+                .op_token = main,
+                .lhs = data.node_and_node[0],
+                .rhs = data.node_and_node[1],
+            },
+        },
+        .unary => .{ .unary = .{
+            .op = unary_table[@intFromEnum(tree.tokenTag(main))].?,
+            .op_token = main,
+            .operand = data.node,
+        } },
+        .grouped => .{ .grouped = data.node },
+
+        .pointer_type => .{ .pointer_type = .{
+            .is_mutable = tree.tokenTag(main.after(1)) == .kw_var,
+            .child = data.node,
+        } },
+        .optional_type => .{ .optional_type = data.node },
+        .error_union_type => .{ .error_union_type = data.node },
+
+        .err => .err,
     };
 }
 
-fn nodesIn(tree: Ast, range: Node.ExtraRange) []const Node.Index {
-    return @ptrCast(tree.extra[@intFromEnum(range.start)..@intFromEnum(range.end)]);
+fn fields(tree: AST, start: ExtraIndex) Fields {
+    assert(@intFromEnum(start) <= tree.extra.len);
+    return .{ .extra = tree.extra, .cursor = @intFromEnum(start) };
 }
 
-// Access
-
-pub fn nodeTag(tree: Ast, n: Node.Index) Node.Tag {
-    return tree.nodes.items(.tag)[@intFromEnum(n)];
+fn listAt(tree: AST, start: ExtraIndex) []const Node.Index {
+    var payload = tree.fields(start);
+    return payload.list();
 }
 
-pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
-    return switch (tree.viewOf(node)) {
-        .ident, .number_literal, .str_literal => |token| token,
-        .bool_literal => |it| it.token,
-        .param, .field => |it| it.name_token,
-        .binary => |it| tree.firstToken(it.lhs),
-        .field_access => |it| tree.firstToken(it.lhs),
-        .assign => |it| tree.firstToken(it.lhs),
-        .call => |it| tree.firstToken(it.callee),
-        else => tree.nodeMainToken(node),
-    };
+/// `pub` is always the token before the keyword a declaration is named by.
+fn isPub(tree: AST, main: Token.Index) bool {
+    assert(main.int() < tree.tokens.len);
+
+    if (main == .first) return false;
+    return tree.tokenTag(main.before(1)) == .kw_pub;
 }
 
-/// The last token of a node's span, so a label can underline all of it.
-pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
-    return switch (tree.viewOf(node)) {
-        .ident, .number_literal, .str_literal => |token| token,
-        .bool_literal => |it| it.token,
-        .field_access => |it| it.name_token,
-        .binary => |it| tree.lastToken(it.rhs),
-        .assign => |it| tree.lastToken(it.rhs),
-        .unary => |it| tree.lastToken(it.operand),
-        .grouped => |inner| tree.lastToken(inner) + 1,
-        .pointer_type => |it| tree.lastToken(it.child),
-        .param, .field => |it| tree.lastToken(it.type_expr),
-        .var_decl => |it| tree.lastToken(it.init_expr),
-        .return_stmt => |it| if (it.unwrap()) |e| tree.lastToken(e) else tree.nodeMainToken(node),
-        .if_stmt => |it| tree.lastToken(it.else_node.unwrap() orelse it.then_block),
-        .for_stmt => |it| tree.lastToken(it.body),
-        .break_stmt, .continue_stmt => |token| token,
-        // The closing token is not stored, and always follows what it closes.
-        .call => |it| 1 + if (it.args.len > 0)
-            tree.lastToken(it.args[it.args.len - 1])
-        else
-            tree.nodeMainToken(node),
-        // A statement's newline puts a semicolon between it and the brace.
-        .block, .struct_type, .root => |stmts| if (stmts.len > 0)
-            tree.pastSemis(tree.lastToken(stmts[stmts.len - 1]))
-        else
-            tree.nodeMainToken(node) + 1,
-        .use_decl => |child| tree.lastToken(child),
-        .fn_decl => |it| tree.lastToken(it.body),
-        .err => tree.nodeMainToken(node),
-    };
+// nodes
+
+pub fn nodeTag(tree: AST, node: Node.Index) Node.Tag {
+    assert(node.int() < tree.nodes.len);
+    return tree.nodes.items(.tag)[node.int()];
 }
 
-pub fn nodeMainToken(tree: Ast, n: Node.Index) TokenIndex {
-    return tree.nodes.items(.main_token)[@intFromEnum(n)];
+pub fn nodeMainToken(tree: AST, node: Node.Index) Token.Index {
+    assert(node.int() < tree.nodes.len);
+    return tree.nodes.items(.main_token)[node.int()];
 }
 
-fn pastSemis(tree: Ast, token: TokenIndex) TokenIndex {
-    var at = token + 1;
-    while (tree.tokenTag(at) == .semi) at += 1;
-    return at;
-}
+/// The first of the run of doc comments above a declaration. Nothing is stored,
+/// they sit in the token stream where they were typed.
+pub fn docComment(tree: AST, decl: Node.Index) ?Token.Index {
+    var first = tree.declStart(decl);
+    if (first == .first) return null;
+    if (tree.tokenTag(first.before(1)) != .doc_comment) return null;
 
-pub fn tokenTag(tree: Ast, i: TokenIndex) Token.Tag {
-    return tree.tokens.items(.tag)[i];
-}
-
-pub fn tokenStart(tree: Ast, i: TokenIndex) u32 {
-    return tree.tokens.items(.start)[i];
-}
-
-pub fn tokenSlice(tree: Ast, i: TokenIndex) []const u8 {
-    const tag = tree.tokenTag(i);
-    const start = tree.tokenStart(i);
-    return tree.source[start..Tokenizer.tokenEnd(tree.source, tag, start)];
-}
-
-// Errors
-
-pub const Error = struct {
-    tag: Tag,
-    /// What the message points at, and where the parser gave up.
-    token: TokenIndex,
-    /// Only `expected_token` reads this, and it is set whenever that tag is.
-    expected: ?Token.Tag = null,
-
-    /// Explicit and permanent, like `Diagnostic.Tag`'s. Parse errors own E01xx.
-    pub const Tag = enum(u16) {
-        expected_token = 101,
-        expected_expr = 102,
-        expected_statement = 103,
-        expected_top_level_decl = 104,
-        expected_param = 105,
-        expected_field = 106,
-        chained_comparison = 107,
-        invalid_assign_target = 108,
-        nesting_too_deep = 109,
-        invalid_bytes = 110,
-        stray_else = 111,
-    };
-
-    pub fn render(err: Error, tree: Ast, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        const found = tree.tokenTag(err.token).symbol();
-        switch (err.tag) {
-            .expected_token => try w.print("expected '{s}', found {s}", .{
-                err.expected.?.lexeme() orelse err.expected.?.symbol(),
-                found,
-            }),
-            .expected_expr => try w.print("expected an expression, found {s}", .{found}),
-            .expected_statement => try w.print("expected a statement, found {s}", .{found}),
-            .expected_top_level_decl => try w.print("expected a declaration, found {s}", .{found}),
-            .expected_param => try w.print("expected a parameter, found {s}", .{found}),
-            .expected_field => try w.print("expected a field, found {s}", .{found}),
-            .chained_comparison => try w.writeAll("comparison operators cannot be chained"),
-            .invalid_assign_target => try w.writeAll("cannot assign to this expression"),
-            .nesting_too_deep => try w.writeAll("expression nests too deeply"),
-            .invalid_bytes => try w.writeAll("invalid bytes"),
-            .stray_else => try w.writeAll(
-                "'else' has no 'if' here. It has to sit on the same line as the '}' that closes one",
-            ),
-        }
+    while (first != .first and tree.tokenTag(first.before(1)) == .doc_comment) {
+        first = first.before(1);
     }
-};
+
+    assert(tree.tokenTag(first) == .doc_comment);
+    return first;
+}
+
+/// Where a declaration begins, counting the `pub` it was written with.
+fn declStart(tree: AST, node: Node.Index) Token.Index {
+    assert(node.int() < tree.nodes.len);
+
+    const main = tree.nodeMainToken(node);
+    return if (tree.isPub(main)) main.before(1) else main;
+}
+
+// tokens
+
+/// Past the last token reads as `.eof`. A derivation like "the token after this
+/// one" can run off the end of a tree that failed to parse, and a wrong answer
+/// beats a crash in a file already being rejected.
+pub fn tokenTag(tree: AST, index: Token.Index) Token.Tag {
+    const tags = tree.tokens.items(.tag);
+    assert(tags.len > 0);
+    if (index.int() < tags.len) return tags[index.int()];
+    return .eof;
+}
+
+pub fn tokenStart(tree: AST, index: Token.Index) u32 {
+    const starts = tree.tokens.items(.start);
+    assert(starts.len > 0);
+    if (index.int() < starts.len) return starts[index.int()];
+    return @intCast(tree.source.len);
+}
+
+pub fn tokenEnd(tree: AST, index: Token.Index) u32 {
+    const start = tree.tokenStart(index);
+    assert(start <= tree.source.len);
+
+    const end = Tokenizer.tokenEnd(tree.source, tree.tokenTag(index), start);
+    // clamped, because a `.semi` inserted at the end of file has the length of
+    // a `;` it does not occupy
+    return @min(end, @as(u32, @intCast(tree.source.len)));
+}
+
+pub fn tokenSlice(tree: AST, index: Token.Index) []const u8 {
+    const start = tree.tokenStart(index);
+    const end = tree.tokenEnd(index);
+
+    assert(start <= end);
+    assert(end <= tree.source.len);
+    return tree.source[start..end];
+}

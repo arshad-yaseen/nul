@@ -1,0 +1,28 @@
+/// Where the standard allocator lives.
+use std.mem.Arena
+
+/// The largest thing anyone should ask for.
+/// Two lines, both kept.
+pub let limit = 1024
+
+/// A name for a number.
+pub type Count = i64
+
+/// A point in the plane.
+pub struct Point {
+    /// How far across.
+    x: i64
+    /// How far up.
+    y: i64
+
+    /// The distance from the origin, squared.
+    pub fn squared(self: Point) i64 {
+        return self.x * self.x + self.y * self.y
+    }
+}
+
+/// Adds two numbers.
+pub fn add(a: i64, b: i64) i64 {
+    // Not a doc comment, and attached to nothing.
+    return a + b
+}

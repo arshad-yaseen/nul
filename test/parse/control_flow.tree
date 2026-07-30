@@ -1,0 +1,74 @@
+root
+  fn_decl branches
+    param a
+      type: ident i64
+    ret: ident i64
+    body: block
+      if_stmt
+        cond: binary greater_than
+          lhs: ident a
+          rhs: number_literal 10
+        then: block
+          return_stmt
+            value: number_literal 1
+        else: if_stmt
+          cond: binary greater_than
+            lhs: ident a
+            rhs: number_literal 5
+          then: block
+            return_stmt
+              value: number_literal 2
+          else: if_stmt
+            cond: binary greater_than
+              lhs: ident a
+              rhs: number_literal 0
+            then: block
+              return_stmt
+                value: number_literal 3
+            else: block
+              return_stmt
+                value: number_literal 4
+  fn_decl loops
+    param a
+      type: ident i64
+    param limit
+      type: ident i64
+    body: block
+      var_decl i var
+        init: ident a
+      while_stmt
+        body: block
+          break_stmt
+      while_stmt
+        cond: binary less_than
+          lhs: ident i
+          rhs: ident limit
+        body: block
+          if_stmt
+            cond: binary equal
+              lhs: ident i
+              rhs: number_literal 3
+            then: block
+              continue_stmt
+          assign
+            lhs: ident i
+            rhs: binary add
+              lhs: ident i
+              rhs: number_literal 1
+  fn_decl cleanup
+    param arena
+      type: ident Arena
+    body: block
+      var_decl scratch var
+        init: call
+          callee: field_access child
+            lhs: ident arena
+      defer_stmt
+        child: call
+          callee: field_access destroy
+            lhs: ident scratch
+      defer_stmt
+        child: call
+          callee: ident report
+          arg: str_literal "done"
+      return_stmt

@@ -1,0 +1,21 @@
+use std.mem.Arena
+pub use helper.twice
+
+let internal = 1
+pub let limit = 90 + 10
+pub let name: i64 = 7
+
+pub type Count = i64
+
+pub struct Empty {}
+
+struct Point {
+    x: i64
+    y: i64
+}
+
+fn nothing() {}
+
+pub fn add(a: i64, b: i64) i64 {
+    return a + b
+}

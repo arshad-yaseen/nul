@@ -1,0 +1,38 @@
+root
+  use_decl
+    path: field_access Arena
+      lhs: field_access mem
+        lhs: ident std
+  use_decl pub
+    path: field_access twice
+      lhs: ident helper
+  var_decl internal let
+    init: number_literal 1
+  var_decl limit let pub
+    init: binary add
+      lhs: number_literal 90
+      rhs: number_literal 10
+  var_decl name let pub
+    type: ident i64
+    init: number_literal 7
+  type_decl Count pub
+    type: ident i64
+  struct_decl Empty pub
+  struct_decl Point
+    field x
+      type: ident i64
+    field y
+      type: ident i64
+  fn_decl nothing
+    body: block
+  fn_decl add pub
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_stmt
+        value: binary add
+          lhs: ident a
+          rhs: ident b

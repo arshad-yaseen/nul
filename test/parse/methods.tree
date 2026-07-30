@@ -1,0 +1,52 @@
+root
+  struct_decl Counter pub
+    field hits
+      type: ident i64
+    fn_decl total pub
+      param self
+        type: ident Counter
+      ret: ident i64
+      body: block
+        return_stmt
+          value: field_access hits
+            lhs: ident self
+    fn_decl bump
+      param self
+        type: pointer_type var
+          child: ident Counter
+      param by
+        type: ident i64
+      body: block
+        assign
+          lhs: field_access hits
+            lhs: ident self
+          rhs: binary add
+            lhs: field_access hits
+              lhs: ident self
+            rhs: ident by
+    fn_decl zero pub
+      ret: ident Counter
+      body: block
+        return_stmt
+          value: struct_literal
+            struct_field_init hits
+              value: number_literal 0
+  fn_decl use_counter
+    param c
+      type: pointer_type var
+        child: ident Counter
+    ret: ident i64
+    body: block
+      call
+        callee: field_access bump
+          lhs: ident c
+        arg: number_literal 1
+      assign
+        lhs: ident _
+        rhs: call
+          callee: field_access zero
+            lhs: ident Counter
+      return_stmt
+        value: call
+          callee: field_access total
+            lhs: ident c

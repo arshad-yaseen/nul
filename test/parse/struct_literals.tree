@@ -1,0 +1,77 @@
+root
+  struct_decl Point
+    field x
+      type: ident i64
+    field y
+      type: ident i64
+  fn_decl build
+    param a
+      type: ident i64
+    ret: ident Point
+    body: block
+      var_decl p let
+        type: ident Point
+        init: struct_literal
+          struct_field_init x
+            value: ident a
+          struct_field_init y
+            value: number_literal 2
+      var_decl nested let
+        type: ident Wrapper
+        init: struct_literal
+          struct_field_init inner
+            value: struct_literal
+              struct_field_init x
+                value: number_literal 1
+              struct_field_init y
+                value: number_literal 2
+          struct_field_init tag
+            value: str_literal "n"
+      var_decl empty let
+        type: ident Point
+        init: struct_literal
+      var_decl spread let
+        type: ident Point
+        init: struct_literal
+          struct_field_init x
+            value: number_literal 1
+          struct_field_init y
+            value: number_literal 2
+      assign
+        lhs: ident _
+        rhs: ident nested
+      assign
+        lhs: ident _
+        rhs: ident empty
+      assign
+        lhs: ident _
+        rhs: ident spread
+      return_stmt
+        value: ident p
+  fn_decl places
+    param p
+      type: pointer_type var
+        child: ident Point
+    param a
+      type: ident i64
+    body: block
+      var_decl address let
+        init: unary address_of
+          operand: ident a
+      var_decl field_address let
+        init: unary address_of
+          operand: field_access x
+            lhs: ident p
+      assign
+        lhs: ident _
+        rhs: ident address
+      assign
+        lhs: ident _
+        rhs: ident field_address
+      assign
+        lhs: field_access x
+          lhs: ident p
+        rhs: number_literal 1
+      assign
+        lhs: ident _
+        rhs: ident a

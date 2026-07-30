@@ -1,0 +1,8 @@
+error[E0115]: '\q' is not an escape
+ --> test/parse-error/bad_escape.nul:1:22
+  |
+1 | pub let greeting = "a\qb"
+  |                      ^^ unknown escape
+  |
+  = help: the escapes are \n \t \r \\ \"
+

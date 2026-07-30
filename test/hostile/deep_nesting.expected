@@ -1,0 +1,8 @@
+error[E0111]: this nests more than 128 levels deep
+   --> test/hostile/deep_nesting.nul:129:1
+    |
+129 | (
+    | ^ too deep
+    |
+    = help: the rest of the file was not read
+

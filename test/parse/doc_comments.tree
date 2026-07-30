@@ -1,0 +1,51 @@
+root
+  use_decl
+    doc /// Where the standard allocator lives.
+    path: field_access Arena
+      lhs: field_access mem
+        lhs: ident std
+  var_decl limit let pub
+    doc /// The largest thing anyone should ask for.
+    doc /// Two lines, both kept.
+    init: number_literal 1024
+  type_decl Count pub
+    doc /// A name for a number.
+    type: ident i64
+  struct_decl Point pub
+    doc /// A point in the plane.
+    field x
+      doc /// How far across.
+      type: ident i64
+    field y
+      doc /// How far up.
+      type: ident i64
+    fn_decl squared pub
+      doc /// The distance from the origin, squared.
+      param self
+        type: ident Point
+      ret: ident i64
+      body: block
+        return_stmt
+          value: binary add
+            lhs: binary mul
+              lhs: field_access x
+                lhs: ident self
+              rhs: field_access x
+                lhs: ident self
+            rhs: binary mul
+              lhs: field_access y
+                lhs: ident self
+              rhs: field_access y
+                lhs: ident self
+  fn_decl add pub
+    doc /// Adds two numbers.
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_stmt
+        value: binary add
+          lhs: ident a
+          rhs: ident b

@@ -1,0 +1,17 @@
+use std.mem
+
+struct Node {
+    plain: i64
+    read_only: *Node
+    writable: *var Node
+    maybe: ?Node
+    maybe_pointer: ?*var Node
+    qualified: mem.Arena
+    deep: ?*var mem.Buffer
+}
+
+fn signatures(a: *Node, b: *var Node, c: ?i64) !*var Node {
+    return b
+}
+
+fn returns_nothing(a: i64) {}

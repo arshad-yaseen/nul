@@ -1,0 +1,8 @@
+error[E0109]: comparisons cannot be chained
+ --> test/parse-error/chained_comparison.nul:2:18
+  |
+2 |     return a < b < c
+  |                  ^ a second comparison
+  |
+  = help: write it as two comparisons joined with 'and'
+

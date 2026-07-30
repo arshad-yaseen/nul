@@ -1,0 +1,3 @@
+fn f(arena: Arena) str {
+    return read(arena) catch
+}

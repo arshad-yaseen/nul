@@ -1,0 +1,30 @@
+error[E0114]: this string is never closed
+ --> test/hostile/truncated.nul:2:40
+  |
+2 |     let text = try io.read_file(arena, "inp
+  |                                        ^^^^ no closing '"' before the end of the line
+  |
+  = help: a string literal stays on one line
+
+error[E0101]: expected ')', found the end of the line
+ --> test/hostile/truncated.nul:2:44
+  |
+2 |     let text = try io.read_file(arena, "inp
+  |                                            ^ expected ')'
+note: to close the '(' opened here
+ --> test/hostile/truncated.nul:2:32
+  |
+2 |     let text = try io.read_file(arena, "inp
+  |                                ^
+
+error[E0101]: expected '}', found end of file
+ --> test/hostile/truncated.nul:2:44
+  |
+2 |     let text = try io.read_file(arena, "inp
+  |                                            ^ expected '}'
+note: to close the '{' opened here
+ --> test/hostile/truncated.nul:1:43
+  |
+1 | pub fn read(arena: Arena, path: str) !str {
+  |                                           ^
+

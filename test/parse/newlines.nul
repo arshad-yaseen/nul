@@ -1,0 +1,26 @@
+// A newline ends a statement, so nothing here is written with a terminator.
+fn continuation(a: i64, b: i64) i64 {
+    let sum = a +
+        b
+    let call = wrap(
+        a,
+        b,
+    )
+    let compared = a <
+        b
+    _ = call
+    _ = compared
+    return sum
+}
+
+// A comment does not change what came before it.
+fn commented(a: i64) i64 {
+    let x = a // trailing
+    let y = a + // trailing after an operator
+        1
+    return x + y
+}
+
+fn one_liner(a: i64) i64 { return a }
+
+fn packed_block(a: i64) i64 { let b = a; return b }

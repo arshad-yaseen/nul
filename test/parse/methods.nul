@@ -1,0 +1,21 @@
+pub struct Counter {
+    hits: i64
+
+    pub fn total(self: Counter) i64 {
+        return self.hits
+    }
+
+    fn bump(self: *var Counter, by: i64) {
+        self.hits = self.hits + by
+    }
+
+    pub fn zero() Counter {
+        return .{ hits: 0 }
+    }
+}
+
+fn use_counter(c: *var Counter) i64 {
+    c.bump(1)
+    _ = Counter.zero()
+    return c.total()
+}

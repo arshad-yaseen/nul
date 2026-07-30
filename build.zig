@@ -2,6 +2,14 @@ const std = @import("std");
 
 const zon = @import("build.zig.zon");
 
+const test_dirs = [_][]const u8{ "test/parse", "test/parse-error", "test/hostile" };
+
+const unit_test_roots = [_][]const u8{
+    "compiler/Tokenizer.zig",
+    "compiler/util/string_literal.zig",
+    "compiler/Diagnostic.zig",
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -35,7 +43,7 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Build and run nul").dependOn(&run.step);
 
     const test_step = b.step("test", "Run unit tests and file tests");
-    for ([_][]const u8{ "compiler/Value.zig", "compiler/Diagnostic.zig" }) |root| {
+    for (unit_test_roots) |root| {
         const t = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(root),
@@ -69,7 +77,7 @@ pub fn build(b: *std.Build) void {
 fn addTestFiles(b: *std.Build, run: *std.Build.Step.Run) void {
     run.setCwd(b.path("."));
     const io = b.graph.io;
-    for ([_][]const u8{ "test/pass", "test/fail" }) |sub| {
+    for (test_dirs) |sub| {
         var dir = b.build_root.handle.openDir(io, sub, .{ .iterate = true }) catch continue;
         defer dir.close(io);
 

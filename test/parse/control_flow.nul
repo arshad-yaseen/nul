@@ -1,0 +1,31 @@
+fn branches(a: i64) i64 {
+    if a > 10 {
+        return 1
+    } else if a > 5 {
+        return 2
+    } else if a > 0 {
+        return 3
+    } else {
+        return 4
+    }
+}
+
+fn loops(a: i64, limit: i64) {
+    var i = a
+    while {
+        break
+    }
+    while i < limit {
+        if i == 3 {
+            continue
+        }
+        i = i + 1
+    }
+}
+
+fn cleanup(arena: Arena) {
+    var scratch = arena.child()
+    defer scratch.destroy()
+    defer report("done")
+    return
+}

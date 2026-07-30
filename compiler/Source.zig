@@ -1,82 +1,103 @@
 //! A source file in a buffer the tokenizer can scan without bounds checks.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-const Source = @This();
-
-/// One zero past the end is as far ahead as any scanner looks.
-pub const padding = 1;
-
-pub const max_bytes = std.math.maxInt(u32) - padding - 1;
-
-/// As written on the command line, and as a diagnostic's header spells it.
+/// As written on the command line, and as a diagnostic spells it.
 path: []const u8,
 /// The file, with `padding` zero bytes past the end.
 bytes: [:0]const u8,
 /// Built on first use, since a file nothing is reported about never needs it.
 line_starts: ?[]u32 = null,
 
+pub const padding = 1;
+
+pub const bytes_max = std.math.maxInt(u32) - padding - 1;
+
 pub const LoadError = error{ SourceTooLarge, OutOfMemory, ReadFailed };
 
+/// A line and column, both counted from one, as a message spells them.
+pub const LineColumn = struct { line: u32, column: u32 };
+
+const Source = @This();
+
 pub fn load(gpa: Allocator, io: std.Io, dir: std.Io.Dir, path: []const u8) LoadError!Source {
-    var file = dir.openFile(io, path, .{}) catch return error.ReadFailed;
+    assert(path.len > 0);
+
+    var file = dir.openFile(io, path, .{ .mode = .read_only }) catch return error.ReadFailed;
     defer file.close(io);
 
     const stat = file.stat(io) catch return error.ReadFailed;
-    if (stat.size > max_bytes) return error.SourceTooLarge;
-    const len: usize = @intCast(stat.size);
+    if (stat.size > bytes_max) return error.SourceTooLarge;
+    const length: u32 = @intCast(stat.size);
 
-    const buf = try gpa.alloc(u8, len + padding);
-    errdefer gpa.free(buf);
+    const buffer = try gpa.alloc(u8, length + padding);
+    errdefer gpa.free(buffer);
 
     var reader = file.reader(io, &.{});
-    reader.interface.readSliceAll(buf[0..len]) catch return error.ReadFailed;
-    @memset(buf[len..], 0);
+    reader.interface.readSliceAll(buffer[0..length]) catch return error.ReadFailed;
+    @memset(buffer[length..], 0);
 
-    return .{ .path = path, .bytes = buf[0..len :0] };
+    assert(buffer.len == length + padding);
+    return .{ .path = path, .bytes = buffer[0..length :0] };
 }
 
-pub fn deinit(src: *Source, gpa: Allocator) void {
-    gpa.free(src.bytes.ptr[0 .. src.bytes.len + padding]);
-    if (src.line_starts) |ls| gpa.free(ls);
-    src.* = undefined;
+pub fn deinit(source: *Source, gpa: Allocator) void {
+    assert(source.path.len > 0);
+    gpa.free(source.bytes.ptr[0 .. source.bytes.len + padding]);
+    if (source.line_starts) |starts| gpa.free(starts);
+    source.* = undefined;
 }
 
-pub const LineCol = struct { line: u32, col: u32 };
+pub fn lineColumn(source: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineColumn {
+    assert(offset <= source.bytes.len);
 
-/// Where each line starts, built on first use.
-fn lineStarts(src: *Source, gpa: Allocator) Allocator.Error![]u32 {
-    return src.line_starts orelse blk: {
-        var list: std.ArrayList(u32) = .empty;
-        errdefer list.deinit(gpa);
-        try list.append(gpa, 0);
-        var i: usize = 0;
-        while (std.mem.indexOfScalarPos(u8, src.bytes, i, '\n')) |nl| : (i = nl + 1) {
-            try list.append(gpa, @intCast(nl + 1));
-        }
-        src.line_starts = try list.toOwnedSlice(gpa);
-        break :blk src.line_starts.?;
-    };
+    const starts = try source.lineStarts(gpa);
+    assert(starts.len > 0);
+
+    const line_index = std.sort.upperBound(u32, starts, offset, order) - 1;
+    assert(line_index < starts.len);
+    assert(starts[line_index] <= offset);
+
+    return .{ .line = @intCast(line_index + 1), .column = offset - starts[line_index] + 1 };
 }
 
-pub fn lineCol(src: *Source, gpa: Allocator, offset: u32) Allocator.Error!LineCol {
-    const starts = try src.lineStarts(gpa);
-    const line = std.sort.upperBound(u32, starts, offset, struct {
-        fn order(ctx: u32, item: u32) std.math.Order {
-            return std.math.order(ctx, item);
-        }
-    }.order) - 1;
-    return .{ .line = @intCast(line + 1), .col = offset - starts[line] + 1 };
-}
-
-/// A 1-based line without its terminator. Out of range is empty, so a diagnostic
-/// pointing past the end still renders.
-pub fn lineText(src: *Source, gpa: Allocator, line: u32) Allocator.Error![]const u8 {
-    const starts = try src.lineStarts(gpa);
+/// The text of a line counted from one, without its terminator. A line past the
+/// end is empty, so a diagnostic pointing past the last byte still renders.
+pub fn lineText(source: *Source, gpa: Allocator, line: u32) Allocator.Error![]const u8 {
+    const starts = try source.lineStarts(gpa);
     if (line == 0 or line > starts.len) return "";
+
     const start = starts[line - 1];
-    const end = if (line < starts.len) starts[line] - 1 else @as(u32, @intCast(src.bytes.len));
-    const text = src.bytes[start..end];
+    const end = if (line < starts.len) starts[line] - 1 else @as(u32, @intCast(source.bytes.len));
+    assert(start <= end);
+
+    const text = source.bytes[start..end];
     return if (std.mem.endsWith(u8, text, "\r")) text[0 .. text.len - 1] else text;
+}
+
+/// Built on first use, since a file nothing is reported about never needs it.
+fn lineStarts(source: *Source, gpa: Allocator) Allocator.Error![]u32 {
+    if (source.line_starts) |starts| return starts;
+
+    // one line per forty bytes, measured against real source
+    var starts: std.ArrayList(u32) = .empty;
+    errdefer starts.deinit(gpa);
+    try starts.ensureTotalCapacity(gpa, @divFloor(source.bytes.len, 40) + 2);
+
+    starts.appendAssumeCapacity(0);
+    var cursor: u32 = 0;
+    while (std.mem.indexOfScalarPos(u8, source.bytes, cursor, '\n')) |newline| {
+        cursor = @intCast(newline + 1);
+        try starts.append(gpa, cursor);
+    }
+
+    source.line_starts = try starts.toOwnedSlice(gpa);
+    return source.line_starts.?;
+}
+
+/// Ordering for the binary search that turns an offset into a line.
+fn order(offset: u32, start: u32) std.math.Order {
+    return std.math.order(offset, start);
 }

@@ -1,0 +1,11 @@
+pub fn create[T](self: Arena) *var T = builtin.arena_create
+
+fn double(a: i64) i64 = a + a
+
+pub fn name() str = "nul"
+
+pub struct Arena {
+    base: i64
+
+    pub fn copy[T](self: Arena, value: T) T = builtin.arena_copy
+}

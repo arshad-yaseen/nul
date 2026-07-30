@@ -1,0 +1,2 @@
+pub fn read(arena: Arena, path: str) !str {
+    let text = try io.read_file(arena, "inp

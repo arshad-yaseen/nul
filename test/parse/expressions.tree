@@ -1,0 +1,141 @@
+root
+  fn_decl precedence
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl arithmetic let
+        init: binary sub
+          lhs: binary add
+            lhs: ident a
+            rhs: binary mul
+              lhs: ident b
+              rhs: ident c
+          rhs: binary mod
+            lhs: binary div
+              lhs: ident a
+              rhs: ident b
+            rhs: ident c
+      var_decl grouped let
+        init: binary mul
+          lhs: grouped
+            child: binary add
+              lhs: ident a
+              rhs: ident b
+          rhs: ident c
+      var_decl compared let
+        init: binary equal
+          lhs: binary add
+            lhs: ident a
+            rhs: ident b
+          rhs: ident c
+      var_decl logical let
+        init: binary bool_or
+          lhs: binary bool_and
+            lhs: binary less_than
+              lhs: ident a
+              rhs: ident b
+            rhs: binary greater_than
+              lhs: ident b
+              rhs: ident c
+          rhs: binary not_equal
+            lhs: ident a
+            rhs: ident c
+      var_decl unary let
+        init: binary add
+          lhs: unary negate
+            operand: ident a
+          rhs: unary bool_not
+            operand: bool_literal true
+      var_decl mixed let
+        init: binary add
+          lhs: unary negate
+            operand: grouped
+              child: binary mul
+                lhs: ident a
+                rhs: ident b
+          rhs: ident c
+      return_stmt
+        value: binary add
+          lhs: ident arithmetic
+          rhs: ident grouped
+  fn_decl literals
+    body: block
+      assign
+        lhs: ident _
+        rhs: number_literal 123
+      assign
+        lhs: ident _
+        rhs: number_literal 1.5
+      assign
+        lhs: ident _
+        rhs: number_literal 0xFF
+      assign
+        lhs: ident _
+        rhs: number_literal 1_000_000
+      assign
+        lhs: ident _
+        rhs: number_literal 1e10
+      assign
+        lhs: ident _
+        rhs: str_literal "text"
+      assign
+        lhs: ident _
+        rhs: str_literal "escapes \n \t \r \\ \""
+      assign
+        lhs: ident _
+        rhs: bool_literal true
+      assign
+        lhs: ident _
+        rhs: bool_literal false
+      assign
+        lhs: ident _
+        rhs: null_literal
+  fn_decl calls
+    param f
+      type: ident i64
+    param value
+      type: ident Node
+    body: block
+      assign
+        lhs: ident _
+        rhs: call
+          callee: ident f
+      assign
+        lhs: ident _
+        rhs: call
+          callee: ident f
+          arg: number_literal 1
+          arg: number_literal 2
+      assign
+        lhs: ident _
+        rhs: call
+          callee: ident f
+          arg: number_literal 1
+          arg: number_literal 2
+      assign
+        lhs: ident _
+        rhs: field_access field
+          lhs: ident value
+      assign
+        lhs: ident _
+        rhs: call
+          callee: field_access method
+            lhs: ident value
+          arg: number_literal 1
+      assign
+        lhs: ident _
+        rhs: call
+          callee: field_access method
+            lhs: ident Node
+          arg: ident value
+      assign
+        lhs: ident _
+        rhs: field_access c
+          lhs: field_access b
+            lhs: field_access a
+              lhs: ident value

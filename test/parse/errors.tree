@@ -1,0 +1,76 @@
+root
+  fn_decl read
+    param arena
+      type: ident Arena
+    param path
+      type: ident str
+    ret: error_union_type
+      child: ident str
+    body: block
+      var_decl text let
+        init: try_expr
+          child: call
+            callee: field_access read_file
+              lhs: ident io
+            arg: ident arena
+            arg: ident path
+      return_stmt
+        value: ident text
+  fn_decl fallback
+    param arena
+      type: ident Arena
+    ret: ident str
+    body: block
+      return_stmt
+        value: catch_expr
+          lhs: call
+            callee: ident read
+            arg: ident arena
+            arg: str_literal "a"
+          rhs: str_literal "default"
+  fn_decl handled
+    param arena
+      type: ident Arena
+    body: block
+      var_decl text let
+        init: catch_expr
+          lhs: call
+            callee: ident read
+            arg: ident arena
+            arg: str_literal "a"
+          capture: capture e
+          rhs: block
+            call
+              callee: ident report
+              arg: ident e
+      assign
+        lhs: ident _
+        rhs: ident text
+  fn_decl named
+    ret: error_union_type
+      child: ident i64
+    body: block
+      var_decl e let
+        init: error_value NotFound
+      assign
+        lhs: ident _
+        rhs: ident e
+      return_stmt
+        value: error_value OutOfRange
+  fn_decl chained
+    param arena
+      type: ident Arena
+    ret: ident str
+    body: block
+      return_stmt
+        value: catch_expr
+          lhs: call
+            callee: ident read
+            arg: ident arena
+            arg: str_literal "a"
+          rhs: catch_expr
+            lhs: call
+              callee: ident read
+              arg: ident arena
+              arg: str_literal "b"
+            rhs: str_literal "last"

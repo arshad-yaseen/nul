@@ -1,0 +1,32 @@
+fn precedence(a: i64, b: i64, c: i64) i64 {
+    let arithmetic = a + b * c - a / b % c
+    let grouped = (a + b) * c
+    let compared = a + b == c
+    let logical = a < b and b > c or a != c
+    let unary = -a + !true
+    let mixed = -(a * b) + c
+    return arithmetic + grouped
+}
+
+fn literals() {
+    _ = 123
+    _ = 1.5
+    _ = 0xFF
+    _ = 1_000_000
+    _ = 1e10
+    _ = "text"
+    _ = "escapes \n \t \r \\ \""
+    _ = true
+    _ = false
+    _ = null
+}
+
+fn calls(f: i64, value: Node) {
+    _ = f()
+    _ = f(1, 2)
+    _ = f(1, 2,)
+    _ = value.field
+    _ = value.method(1)
+    _ = Node.method(value)
+    _ = value.a.b.c
+}
