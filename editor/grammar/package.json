@@ -1,0 +1,22 @@
+{
+  "name": "tree-sitter-nul",
+  "version": "0.1.0",
+  "description": "Nul grammar for tree-sitter",
+  "main": "bindings/node",
+  "keywords": ["parser", "tree-sitter", "nul"],
+  "files": [
+    "grammar.js",
+    "tree-sitter.json",
+    "queries/*",
+    "src/**",
+    "bindings/node/*"
+  ],
+  "devDependencies": {
+    "tree-sitter-cli": "^0.26.11"
+  },
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  }
+}

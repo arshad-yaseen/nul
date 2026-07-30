@@ -1,0 +1,17 @@
+id = "nul"
+name = "Nul"
+version = "0.1.0"
+schema_version = 1
+description = "Nul language support."
+repository = "https://github.com/arshad-yaseen/nul"
+authors = ["arshad <arshadpyaseen@gmail.com>"]
+languages = ["languages/nul"]
+
+# Zed builds the grammar by cloning `repository` at `rev` and compiling
+# `<path>/src/parser.c` to wasm, so the generated parser has to be committed.
+# `rev` is a commit in this repository; `sync.sh` moves it to HEAD after the
+# grammar changes.
+[grammars.nul]
+repository = "file:///Users/admin/Desktop/Projects/nul"
+rev = "0000000000000000000000000000000000000000"
+path = "editor/grammar"

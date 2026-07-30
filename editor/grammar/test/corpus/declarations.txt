@@ -1,0 +1,204 @@
+================================================================================
+use, with a dotted path
+================================================================================
+
+use std.mem.Arena
+pub use std.io
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration
+    path: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (use_declaration
+    path: (qualified_name
+      (identifier)
+      (identifier))))
+
+================================================================================
+type aliases over every type former
+================================================================================
+
+type Port = u16
+pub type Routes = ?*var Route
+type Fallible = !u32
+type Named = Pair[str, i64]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration
+    name: (identifier)
+    value: (identifier))
+  (type_declaration
+    name: (identifier)
+    value: (optional_type
+      child: (pointer_type
+        child: (identifier))))
+  (type_declaration
+    name: (identifier)
+    value: (error_union_type
+      child: (identifier)))
+  (type_declaration
+    name: (identifier)
+    value: (generic_type
+      name: (identifier)
+      type_arguments: (type_arguments
+        (identifier)
+        (identifier)))))
+
+================================================================================
+a struct with fields and methods
+================================================================================
+
+pub struct Box[T] {
+    value: T
+    next: ?*var Box[T]
+
+    pub fn get(self: *Box[T]) T = self.value
+
+    pub fn set(self: *var Box[T], value: T) {
+        self.value = value
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (struct_declaration
+    name: (identifier)
+    type_parameters: (type_parameters
+      (type_parameter
+        (identifier)))
+    body: (struct_body
+      (field_declaration
+        name: (identifier)
+        type: (identifier))
+      (field_declaration
+        name: (identifier)
+        type: (optional_type
+          child: (pointer_type
+            child: (generic_type
+              name: (identifier)
+              type_arguments: (type_arguments
+                (identifier))))))
+      (function_declaration
+        name: (identifier)
+        parameters: (parameters
+          (parameter
+            name: (identifier)
+            type: (pointer_type
+              child: (generic_type
+                name: (identifier)
+                type_arguments: (type_arguments
+                  (identifier))))))
+        return_type: (identifier)
+        body: (field_expression
+          object: (identifier)
+          field: (identifier)))
+      (function_declaration
+        name: (identifier)
+        parameters: (parameters
+          (parameter
+            name: (identifier)
+            type: (pointer_type
+              child: (generic_type
+                name: (identifier)
+                type_arguments: (type_arguments
+                  (identifier)))))
+          (parameter
+            name: (identifier)
+            type: (identifier)))
+        body: (block
+          (assignment_statement
+            left: (field_expression
+              object: (identifier)
+              field: (identifier))
+            right: (identifier)))))))
+
+================================================================================
+a function returning nothing, and one with type parameters
+================================================================================
+
+fn report() {
+}
+
+pub fn boxed[T](arena: Arena, value: T) *var Box[T] {
+    return Box[T].of(arena, value)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters)
+    body: (block))
+  (function_declaration
+    name: (identifier)
+    type_parameters: (type_parameters
+      (type_parameter
+        (identifier)))
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (identifier))
+      (parameter
+        name: (identifier)
+        type: (identifier)))
+    return_type: (pointer_type
+      child: (generic_type
+        name: (identifier)
+        type_arguments: (type_arguments
+          (identifier))))
+    body: (block
+      (return_statement
+        value: (call_expression
+          function: (field_expression
+            object: (instance_expression
+              function: (identifier)
+              type_arguments: (type_arguments
+                (identifier)))
+            field: (identifier))
+          arguments: (arguments
+            (identifier)
+            (identifier)))))))
+
+================================================================================
+bindings, typed and inferred
+================================================================================
+
+let kilobyte = 1024
+pub let request_bytes_max: u32 = 8 * megabyte
+
+fn work() {
+    var total: i64 = 0
+    let name = "gateway"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (variable_declaration
+    name: (identifier)
+    value: (number_literal))
+  (variable_declaration
+    name: (identifier)
+    type: (identifier)
+    value: (binary_expression
+      left: (number_literal)
+      right: (identifier)))
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters)
+    body: (block
+      (variable_declaration
+        name: (identifier)
+        type: (identifier)
+        value: (number_literal))
+      (variable_declaration
+        name: (identifier)
+        value: (string_literal)))))
