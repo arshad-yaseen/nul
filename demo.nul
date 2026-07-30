@@ -1,5 +1,0 @@
-use std.math
-
-fn main() usize {
-    return math.sum(1, 2);
-}
