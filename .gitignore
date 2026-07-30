@@ -2,6 +2,4 @@
 zig-out/
 zig-pkg/
 
-# tree-sitter CLI leftovers
-editors/tree-sitter-nul/node_modules/
-editors/tree-sitter-nul/bun.lock
+.DS_Store
