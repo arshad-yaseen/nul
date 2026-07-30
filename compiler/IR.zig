@@ -1,8 +1,4 @@
-//! The typed IR, a control-flow graph per function, deliberately not SSA.
-//! Locals, loads, and stores stay visible, scope entry and exit are marked,
-//! and the six arena operations are instructions, because the memory checker
-//! must see memory. Every instruction carries its type and the node it came
-//! from, which is its source span.
+//! The typed IR, a control-flow graph per function.
 
 const std = @import("std");
 const assert = std.debug.assert;

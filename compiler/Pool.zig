@@ -1,6 +1,5 @@
 //! The interned pool. Every type and every constant is one row here, so
-//! equality anywhere in the compiler is index equality. The constant-folding
-//! core lives beside the rows it produces.
+//! equality anywhere in the compiler is index equality.
 
 const std = @import("std");
 const assert = std.debug.assert;

@@ -1,7 +1,4 @@
-//! A module is one file, however it is reached. Loading parses and registers
-//! declarations, and never analyzes, so imports cannot recurse. Resolution
-//! turns a `use` path into a file on disk, loads it once, and follows
-//! re-exports to the declaration they name.
+//! A module is one file.
 
 const std = @import("std");
 const assert = std.debug.assert;
