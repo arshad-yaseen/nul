@@ -20,7 +20,7 @@ there is one.** The rest of this document is that sentence, explained.
 Assignment and argument passing behave as if the value were copied.
 
 ```nul
-let Point = struct {
+struct Point {
     x: i64
     y: i64
 }
@@ -151,7 +151,7 @@ return them, hold them in collections, build linked lists, trees, graphs, and
 intrusive structures. No restrictions, no overhead, cycles included:
 
 ```nul
-let Node = struct {
+struct Node {
     value:  i64
     next:   *Node
     parent: *Node
@@ -290,7 +290,7 @@ direction and the dangerous one. So the rule that keeps the invariant true is a 
 about types, and a type that holds a pointer cannot be copied at all:
 
 ```nul
-let Pair = struct {
+struct Pair {
     left:  *Inner
     count: i64
 }
@@ -395,7 +395,7 @@ A write through one pointer can surprise code holding another. Here is the class
 shape:
 
 ```nul
-let Entry = struct {
+struct Entry {
     count: i64
 }
 
@@ -523,7 +523,7 @@ to objects created and destroyed over time. For these, store an identity rather 
 an access path:
 
 ```nul
-let Handle = struct {
+struct Handle {
     slot: usize                   // an index, not a pointer
 }
 
@@ -560,23 +560,35 @@ answers without an interpreter. Generics are type parameters in brackets —
 `Box[T]`, `List[Node]` — instantiated by substitution and memoized, so
 `Box[i64]` names one type however often and wherever it is written.
 
+A declaration says its own kind, and each keyword means one thing: `use` and
+`pub use` import and re-export, `struct` declares a type, `type` names an
+existing one, `fn` declares a function, and `let` and `var` bind values —
+immutable and mutable. A type is never spelled like a value, because it is not
+one. There is no separate keyword for a compile-time constant: a top-level
+`let` must have one, and the compiler reads that off the initializer rather
+than asking the author to announce it.
+
 In the language today: nominal structs, declared at the top level and generic
 over bracketed type parameters; pointers `*T` and `*var T`, with field access
-reaching through them; functions declared in a type's namespace, called
-through a value or through the type; `use` across files with `pub`; `let` and
-`var`; untyped constants that fold at 128 bits and take any type they fit;
-`if`/`else`, `for` with and without a condition, `break`, `continue`,
-`return`; and the whole `Arena` interface exactly as declared in
+reaching through them, and `&place` as a call argument; optionals `?T` with
+`orelse` and `if x |v|`; error unions `!T` over one universal error set, with
+`try` and `catch`; struct literals `.{ ... }`; `defer` at scope exit;
+functions declared in a type's namespace, called through a value or through
+the type; `use` across files with `pub`; untyped constants that fold at 128
+bits and take any type they fit, with one name per type and no synonyms —
+no `int`, no `uint`, no `byte`; `if`/`else`, `while` with and without a
+condition, `break`, `continue`, `return`, and `_ = e` to drop a value on
+purpose; and the whole `Arena` interface exactly as declared in
 `lib/std/mem.nul` — creation, children, `copy` with its refusal, and release
 by name. A call writes its type arguments, `arena.create[Node]()`, or omits
 them when a value pins them down, `arena.copy(p)`.
 
-Designed, and shown in examples above, but not yet in the grammar: struct
-literals `.{ ... }`, slices `[]T`, iteration `for x in`, error unions `!T`
-with `try`, string interpolation, pointer receivers (`self: *var List[T]`),
-and the library that needs them — `List`, `io`, the pool and reference
-counted types. An example using these shows where the language is going, not
-where the parser is.
+Designed, and shown in examples above, but not yet in the grammar: slices
+`[]T`, iteration `for x in` — `for` is not a keyword yet, and loops are
+`while` — string interpolation, pointer receivers on a generic container
+(`self: *var List[T]`), and the library that needs them: `List`, `io`, the
+pool and reference counted types. An example using these shows where the
+language is going, not where the parser is.
 
 Specified here but a later stage of the compiler: the region checker — every
 "rejected" above that names a lifetime, from `box.item = temp` to the reset
