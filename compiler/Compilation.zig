@@ -1,9 +1,4 @@
-//! The root object. Every table the compiler owns hangs off it, from the
-//! interned pool and the modules to declarations, instantiations, signature
-//! and field rows, function bodies, and diagnostics. Analysis is
-//! demand-driven, memoized, and dependency-recorded, and all three live in
-//! one place here, `ensure`. A re-entry into an in-progress unit is the
-//! definition of a cycle.
+//! The root object.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -1006,6 +1001,8 @@ fn pathInside(outer: []const u8, inner: []const u8) bool {
     return inner[trimmed.len] == '/';
 }
 
+// testing
+
 const testing = std.testing;
 
 fn testSource(gpa: Allocator, text: []const u8) Allocator.Error!Source {
@@ -1015,8 +1012,6 @@ fn testSource(gpa: Allocator, text: []const u8) Allocator.Error!Source {
     return .{ .path = "test.nul", .bytes = buffer[0..text.len :0] };
 }
 
-// identity is the memo. one (declaration, arguments) pair is one instance,
-// one pool row, and one index, however it is reached
 test "instantiation identity is index equality" {
     const gpa = testing.allocator;
 
@@ -1048,8 +1043,6 @@ test "instantiation identity is index equality" {
     try testing.expect(rows[0].type != rows[2].type);
 }
 
-// a chain of plain declarations is not an instantiation, so only the one
-// analysis budget bounds it, and only past that budget does it report
 test "plain depth is bounded by the budget, not the instantiation limit" {
     const gpa = testing.allocator;
 
@@ -1069,8 +1062,6 @@ test "plain depth is bounded by the budget, not the instantiation limit" {
     try testing.expectEqual(0, comp.diagnostics.items.len);
 }
 
-// nesting multiplies where a declaration is demanded mid-expression, and the
-// budget turns what would be a native stack overflow into one diagnostic
 test "the analysis budget reports once instead of overflowing the stack" {
     const gpa = testing.allocator;
 
@@ -1097,8 +1088,6 @@ test "the analysis budget reports once instead of overflowing the stack" {
     try testing.expectEqual(1, reported);
 }
 
-// the mistakes of §the-mistakes render with the fix in the message, and the
-// renderer carries notes into other files
 test "a diagnostic renders across files" {
     const gpa = testing.allocator;
 
