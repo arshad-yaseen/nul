@@ -1,0 +1,40 @@
+fn link(arena: Arena) *var Node
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = arena_create %0 : *var Node
+  %3 = local a : *var *var Node
+  %4 = store %3, %2
+  %5 = arena_create %0 : *var Node
+  %6 = local b : *var *var Node
+  %7 = store %6, %5
+  %8 = load %3 : *var Node
+  %9 = field_ptr %8, .value : *var i64
+  %10 = store %9, 1:i64
+  %11 = load %3 : *var Node
+  %12 = field_ptr %11, .next : *var ?*var Node
+  %13 = load %6 : *var Node
+  %14 = wrap_optional %13 : ?*var Node
+  %15 = store %12, %14
+  %16 = load %6 : *var Node
+  %17 = field_ptr %16, .value : *var i64
+  %18 = store %17, 2:i64
+  %19 = load %6 : *var Node
+  %20 = field_ptr %19, .next : *var ?*var Node
+  %21 = store %20, null
+  %22 = load %3 : *var Node
+  %23 = scope_end %1
+  return %22
+
+fn start() i64
+b0:
+  %0 = scope_begin
+  %1 = arena_init : Arena
+  %2 = local arena : *var Arena
+  %3 = store %2, %1
+  %4 = load %2 : Arena
+  %5 = call link(%4) : *var Node
+  %6 = field_ptr %5, .value : *var i64
+  %7 = load %6 : i64
+  %8 = scope_end %0
+  return %7

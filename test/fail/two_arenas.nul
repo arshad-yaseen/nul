@@ -1,0 +1,11 @@
+use std.mem.Arena
+
+struct Report {
+    lines: i64
+}
+
+fn analyze(long: Arena, short: Arena, weight: i64) *var Report {
+    var report = long.create[Report]()
+    report.lines = weight
+    return report
+}

@@ -1,0 +1,11 @@
+error[E0213]: 'child' takes 0 arguments, and this call has 1
+ --> test/fail/wrong_arity.nul:4:12
+  |
+4 |     return arena.child(1)
+  |            ^^^^^^^^^^^^^ wrong number of arguments
+note: declared here
+ --> lib/std/mem.nul:8:9
+  |
+8 |     pub fn child(self: Arena) Arena = builtin.arena_child
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

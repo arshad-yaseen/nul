@@ -1,0 +1,27 @@
+struct Point {
+    x: i64
+    y: i64
+}
+
+struct Frame {
+    origin: Point
+    size: Point
+    label: str
+}
+
+fn framed(width: i64) Frame {
+    return .{
+        origin: .{ x: 0, y: 0 },
+        size: .{ x: width, y: width * 2 },
+        label: "frame",
+    }
+}
+
+fn area_of(frame: Frame) i64 {
+    return frame.size.x * frame.size.y
+}
+
+fn build() i64 {
+    let frame: Frame = framed(3)
+    return area_of(frame)
+}

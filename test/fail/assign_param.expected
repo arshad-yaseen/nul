@@ -1,0 +1,8 @@
+error[E0221]: 'value' is a parameter, and a parameter is a copy that dies with the call
+ --> test/fail/assign_param.nul:2:5
+  |
+2 |     value = value + 1
+  |     ^^^^^ immutable
+  |
+  = help: take '*var T' to write the caller's value, or copy it into a 'var' first
+

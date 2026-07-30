@@ -1,0 +1,4 @@
+fn drive() {
+    let point = .{ x: 1, y: 2 }
+    _ = point
+}

@@ -1,0 +1,15 @@
+fn noisy() !i64 {
+    return 5
+}
+
+fn quiet() i64 {
+    return 5
+}
+
+fn drive() {
+    _ = noisy()
+    _ = quiet()
+    _ = 5 + 5
+    let bound = quiet()
+    _ = bound
+}

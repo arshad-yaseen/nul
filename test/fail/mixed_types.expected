@@ -1,0 +1,8 @@
+error[E0207]: 'add' mixes i32 and i64
+ --> test/fail/mixed_types.nul:2:14
+  |
+2 |     return a + b
+  |              ^ two different types
+  |
+  = help: nothing converts on its own; give both sides one type
+

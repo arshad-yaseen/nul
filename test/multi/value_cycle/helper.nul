@@ -1,0 +1,3 @@
+use main
+
+pub let there = main.anchor

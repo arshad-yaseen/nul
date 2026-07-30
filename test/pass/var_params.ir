@@ -1,0 +1,41 @@
+fn bump(counter: *var Inner, by: i64)
+b0:
+  %0 = param counter : *var Inner
+  %1 = param by : i64
+  %2 = scope_begin
+  %3 = field_ptr %0, .hits : *var i64
+  %4 = field_ptr %0, .hits : *var i64
+  %5 = load %4 : i64
+  %6 = add %5, %1 : i64
+  %7 = store %3, %6
+  %8 = scope_end %2
+  return
+
+fn deep(out: *var Outer)
+b0:
+  %0 = param out : *var Outer
+  %1 = scope_begin
+  %2 = field_ptr %0, .inner : *var Inner
+  %3 = field_ptr %2, .hits : *var i64
+  %4 = field_ptr %0, .inner : *var Inner
+  %5 = load %4 : Inner
+  %6 = field_val %5, .hits : i64
+  %7 = add %6, 1:i64 : i64
+  %8 = store %3, %7
+  %9 = field_ptr %0, .peer : *var ?*var Outer
+  %10 = load %9 : ?*var Outer
+  %11 = has_value %10 : bool
+  branch %11, b1, b2
+b1:
+  %12 = unwrap_value %10 : *var Outer
+  %13 = scope_begin
+  %14 = field_ptr %12, .inner : *var Inner
+  %15 = field_ptr %14, .hits : *var i64
+  %16 = store %15, 0:i64
+  %17 = scope_end %13
+  jump b3
+b2:
+  jump b3
+b3:
+  %18 = scope_end %1
+  return

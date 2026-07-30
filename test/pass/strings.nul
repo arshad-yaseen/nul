@@ -1,0 +1,14 @@
+let greeting = "hello"
+let escaped = "line\nbreak"
+
+fn compare(name: str) bool {
+    if name == greeting {
+        return true
+    }
+    return name != "other"
+}
+
+fn sized(name: str) usize {
+    let fixed = greeting.len
+    return name.len + fixed
+}

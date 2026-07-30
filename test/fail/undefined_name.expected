@@ -1,0 +1,8 @@
+error[E0201]: nothing named 'totl' is in scope here
+ --> test/fail/undefined_name.nul:2:12
+  |
+2 |     return totl
+  |            ^^^^ unknown name
+  |
+  = help: did you mean 'total'?
+

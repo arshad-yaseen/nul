@@ -1,0 +1,14 @@
+use std.mem.Arena
+
+struct Inner {
+    value: i64
+}
+
+struct Pair {
+    left: *var Inner
+    count: i64
+}
+
+fn keep(arena: Arena, pair: Pair) Pair {
+    return arena.copy(pair)
+}

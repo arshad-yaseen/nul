@@ -1,0 +1,44 @@
+fn total(arena: Arena, rounds: i64) i64
+b0:
+  %0 = param arena : Arena
+  %1 = param rounds : i64
+  %2 = scope_begin
+  %3 = arena_child %0 : Arena
+  %4 = local scratch : *var Arena
+  %5 = store %4, %3
+  %6 = local sum : *var i64
+  %7 = store %6, 0:i64
+  %8 = local round : *var i64
+  %9 = store %8, 0:i64
+  jump b1
+b1:
+  %10 = load %8 : i64
+  %11 = cmp_lt %10, %1 : bool
+  branch %11, b2, b3
+b2:
+  %12 = scope_begin
+  %13 = load %4 : Arena
+  %14 = arena_create %13 : *var Item
+  %15 = local item : *var *var Item
+  %16 = store %15, %14
+  %17 = load %15 : *var Item
+  %18 = field_ptr %17, .weight : *var i64
+  %19 = load %8 : i64
+  %20 = store %18, %19
+  %21 = load %6 : i64
+  %22 = load %15 : *var Item
+  %23 = field_ptr %22, .weight : *var i64
+  %24 = load %23 : i64
+  %25 = add %21, %24 : i64
+  %26 = store %6, %25
+  %27 = load %4 : Arena
+  %28 = arena_reset %27
+  %29 = load %8 : i64
+  %30 = add %29, 1:i64 : i64
+  %31 = store %8, %30
+  %32 = scope_end %12
+  jump b1
+b3:
+  %33 = load %6 : i64
+  %34 = scope_end %2
+  return %33

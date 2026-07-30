@@ -1,0 +1,2 @@
+type Loop = Twist
+type Twist = Loop

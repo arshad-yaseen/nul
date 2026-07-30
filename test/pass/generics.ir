@@ -1,0 +1,44 @@
+fn make(arena: Arena) *var Pair[str, i64]
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = arena_create %0 : *var Pair[str, i64]
+  %3 = local pair : *var *var Pair[str, i64]
+  %4 = store %3, %2
+  %5 = load %3 : *var Pair[str, i64]
+  %6 = field_ptr %5, .key : *var str
+  %7 = store %6, "answer"
+  %8 = load %3 : *var Pair[str, i64]
+  %9 = field_ptr %8, .value : *var i64
+  %10 = store %9, 41:i64
+  %11 = load %3 : *var Pair[str, i64]
+  %12 = scope_end %1
+  return %11
+
+fn Pair[str, i64].swap_value(self: *var Pair[str, i64], value: i64) i64
+b0:
+  %0 = param self : *var Pair[str, i64]
+  %1 = param value : i64
+  %2 = scope_begin
+  %3 = field_ptr %0, .value : *var i64
+  %4 = load %3 : i64
+  %5 = field_ptr %0, .value : *var i64
+  %6 = store %5, %1
+  %7 = scope_end %2
+  return %4
+
+fn use_them(arena: Arena) i64
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = call make(%0) : *var Pair[str, i64]
+  %3 = local pair : *var *var Pair[str, i64]
+  %4 = store %3, %2
+  %5 = load %3 : *var Pair[str, i64]
+  %6 = call Pair[str, i64].swap_value(%5, 42:i64) : i64
+  %7 = load %3 : *var Pair[str, i64]
+  %8 = field_ptr %7, .value : *var i64
+  %9 = load %8 : i64
+  %10 = add %6, %9 : i64
+  %11 = scope_end %1
+  return %10

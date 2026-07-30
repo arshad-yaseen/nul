@@ -1,0 +1,10 @@
+pub struct Point {
+    x: i64
+    y: i64
+}
+
+pub let origin_x = 0
+
+pub fn taxicab(point: Point) i64 {
+    return point.x + point.y
+}

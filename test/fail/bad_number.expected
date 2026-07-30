@@ -1,0 +1,8 @@
+error[E0248]: '12abc' is not a number the language knows
+ --> test/fail/bad_number.nul:1:13
+  |
+1 | let stray = 12abc
+  |             ^^^^^ unreadable
+  |
+  = help: numbers are decimal, hex '0x', octal '0o', or binary '0b', with '.' and 'e' for floats
+

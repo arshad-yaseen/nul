@@ -1,0 +1,6 @@
+let n = 255 + 1
+
+fn narrow() u8 {
+    let wide: u8 = n
+    return wide
+}

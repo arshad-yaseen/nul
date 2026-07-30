@@ -1,0 +1,12 @@
+pub struct Box[T] {
+    item: T
+
+    pub fn broken(self: Box[T]) T {
+        return self.item + missing
+    }
+}
+
+fn drive() i64 {
+    let box: Box[i64] = .{ item: 4 }
+    return box.broken()
+}

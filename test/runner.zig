@@ -5,7 +5,8 @@ const Writer = std.Io.Writer;
 
 const compiler = @import("compiler");
 
-/// The directory a test lives in decides what is expected of it.
+/// The directory a test lives in decides what is expected of it. It is the
+/// component after `test/` in the path, so a multi-module case nests freely.
 const Kind = enum {
     /// Must parse. The golden is its tree.
     parse,
@@ -14,12 +15,28 @@ const Kind = enum {
     /// Bytes chosen to break the compiler rather than the language. That there
     /// is a golden rather than a stack trace is the point.
     hostile,
+    /// Must compile clean. The golden is its typed IR.
+    pass,
+    /// Must be refused. The golden is its diagnostics.
+    fail,
+    /// A directory of modules entered at `main.nul`. The golden holds
+    /// whichever the case produces, diagnostics or IR.
+    multi,
+    /// A whole program, compiled clean, with its IR as the golden.
+    program,
 
     fn extension(kind: Kind) []const u8 {
-        assert(@intFromEnum(kind) <= @intFromEnum(Kind.hostile));
         return switch (kind) {
             .parse => ".tree",
-            .@"parse-error", .hostile => ".expected",
+            .@"parse-error", .hostile, .fail, .multi => ".expected",
+            .pass, .program => ".ir",
+        };
+    }
+
+    fn analyzes(kind: Kind) bool {
+        return switch (kind) {
+            .parse, .@"parse-error", .hostile => false,
+            .pass, .fail, .multi, .program => true,
         };
     }
 };
@@ -69,40 +86,14 @@ fn runOne(
         return false;
     };
 
-    var source: compiler.Source = try .load(gpa, io, .cwd(), path);
-    defer source.deinit(gpa);
-
-    var tree = try compiler.AST.parse(gpa, source.bytes);
-    defer tree.deinit(gpa);
-
-    // the dump has to survive every tree, including one made mostly of holes
-    var sink: Writer.Discarding = .init(&.{});
-    try compiler.dump(tree, &sink.writer);
-
     var actual: Writer.Allocating = .init(gpa);
     defer actual.deinit();
 
-    switch (kind) {
-        .parse => {
-            if (tree.errors.len > 0) {
-                try log.print("{s}: expected to parse, but\n", .{path});
-                try renderAll(gpa, &source, tree, log);
-                return false;
-            }
-            try compiler.dump(tree, &actual.writer);
-        },
-        .@"parse-error" => {
-            if (tree.errors.len == 0) {
-                try log.print("{s}: expected a diagnostic, got none\n", .{path});
-                return false;
-            }
-            try renderAll(gpa, &source, tree, &actual.writer);
-        },
-        .hostile => if (tree.errors.len > 0)
-            try renderAll(gpa, &source, tree, &actual.writer)
-        else
-            try compiler.dump(tree, &actual.writer),
-    }
+    const produced = if (kind.analyzes())
+        try runCompile(gpa, io, path, kind, &actual.writer, log)
+    else
+        try runParse(gpa, io, path, kind, &actual.writer, log);
+    if (produced == false) return false;
 
     const golden_path = try std.fmt.allocPrint(gpa, "{s}{s}", .{
         path[0 .. path.len - ".nul".len],
@@ -129,20 +120,104 @@ fn runOne(
     return false;
 }
 
-fn renderAll(
+/// The session-one path. Tokenize and parse only.
+fn runParse(
     gpa: Allocator,
-    source: *compiler.Source,
-    tree: compiler.AST,
-    writer: *Writer,
-) !void {
-    assert(tree.errors.len > 0);
-    for (tree.errors) |diagnostic| try diagnostic.render(gpa, source, writer, .off);
+    io: std.Io,
+    path: []const u8,
+    kind: Kind,
+    actual: *Writer,
+    log: *Writer,
+) !bool {
+    var source: compiler.Source = try .load(gpa, io, .cwd(), path);
+    defer source.deinit(gpa);
+
+    var tree = try compiler.AST.parse(gpa, source.bytes);
+    defer tree.deinit(gpa);
+
+    // the dump has to survive every tree, including one made mostly of holes
+    var sink: Writer.Discarding = .init(&.{});
+    try compiler.dump(tree, &sink.writer);
+
+    switch (kind) {
+        .parse => {
+            if (tree.errors.len > 0) {
+                try log.print("{s}: expected to parse, but\n", .{path});
+                for (tree.errors) |diagnostic| {
+                    try diagnostic.render(gpa, &source, log, .off);
+                }
+                return false;
+            }
+            try compiler.dump(tree, actual);
+        },
+        .@"parse-error" => {
+            if (tree.errors.len == 0) {
+                try log.print("{s}: expected a diagnostic, got none\n", .{path});
+                return false;
+            }
+            for (tree.errors) |diagnostic| try diagnostic.render(gpa, &source, actual, .off);
+        },
+        .hostile => if (tree.errors.len > 0) {
+            for (tree.errors) |diagnostic| try diagnostic.render(gpa, &source, actual, .off);
+        } else {
+            try compiler.dump(tree, actual);
+        },
+        else => unreachable,
+    }
+    return true;
 }
 
+/// The whole pipeline, against the repository's own `lib/std`.
+fn runCompile(
+    gpa: Allocator,
+    io: std.Io,
+    path: []const u8,
+    kind: Kind,
+    actual: *Writer,
+    log: *Writer,
+) !bool {
+    const source: compiler.Source = try .load(gpa, io, .cwd(), path);
+
+    var comp: compiler.Compilation = undefined;
+    try comp.init(gpa, io, .{ .root_path = path, .std_dir = "lib/std" });
+    defer comp.deinit();
+    try comp.compile(source);
+
+    const failed = comp.diagnostics.items.len > 0;
+    switch (kind) {
+        .pass, .program => {
+            if (failed) {
+                try log.print("{s}: expected to compile, but\n", .{path});
+                try comp.renderAll(log, .off);
+                return false;
+            }
+            try comp.dumpIR(actual);
+        },
+        .fail => {
+            if (failed == false) {
+                try log.print("{s}: expected a diagnostic, got none\n", .{path});
+                return false;
+            }
+            try comp.renderAll(actual, .off);
+        },
+        .multi => if (failed) {
+            try comp.renderAll(actual, .off);
+        } else {
+            try comp.dumpIR(actual);
+        },
+        else => unreachable,
+    }
+    return true;
+}
+
+/// The kind is the path component after `test/`.
 fn kindOf(path: []const u8) ?Kind {
     assert(path.len > 0);
     if (std.mem.endsWith(u8, path, ".nul") == false) return null;
 
-    const directory = std.fs.path.dirname(path) orelse return null;
-    return std.meta.stringToEnum(Kind, std.fs.path.basename(directory));
+    var components = std.mem.splitScalar(u8, path, '/');
+    const first = components.next() orelse return null;
+    if (std.mem.eql(u8, first, "test") == false) return null;
+    const second = components.next() orelse return null;
+    return std.meta.stringToEnum(Kind, second);
 }

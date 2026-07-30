@@ -1,0 +1,21 @@
+fn noisy() !i64
+b0:
+  %0 = scope_begin
+  %1 = wrap_ok 5:i64 : !i64
+  %2 = scope_end %0
+  return %1
+
+fn quiet() i64
+b0:
+  %0 = scope_begin
+  %1 = scope_end %0
+  return 5:i64
+
+fn drive()
+b0:
+  %0 = scope_begin
+  %1 = call noisy() : !i64
+  %2 = call quiet() : i64
+  %3 = call quiet() : i64
+  %4 = scope_end %0
+  return

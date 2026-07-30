@@ -1,0 +1,19 @@
+use std.mem.Arena
+
+struct Item {
+    weight: i64
+}
+
+fn total(arena: Arena, rounds: i64) i64 {
+    var scratch = arena.child()
+    var sum: i64 = 0
+    var round: i64 = 0
+    while round < rounds {
+        var item = scratch.create[Item]()
+        item.weight = round
+        sum = sum + item.weight
+        scratch.reset()
+        round = round + 1
+    }
+    return sum
+}

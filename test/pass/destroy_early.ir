@@ -1,0 +1,21 @@
+fn peek(arena: Arena) i64
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = arena_child %0 : Arena
+  %3 = local work : *var Arena
+  %4 = store %3, %2
+  %5 = load %3 : Arena
+  %6 = arena_create %5 : *var Probe
+  %7 = local probe : *var *var Probe
+  %8 = store %7, %6
+  %9 = load %7 : *var Probe
+  %10 = field_ptr %9, .weight : *var i64
+  %11 = store %10, 42:i64
+  %12 = load %7 : *var Probe
+  %13 = field_ptr %12, .weight : *var i64
+  %14 = load %13 : i64
+  %15 = load %3 : Arena
+  %16 = arena_destroy %15
+  %17 = scope_end %1
+  return %14

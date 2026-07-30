@@ -1,0 +1,5 @@
+use std.mem.Arena
+
+fn drive(arena: Arena) Arena {
+    return arena.child(1)
+}

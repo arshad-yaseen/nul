@@ -1,0 +1,8 @@
+error[E0233]: 'Tree' holds itself by value, so it has no size
+ --> test/fail/size_cycle.nul:3:5
+  |
+3 |     left: Tree
+  |     ^^^^^^^^^^ the circle closes here
+  |
+  = help: break the cycle with a pointer: '*Tree' or '?*Tree'
+

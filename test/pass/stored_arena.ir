@@ -1,0 +1,39 @@
+fn List.push(self: *var List, value: i64) *var Entry
+b0:
+  %0 = param self : *var List
+  %1 = param value : i64
+  %2 = scope_begin
+  %3 = field_ptr %0, .arena : *var Arena
+  %4 = load %3 : Arena
+  %5 = arena_create %4 : *var Entry
+  %6 = local entry : *var *var Entry
+  %7 = store %6, %5
+  %8 = load %6 : *var Entry
+  %9 = field_ptr %8, .value : *var i64
+  %10 = store %9, %1
+  %11 = load %6 : *var Entry
+  %12 = field_ptr %11, .next : *var ?*var Entry
+  %13 = field_ptr %0, .first : *var ?*var Entry
+  %14 = load %13 : ?*var Entry
+  %15 = store %12, %14
+  %16 = field_ptr %0, .first : *var ?*var Entry
+  %17 = load %6 : *var Entry
+  %18 = wrap_optional %17 : ?*var Entry
+  %19 = store %16, %18
+  %20 = load %6 : *var Entry
+  %21 = scope_end %2
+  return %20
+
+fn build(arena: Arena) i64
+b0:
+  %0 = param arena : Arena
+  %1 = scope_begin
+  %2 = struct_init .{ arena: %0, first: null } : List
+  %3 = local list : *var List
+  %4 = store %3, %2
+  %5 = call List.push(%3, 1:i64) : *var Entry
+  %6 = call List.push(%3, 2:i64) : *var Entry
+  %7 = field_ptr %6, .value : *var i64
+  %8 = load %7 : i64
+  %9 = scope_end %1
+  return %8

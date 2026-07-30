@@ -1,0 +1,10 @@
+fn probe(s: S67) i64
+b0:
+  %0 = param s : S67
+  %1 = scope_begin
+  %2 = field_val %0, .f : S68
+  %3 = field_val %2, .f : S69
+  %4 = field_val %3, .f : S70
+  %5 = field_val %4, .f : i64
+  %6 = scope_end %1
+  return %5

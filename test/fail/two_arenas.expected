@@ -1,0 +1,13 @@
+error[E0236]: a function allocates from exactly one arena, and this is a second
+ --> test/fail/two_arenas.nul:7:25
+  |
+7 | fn analyze(long: Arena, short: Arena, weight: i64) *var Report {
+  |                         ^^^^^^^^^^^^ one too many
+  |
+  = help: for scratch local to this call, make a child inside instead; for scratch shared across calls, store the arena in the collection it fills and pass that
+note: the first arena is here
+ --> test/fail/two_arenas.nul:7:12
+  |
+7 | fn analyze(long: Arena, short: Arena, weight: i64) *var Report {
+  |            ^^^^^^^^^^^
+

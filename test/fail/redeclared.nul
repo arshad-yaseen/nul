@@ -1,0 +1,7 @@
+fn twice() i64 {
+    return 1
+}
+
+fn twice(again: i64) i64 {
+    return again
+}
