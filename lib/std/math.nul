@@ -1,3 +1,0 @@
-pub fn sum(a: usize, b: usize) usize {
-    return a + b;
-}
