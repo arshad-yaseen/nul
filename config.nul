@@ -299,7 +299,6 @@ pub fn validate(arena: Arena, root: *var Value) *var Problems {
     }
 
     var scratch = arena.child()
-    defer scratch.destroy()
 
     checkListen(root, problems)
     checkLimits(root, problems)

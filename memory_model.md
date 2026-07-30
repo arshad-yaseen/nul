@@ -457,8 +457,15 @@ out of. Restructuring an aliased graph to satisfy a borrow checker is not.
 
 ## Cleanup is placed by the programmer and proven by the compiler
 
-An arena dies at the end of its scope by default. You may also reset or destroy one
-earlier, which is what makes the scratch arena pattern work:
+An arena dies at the end of the scope that declared it. That is the placement, and it
+is one you wrote: putting `var scratch = arena.child()` in a scope is how you say how
+long its memory lives. Nothing else is needed, and **an explicit release at the end of
+a scope is always redundant** because the arena was dying there anyway.
+
+`reset` and `destroy` exist to depart from that default, both of them *earlier*.
+`reset` discards everything in the arena and keeps the arena, which is what makes the
+scratch loop work. `destroy` ends the arena before its scope does, for a function that
+is finished with its scratch long before it returns.
 
 ```nul
 fn process(arena: Arena, items: []Item) {
@@ -473,10 +480,13 @@ fn process(arena: Arena, items: []Item) {
 }
 ```
 
-The compiler never decides when memory should be freed, and never inserts a free you
-did not write. It verifies the placement you chose, proving no value belonging to that
-arena is used after the point where the arena dies. Move the reset one line too early
-and it says so:
+The compiler never *infers* a cleanup point. Every arena in a program dies somewhere
+the programmer put it: at the scope where it was declared, or at a `reset` or `destroy`
+written by hand. What the compiler will not do is decide that an arena could die sooner
+than you said, move a release to where it thinks the last use is, or thread cleanup
+through paths you cannot see. It verifies the placement you chose, proving no value
+belonging to that arena is used after the point where the arena dies. Move the reset
+one line too early and it says so:
 
 ```nul
     var item = scratch.create[Item]()
