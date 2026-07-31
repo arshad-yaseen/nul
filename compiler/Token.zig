@@ -12,7 +12,7 @@ pub const Tag = enum(u8) {
 
     ident,
     number,
-    /// `///` and the rest of its line. Belongs to the declaration below it.
+    /// `///` to end of line, belonging to the declaration below.
     doc_comment,
     file_doc_comment,
 
@@ -71,7 +71,7 @@ pub const Tag = enum(u8) {
     slash,
     percent,
 
-    /// The fixed text of a tag, or null for the tags whose text is the source.
+    /// Fixed text, or null when the text is the source itself.
     pub fn lexeme(tag: Tag) ?[]const u8 {
         return switch (tag) {
             .invalid, .eof => null,
@@ -131,7 +131,7 @@ pub const Tag = enum(u8) {
         };
     }
 
-    /// How a message names this tag, a quoted lexeme, or a phrase.
+    /// How a message names this tag.
     pub fn symbol(tag: Tag) []const u8 {
         const text = symbols[@intFromEnum(tag)];
         assert(text.len > 0);
@@ -151,7 +151,6 @@ pub const Index = enum(u32) {
         return @enumFromInt(@intFromEnum(index) + count);
     }
 
-    /// The token `count` places earlier.
     pub fn before(index: Index, count: u32) Index {
         assert(count > 0);
         assert(@intFromEnum(index) >= count);
@@ -173,8 +172,8 @@ comptime {
     assert(@sizeOf(Index) == 4);
 }
 
-/// Whether a newline after this tag ends a statement. The lexical error is
-/// here because a newline after a broken value still ends its statement.
+/// Whether a newline after this tag ends a statement. A broken value counts,
+/// so its line still ends.
 pub fn endsStatement(tag: Tag) bool {
     return switch (tag) {
         .ident, .number, .invalid => true,

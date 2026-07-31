@@ -19,9 +19,9 @@ tokens: Tokenizer.TokenList.Slice,
 nodes: NodeList.Slice,
 /// Every variable-length payload, read back through `Fields`.
 extra: []const u32,
-/// Empty when the file parsed. Anything here stops the tree from being analyzed.
+/// Empty when the file parsed. Anything here stops analysis.
 errors: []const Diagnostic,
-/// Backs `errors` and every string in it, so freeing them is one call.
+/// Backs `errors` and its strings, so freeing them is one call.
 error_text: std.heap.ArenaAllocator.State,
 
 pub const NodeList = std.MultiArrayList(Node);
@@ -51,8 +51,8 @@ pub fn deinit(tree: *AST, gpa: Allocator) void {
 
 pub const Node = struct {
     tag: Tag,
-    /// The keyword or operator the node is named by. Every other token position
-    /// is derived from it or stored in `extra`.
+    /// The keyword or operator the node is named by. Every other token is
+    /// derived from it or stored in `extra`.
     main_token: Token.Index,
     data: Data,
 
@@ -92,7 +92,7 @@ pub const Node = struct {
         fn_decl,
         /// Both `let` and `var`, told apart by `main_token`.
         var_decl,
-        /// One name in a `[T, U]` list. A constraint is reported, never stored.
+        /// One name in a `[T, U]` list.
         type_param,
         param,
         field,
@@ -135,8 +135,7 @@ pub const Node = struct {
         /// `!T`, over the one universal error set, so it names nothing.
         error_union_type,
 
-        /// A hole where parsing failed. It keeps the tree's shape, so a walk
-        /// still reaches everything around it.
+        /// A hole where parsing failed, keeping the shape a walk needs.
         err,
     };
 
@@ -153,8 +152,8 @@ pub const Node = struct {
 };
 
 comptime {
-    // every tag has exactly one view, matched by name, so adding a tag without
-    // teaching `viewOf` about it is a compile error rather than a wrong read
+    // one view per tag, matched by name, so a tag `viewOf` has not been taught
+    // about is a compile error rather than a wrong read
     const tags = @typeInfo(Node.Tag).@"enum".fields;
     const views = @typeInfo(View).@"union".fields;
     assert(tags.len == views.len);
@@ -163,13 +162,12 @@ comptime {
     assert(@sizeOf(Node.Tag) == 1);
     assert(@sizeOf(Node.Index) == 4);
     assert(@sizeOf(ExtraIndex) == 4);
-    // indexes, never pointers, so a payload means the same wherever the tree is
     // safe builds add a tag to the bare union
     if (std.debug.runtime_safety == false) assert(@sizeOf(Node.Data) == 8);
 }
 
 /// Reads a payload back in the order `Parse` wrote it. A list is a count
-/// followed by that many indexes.
+/// then that many indexes.
 const Fields = struct {
     extra: []const u32,
     cursor: u32,
@@ -227,7 +225,7 @@ pub const OperInfo = struct {
     op: ?BinaryOp = null,
 };
 
-/// The one place a token maps to the infix operator it means.
+/// The one place a token maps to an infix operator.
 pub const oper_table: [Token.tag_count]OperInfo = blk: {
     var table: [Token.tag_count]OperInfo = @splat(.{});
     for (.{
@@ -249,15 +247,15 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
         .assoc = entry[2],
         .op = entry[3],
     };
-    // supplying a value binds looser than arithmetic and tighter than comparison,
-    // and nests right, so `a orelse b orelse c` tries each in turn
+    // looser than arithmetic, tighter than comparison, and right nesting, so
+    // `a orelse b orelse c` tries each in turn
     for (.{ Token.Tag.kw_orelse, Token.Tag.kw_catch }) |tag| {
         table[@intFromEnum(tag)] = .{ .prec = 4, .assoc = .right };
     }
     break :blk table;
 };
 
-/// The one place a token maps to the prefix operator it means.
+/// The one place a token maps to a prefix operator.
 pub const unary_table: [Token.tag_count]?UnaryOp = blk: {
     var table: [Token.tag_count]?UnaryOp = @splat(null);
     table[@intFromEnum(Token.Tag.minus)] = .negate;
@@ -349,7 +347,6 @@ pub const View = union(enum) {
         else_node: Node.OptionalIndex,
     };
     /// No condition is `while { }`, which only a `break` or `return` leaves.
-    /// `capture` names what the optional held, the same shape `if` uses.
     pub const While = struct {
         cond: Node.OptionalIndex,
         capture: Node.OptionalIndex,
@@ -486,7 +483,7 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         },
         .binary => .{
             .binary = .{
-                // `.binary` is only built for tokens the table names an operator for
+                // `.binary` is built only for tokens the table names
                 .op = oper_table[@intFromEnum(tree.tokenTag(main))].op.?,
                 .op_token = main,
                 .lhs = data.node_and_node[0],
@@ -541,8 +538,8 @@ pub fn nodeMainToken(tree: AST, node: Node.Index) Token.Index {
     return tree.nodes.items(.main_token)[node.int()];
 }
 
-/// The first of the run of doc comments above a declaration. Nothing is stored,
-/// they sit in the token stream where they were typed.
+/// The first of the run of doc comments above a declaration. Nothing is
+/// stored; they sit in the token stream.
 pub fn docComment(tree: AST, decl: Node.Index) ?Token.Index {
     var first = tree.declStart(decl);
     if (first == .first) return null;
@@ -556,7 +553,6 @@ pub fn docComment(tree: AST, decl: Node.Index) ?Token.Index {
     return first;
 }
 
-/// Where a declaration begins, counting the `pub` it was written with.
 fn declStart(tree: AST, node: Node.Index) Token.Index {
     assert(node.int() < tree.nodes.len);
 
@@ -566,9 +562,8 @@ fn declStart(tree: AST, node: Node.Index) Token.Index {
 
 // tokens
 
-/// Past the last token reads as `.eof`. A derivation like "the token after this
-/// one" can run off the end of a tree that failed to parse, and a wrong answer
-/// beats a crash in a file already being rejected.
+/// Past the last token reads as `.eof`, because a derived position can run off
+/// a tree that failed to parse, and a wrong answer beats a crash there.
 pub fn tokenTag(tree: AST, index: Token.Index) Token.Tag {
     const tags = tree.tokens.items(.tag);
     assert(tags.len > 0);
@@ -588,8 +583,7 @@ pub fn tokenEnd(tree: AST, index: Token.Index) u32 {
     assert(start <= tree.source.len);
 
     const end = Tokenizer.tokenEnd(tree.source, tree.tokenTag(index), start);
-    // clamped, because a `.semi` inserted at the end of file has the length of
-    // a `;` it does not occupy
+    // clamped, since a `.semi` inserted at end of file occupies no `;`
     return @min(end, @as(u32, @intCast(tree.source.len)));
 }
 
@@ -602,10 +596,10 @@ pub fn tokenSlice(tree: AST, index: Token.Index) []const u8 {
     return tree.source[start..end];
 }
 
-// spans, where a node is, for the carets
+// spans
 
-/// The extent of a node, from its leftmost token's start to its rightmost
-/// child's end. Closing brackets are not counted, which a caret can bear.
+/// From the leftmost token start to the rightmost child end. Closing brackets
+/// are not counted, which a caret can bear.
 pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
     const first = edgeToken(tree, node, .leftmost);
     const last = edgeToken(tree, node, .rightmost);
@@ -620,8 +614,8 @@ pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
 
 const Edgewise = enum { leftmost, rightmost };
 
-/// Walk down one side of a node to the token that bounds it. Iterative, and
-/// bounded by the walk always descending into a child.
+/// Down one side of a node to the token that bounds it. Bounded, because every
+/// step descends into a child.
 fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
     var current = node;
     var depth: u32 = 0;
@@ -635,7 +629,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             .ident, .number_literal, .null_literal => return main,
             .bool_literal => |it| return it.token,
             .error_value => |token| {
-                // the name token. the `error` keyword sits two before it
+                // the `error` keyword sits two before the name
                 return if (side == .leftmost) token.before(2) else token;
             },
 

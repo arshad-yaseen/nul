@@ -7,18 +7,17 @@ const Allocator = std.mem.Allocator;
 const AST = @import("AST.zig");
 const Pool = @import("Pool.zig");
 
-/// One checked function body. Owned by the `funcs` table on the root object.
+/// One checked body, owned by `Compilation.funcs`.
 pub const Func = struct {
-    /// The instantiation this body belongs to, which names it.
     instance: Pool.Instance,
     insts: InstList.Slice,
-    /// Call arguments and struct literal operands, each a `Ref` word.
+    /// Call and struct literal operands, one `Ref` per word.
     extra: []const u32,
     /// Block zero is the entry. Every block here is reachable.
     blocks: []const Block,
 
     pub const Index = enum(u32) {
-        /// A function whose body is not built, a bound primitive.
+        /// A bound primitive, with no body.
         none = std.math.maxInt(u32),
         _,
     };
@@ -33,9 +32,7 @@ pub const Func = struct {
     }
 };
 
-/// An operand, either an instruction's result or a constant from the pool.
-/// One bit
-/// tells them apart, so an operand is four bytes wherever it appears.
+/// An instruction result or a pool constant, told apart by the top bit.
 pub const Ref = enum(u32) {
     none = std.math.maxInt(u32),
     _,
@@ -62,9 +59,9 @@ pub const Ref = enum(u32) {
 
 pub const Inst = struct {
     tag: Tag,
-    /// What the instruction produces. Effects produce `nothing_type`.
+    /// `nothing_type` for an effect.
     type: Pool.Index,
-    /// Where it came from, in the module of the declaration being checked.
+    /// In the module being checked.
     node: AST.Node.Index,
     data: Data,
 
@@ -80,19 +77,17 @@ pub const Inst = struct {
     pub const Data = struct { a: u32, b: u32 };
 
     pub const Tag = enum(u8) {
-        /// One per parameter, in order, at the head of the entry block.
-        /// `a` names it, `b` is its position.
+        /// `a` names it, `b` is its position. One per parameter, in order.
         param,
-        /// Storage for a `var`. Its result is the slot's address, so its type
-        /// is a pointer to the declared type. `a` names it, `.empty` for a
-        /// temporary the checker made.
+        /// Storage for a `var`, producing its address. `a` names it, `.empty`
+        /// for a temporary the checker made.
         local,
         /// `a` is a place. Produces the pointee.
         load,
         /// `a` is a place, `b` the value.
         store,
-        /// `a` is a pointer to a struct, `b` a row in the instance's fields.
-        /// Produces a pointer to the field, as mutable as its base.
+        /// `a` is a struct pointer, `b` a row. Produces a field pointer, as
+        /// mutable as its base.
         field_ptr,
         /// `a` is a struct value, `b` a row. Produces the field's value.
         field_val,
@@ -111,9 +106,7 @@ pub const Inst = struct {
         negate,
         not,
 
-        /// `a` points at `extra`, holding the callee instance, a count, then the
-        /// argument refs. Extern and indirect callees are future callee kinds
-        /// here, never new instructions.
+        /// `a` points at `extra`: callee instance, count, argument refs.
         call,
 
         // the six primitives. `a` is the arena, `b` is `arena_copy`'s value.
@@ -133,12 +126,10 @@ pub const Inst = struct {
         unwrap_ok,
         unwrap_err,
 
-        /// `a` points at `extra`, holding a count, then one ref per field in
-        /// declaration order.
+        /// `a` points at `extra`: count, one ref per field in order.
         struct_init,
 
-        /// A scope opens. Its result names the scope, so the matching end and
-        /// every arena death inside it hang off one ref.
+        /// Opens a scope. Its result names it, so the end hangs off one ref.
         scope_begin,
         /// `a` is the `scope_begin`. Emitted on every path out.
         scope_end,
@@ -146,7 +137,7 @@ pub const Inst = struct {
 };
 
 pub const Block = struct {
-    /// Instructions `first ..< first + count`, contiguous by construction.
+    /// Instructions `first ..< first + count`, contiguous.
     first: u32,
     count: u32,
     terminator: Terminator,
@@ -161,10 +152,8 @@ pub const Block = struct {
     };
 };
 
-/// How a block ends. `switch` and the bounds-check trap arrive as new cases
-/// here, never as new mechanisms.
 pub const Terminator = union(enum) {
-    /// Still being built. Never survives `finish`.
+    /// Still being built. Gone by `finish`.
     none,
     jump: Block.Index,
     branch: struct { cond: Ref, then_block: Block.Index, else_block: Block.Index },

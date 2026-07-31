@@ -2,8 +2,7 @@
 
 const std = @import("std");
 
-/// Bounded Levenshtein distance, enough to rank a typo. Long names are cut
-/// off, since a suggestion past forty characters convinces nobody.
+/// Levenshtein distance, with both names cut to forty bytes.
 pub fn between(a: []const u8, b: []const u8) u32 {
     const cap = 40;
     const from = a[0..@min(a.len, cap)];

@@ -6,7 +6,6 @@ const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 
 source: [:0]const u8,
-/// Where the next token begins.
 cursor: u32,
 /// The last tag returned, for the newline rule.
 previous: Token.Tag,
@@ -38,7 +37,7 @@ pub fn tokenizeAll(gpa: Allocator, source: [:0]const u8, tokens: *TokenList) All
     assert(tokens.items(.tag)[tokens.len - 1] == .eof);
 }
 
-/// The next token, and the cursor left just past it.
+/// The next token, cursor left just past it.
 pub fn next(tokenizer: *Tokenizer) Token {
     assert(tokenizer.cursor <= tokenizer.source.len);
 
@@ -134,8 +133,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
         .comment_start => {
             assert(source[cursor] == '/');
             cursor += 1;
-            // `//!` documents the file itself, `///` the declaration below it,
-            // `////` and beyond is just a comment
+            // `//!` is the file, `///` the declaration below, `////` just a comment
             if (source[cursor] == '!') continue :state .file_doc_comment;
             if (source[cursor] == '/') {
                 if (source[cursor + 1] == '/') continue :state .line_comment;
@@ -186,8 +184,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
     return .{ .tag = tag, .start = start };
 }
 
-/// The byte just past a token. Fixed text answers from the lexeme, the rest
-/// rescan, which is why no token stores its length.
+/// The byte just past a token, rescanned, which is why none stores a length.
 pub fn tokenEnd(source: [:0]const u8, tag: Token.Tag, start: u32) u32 {
     assert(start <= source.len);
 
@@ -214,7 +211,7 @@ const State = enum {
     invalid,
 };
 
-/// A token that is exactly one byte.
+/// A one byte token.
 fn step(cursor: *u32, tag: Token.Tag) Token.Tag {
     assert(tag.lexeme() != null);
     assert(tag.lexeme().?.len == 1);
@@ -222,7 +219,7 @@ fn step(cursor: *u32, tag: Token.Tag) Token.Tag {
     return tag;
 }
 
-/// A token that is one byte, or two when `second` follows.
+/// One byte, or two when `second` follows.
 fn pair(
     source: [:0]const u8,
     cursor: *u32,
@@ -329,8 +326,8 @@ test "a byte order mark is skipped" {
     try expectTags("\xEF\xBB\xBFx", &.{ .ident, .semi });
 }
 
-// a rescan from a token's start must land where the original scan did, since
-// that is the only reason a token can get away with storing no length
+// a rescan from a token start must land where the first scan did, which is
+// what lets a token store no length
 test "tokenEnd agrees with the scan that produced the token" {
     const source: [:0]const u8 = "hello 12.5 \"a\\nb\" /// doc\n<= orelse";
     var tokenizer: Tokenizer = .init(source);

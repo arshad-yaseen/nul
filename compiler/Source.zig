@@ -1,14 +1,13 @@
-//! A source file in a buffer the tokenizer can scan without bounds checks.
+//! A source file, zero padded so the tokenizer needs no bounds checks.
 
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-/// As written on the command line, and as a diagnostic spells it.
 path: []const u8,
 /// The file, with `padding` zero bytes past the end.
 bytes: [:0]const u8,
-/// Built on first use, since a file nothing is reported about never needs it.
+/// Built on first use; most files never need it.
 line_starts: ?[]u32 = null,
 
 pub const padding = 1;
@@ -17,7 +16,7 @@ pub const bytes_max = std.math.maxInt(u32) - padding - 1;
 
 pub const LoadError = error{ SourceTooLarge, OutOfMemory, ReadFailed };
 
-/// A line and column, both counted from one, as a message spells them.
+/// Both counted from one.
 pub const LineColumn = struct { line: u32, column: u32 };
 
 const Source = @This();
@@ -63,8 +62,7 @@ pub fn lineColumn(source: *Source, gpa: Allocator, offset: u32) Allocator.Error!
     return .{ .line = @intCast(line_index + 1), .column = offset - starts[line_index] + 1 };
 }
 
-/// The text of a line counted from one, without its terminator. A line past the
-/// end is empty, so a diagnostic pointing past the last byte still renders.
+/// One line, without its terminator. A line past the end is empty.
 pub fn lineText(source: *Source, gpa: Allocator, line: u32) Allocator.Error![]const u8 {
     const starts = try source.lineStarts(gpa);
     if (line == 0 or line > starts.len) return "";
@@ -77,7 +75,6 @@ pub fn lineText(source: *Source, gpa: Allocator, line: u32) Allocator.Error![]co
     return if (std.mem.endsWith(u8, text, "\r")) text[0 .. text.len - 1] else text;
 }
 
-/// Built on first use, since a file nothing is reported about never needs it.
 fn lineStarts(source: *Source, gpa: Allocator) Allocator.Error![]u32 {
     if (source.line_starts) |starts| return starts;
 
@@ -97,7 +94,6 @@ fn lineStarts(source: *Source, gpa: Allocator) Allocator.Error![]u32 {
     return source.line_starts.?;
 }
 
-/// Ordering for the binary search that turns an offset into a line.
 fn order(offset: u32, start: u32) std.math.Order {
     return std.math.order(offset, start);
 }

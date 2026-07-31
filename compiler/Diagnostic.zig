@@ -13,7 +13,7 @@ message: []const u8,
 /// Beside the carets. Empty prints nothing.
 label: []const u8 = "",
 help: ?[]const u8 = null,
-/// Somewhere else worth looking. Each renders its own snippet.
+/// Each renders its own snippet.
 notes: []const Note = &.{},
 
 pub const Span = struct { start: u32, end: u32 };
@@ -22,13 +22,12 @@ pub const Note = struct {
     message: []const u8,
     /// Without one, the note is a bare line with no snippet.
     span: ?Span = null,
-    /// The file the span is in, when it is not the diagnostic's own. Analysis
-    /// points across modules, and parsing never does.
+    /// The file the span is in, when it is not the diagnostic's own.
     source: ?*Source = null,
 };
 
-/// Permanent. A code is never renumbered and never reused, because it is what a
-/// program reading build output matches on. Parse owns E01xx, analysis E02xx.
+/// Never renumbered and never reused, because build output is matched on it.
+/// Parse owns E01xx, analysis E02xx.
 pub const Code = enum(u16) {
     expected_token = 101,
     expected_expression = 102,

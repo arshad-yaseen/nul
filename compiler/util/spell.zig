@@ -41,8 +41,7 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
     try writer.writeAll("...");
 }
 
-/// `Box[i64]`, declaration plus arguments, canonically, with the owner in
-/// front for a member, as in `Arena.copy[Pair]`.
+/// `Box[i64]`, or `Arena.copy[Pair]` for a member.
 pub fn writeInstance(
     comp: *const Compilation,
     writer: *Writer,
@@ -56,7 +55,7 @@ pub fn writeInstance(
     if (decl.owner.unwrap()) |owner_index| {
         const owner = comp.decls.items[owner_index.int()];
         try writer.writeAll(comp.pool.stringText(owner.name));
-        // the owner's parameters lead the argument list. spell them as its own
+        // the owner's parameters lead the argument list
         const owner_params = comp.typeParamCount(owner_index);
         skip = @min(owner_params, args.len);
         try writeArgs(comp, writer, args[0..skip]);
@@ -84,7 +83,7 @@ pub fn writeArgs(
     try writer.writeByte(']');
 }
 
-/// `(a: i64, b: bool) i64` from a resolved signature, for the IR header.
+/// `(a: i64, b: bool) i64`, for the IR header.
 pub fn writeSignature(
     comp: *const Compilation,
     writer: *Writer,

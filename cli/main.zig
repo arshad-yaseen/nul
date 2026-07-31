@@ -44,7 +44,6 @@ const Command = enum { tree, check, ir };
 
 const ColorChoice = enum { auto, on, off };
 
-/// What the command line asked for, once it has been read.
 const Request = struct {
     command: Command,
     path: []const u8,
@@ -128,8 +127,7 @@ fn runTree(
     return 0;
 }
 
-/// Where the standard library is. Beside the binary as `../lib/std`, or a
-/// `lib/std` under the working directory for work inside the repository.
+/// Beside the binary as `../lib/std`, or `lib/std` under the working directory.
 fn findStd(init: std.process.Init) !?[]const u8 {
     const arena = init.arena.allocator();
 
@@ -211,7 +209,6 @@ fn misuse(log: *Writer, problem: []const u8) Writer.Error!u8 {
     return 2;
 }
 
-/// `auto` means colour when the stream is a terminal and plain when it is not.
 fn resolve(choice: ColorChoice, io: std.Io, file: std.Io.File) !compiler.Diagnostic.Color {
     assert(choice == .auto or choice == .on or choice == .off);
     return switch (choice) {

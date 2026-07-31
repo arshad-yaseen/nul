@@ -10,7 +10,7 @@ const spell = @import("spell.zig");
 
 const Node = AST.Node;
 
-/// Far above anything `Parse` can build, so the dump is total for any ast.
+/// Far above anything `Parse` can build, so the dump is total.
 const depth_max = 1024;
 
 pub fn tree(t: AST, writer: *Writer) Writer.Error!void {
@@ -184,7 +184,7 @@ fn flag(writer: *Writer, set: bool, name: []const u8) Writer.Error!void {
     if (set) try writer.print(" {s}", .{name});
 }
 
-// the IR dump. It walks flat arrays, so it is total for any function by shape.
+// the IR dump
 
 pub fn func(comp: *const Compilation, body: *const IR.Func, writer: *Writer) Writer.Error!void {
     assert(body.blocks.len > 0);

@@ -1,6 +1,5 @@
-//! The Nul compiler. Source bytes in, a typed control-flow graph or
-//! diagnostics out. Read in pipeline order: `Source`, `Token`, `Tokenizer`,
-//! `AST`, `Parse`, then `Pool`, `Module`, `Compilation`, `Check`, `IR`.
+//! Source bytes in, typed IR or diagnostics out. Pipeline order: Source,
+//! Token, Tokenizer, AST, Parse, Pool, Module, Compilation, Check, IR.
 
 pub const AST = @import("AST.zig");
 pub const Compilation = @import("Compilation.zig");

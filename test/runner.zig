@@ -112,7 +112,7 @@ fn runOne(
     return false;
 }
 
-/// The session-one path. Tokenize and parse only.
+/// Tokenize and parse only.
 fn runParse(
     gpa: Allocator,
     io: std.Io,

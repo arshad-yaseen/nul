@@ -37,7 +37,7 @@ Two names cannot disagree about the state of one object, because two names canno
 one object, unless you wrote a pointer:
 
 ```nul
-var a = arena.create[Point]()     // a is a *Point
+var a = arena.create[Point]()     // a is a *var Point
 var b = a                         // b is the same pointer
 b.x = 99
 
@@ -153,8 +153,8 @@ structures. No restrictions, no overhead, cycles included:
 
 ```nul
 struct Node {
-    value:  i64
-    next:   *Node
+    value: i64
+    next: *Node
     parent: *Node
 }
 
@@ -292,7 +292,7 @@ rule about types, and a type that holds a pointer cannot be copied at all:
 
 ```nul
 struct Pair {
-    left:  *Inner
+    left: *Inner
     count: i64
 }
 

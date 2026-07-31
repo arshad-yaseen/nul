@@ -12,17 +12,17 @@ const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const edit_distance = @import("util/edit_distance.zig");
 
-/// The identity key, `space:stem/stem`, so one file is one module.
+/// `space:stem/stem`, so one file is one module.
 key: []const u8,
 source: Source,
 tree: AST,
 space: Space,
-/// This module's rows in the one declaration table, members included.
+/// Rows in the one declaration table, members included.
 decls_start: u32,
 decls_len: u32,
-/// Top-level name lookup. Members are found through their struct instead.
+/// Top-level names. Members are found through their struct instead.
 names: std.AutoHashMapUnmanaged(Pool.String, Decl.Index),
-/// A module that failed to parse reported its own errors and is never analyzed.
+/// A module that failed to parse reported its errors and is never analyzed.
 failed: bool,
 
 const Module = @This();
@@ -36,33 +36,31 @@ pub const Index = enum(u32) {
     }
 };
 
-/// Which directory a module resolves against. `std.` selects the second, and
-/// only modules already inside it may bind the primitives.
+/// Which directory a module resolves against. Only `std` may bind primitives.
 pub const Space = enum { root, std };
 
-/// One declaration. The row is the identity everything else refers to.
-/// Method resolution, instantiation, and re-export all compare these indexes.
+/// The row is the identity everything else refers to. Method resolution,
+/// instantiation, and re-export all compare these indexes.
 pub const Decl = struct {
     module: Module.Index,
     node: AST.Node.Index,
     name: Pool.String,
     /// For a member function, the struct declaration it belongs to.
     owner: OptionalIndex,
-    /// What resolution left behind. A `type_alias` or `let` stores a pool
-    /// row, a `use` stores the target its `aux` kind explains, and a struct
-    /// holds its member range together with `aux`.
+    /// What resolution left behind. A pool row for `type_alias` and `let`, a
+    /// target for `use`, and a member range for a struct, all read with `aux`.
     result: u32,
     aux: u32,
     kind: Kind,
     state: State,
-    /// A struct with a bound arena operation is the region type. Set at
-    /// registration, before any signature resolves, so the type knows itself.
+    /// A struct with a bound arena operation. Set at registration, before any
+    /// signature resolves, so the type knows itself.
     is_region: bool,
 
     pub const Kind = enum(u8) { use, struct_decl, type_alias, let, fn_decl };
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
 
-    /// What a resolved `use` points at, stored in `aux` beside the payload.
+    /// Stored in `aux` beside the payload.
     pub const UseTarget = enum(u8) { module, decl, builtin };
 
     pub const Index = enum(u32) {
@@ -96,7 +94,7 @@ pub const Decl = struct {
         return @enumFromInt(decl.aux - 1);
     }
 
-    /// A struct's member declarations sit contiguously after it.
+    /// Members sit contiguously after their struct.
     pub fn members(decl: Decl) struct { start: u32, len: u32 } {
         assert(decl.kind == .struct_decl);
         return .{ .start = decl.result, .len = decl.aux };
@@ -114,15 +112,15 @@ pub fn findDecl(module: *const Module, name: Pool.String) ?Decl.Index {
     return module.names.get(name);
 }
 
-/// How a message names this module, the key without its space prefix.
+/// The key without its space prefix.
 pub fn displayName(module: *const Module) []const u8 {
     const colon = std.mem.indexOfScalar(u8, module.key, ':').?;
     assert(colon + 1 < module.key.len);
     return module.key[colon + 1 ..];
 }
 
-/// Parse one loaded source and register its declarations. Parse errors are
-/// copied out and the module is marked failed, so nothing ever analyzes it.
+/// Parse one source and register its declarations. Parse errors are copied out
+/// and the module marked failed, so nothing analyzes it.
 pub fn register(
     comp: *Compilation,
     key: []const u8,
@@ -148,8 +146,8 @@ pub fn register(
         .failed = false,
     };
 
-    // registration is the ownership boundary. from here the module is in the
-    // table and deinit is the root object's job, so no error path frees it
+    // the ownership boundary. past here the module is in the table and the
+    // root object frees it, so no error path does
     try comp.modules.append(gpa, module);
     try comp.module_map.put(gpa, key, index);
 
@@ -172,8 +170,8 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
     const tree = &module.tree;
     const root = tree.viewOf(.root).root;
 
-    // only the standard library may name the primitives, and a binding is
-    // recognized before anything resolves, so the region type knows itself
+    // only std may name the primitives, and a binding is found before anything
+    // resolves, so the region type knows itself
     var binds_builtin = false;
     if (module.space == .std) {
         for (root) |node| {
@@ -224,8 +222,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
     }
 }
 
-/// Members sit contiguously after their struct's own row, and a body that is
-/// exactly `builtin.name` binds that primitive instead of having a body.
+/// A body that is exactly `builtin.name` binds that primitive instead.
 fn registerMembers(
     comp: *Compilation,
     module: *Module,
@@ -289,7 +286,7 @@ fn addDecl(
         return decl_index;
     }
 
-    if (comp.universalType(name) != null) {
+    if (Pool.universalType(text) != null) {
         try comp.reportToken(index, new.name_token, .{
             .code = .shadows,
             .message = try comp.fmt("'{s}' is already the name of a type every file can see", .{
@@ -383,7 +380,6 @@ fn appendDecl(
     return index;
 }
 
-/// Whether a root declaration is exactly `use builtin`.
 fn usePathIsBuiltin(tree: *const AST, node: AST.Node.Index) bool {
     if (tree.nodeTag(node) != .use_decl) return false;
     const use = tree.viewOf(node).use_decl;
@@ -391,9 +387,8 @@ fn usePathIsBuiltin(tree: *const AST, node: AST.Node.Index) bool {
     return std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(use.path)), "builtin");
 }
 
-/// The primitive a function body names, when the body is `builtin.name` and
-/// the name is one the compiler exports. A misspelled name is not a binding,
-/// so the body stays ordinary and analysis reports the name where it is read.
+/// The primitive a `builtin.name` body binds. A misspelled name is no binding,
+/// so the body stays ordinary and the name is reported where it is read.
 fn boundBuiltin(tree: *const AST, body: AST.Node.Index) ?Compilation.Builtin {
     if (tree.nodeTag(body) != .field_access) return null;
     const access = tree.viewOf(body).field_access;
@@ -406,7 +401,7 @@ fn boundBuiltin(tree: *const AST, body: AST.Node.Index) ?Compilation.Builtin {
     return std.meta.stringToEnum(Compilation.Builtin, name);
 }
 
-/// The token naming what a `use` binds, the last component of its path.
+/// The last component of a `use` path, which is what it binds.
 pub fn lastPathComponent(tree: *const AST, path: AST.Node.Index) ?Token.Index {
     return switch (tree.nodeTag(path)) {
         .ident => tree.nodeMainToken(path),
@@ -422,8 +417,8 @@ const path_components_max = 32;
 
 const Loaded = union(enum) { module: Module.Index, not_found, no_std };
 
-/// Find and register a module by its relative path, once. `sub` is joined
-/// from identifiers, so it cannot climb out of its space.
+/// Once per path. `sub` is joined from identifiers, so it cannot climb out of
+/// its space.
 fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error!Loaded {
     assert(sub.len > 0);
 
@@ -452,9 +447,8 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
     return .{ .module = index };
 }
 
-/// Resolve what a `use` names. It is a module, a module plus one trailing
-/// public declaration, or the builtin floor, and the result lands in the
-/// declaration row.
+/// A module, a module plus one public declaration, or the builtin floor. The
+/// result lands in the declaration row.
 pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     const decl = comp.decls.items[decl_index.int()];
     const module = comp.modules.items[decl.module.int()];
@@ -504,8 +498,8 @@ pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bo
         }
     }
 
-    // the whole path as a module wins. otherwise all but the last name a
-    // module and the last is a declaration in it
+    // the whole path as a module wins, otherwise the last name is a
+    // declaration in the module the rest names
     const whole = try std.mem.join(comp.arena.allocator(), "/", names[first..count]);
     switch (try loadModule(comp, space, whole)) {
         .module => |target| {
@@ -567,7 +561,6 @@ fn setUseTarget(
     comp.decls.items[decl_index.int()].result = payload;
 }
 
-/// What a resolved `use` points at.
 pub const UseResolved = union(enum) { module: Module.Index, decl: Decl.Index, builtin };
 
 pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
@@ -581,8 +574,8 @@ pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
     };
 }
 
-/// A public declaration in another module, following re-exports to the end.
-/// Reports at `at` and returns null when the name is missing or private.
+/// Following re-exports to the end. Reports at `at` and returns null when the
+/// name is missing or private.
 pub fn findExported(
     comp: *Compilation,
     in: Module.Index,
@@ -603,7 +596,7 @@ pub fn findExported(
                     module.displayName(), name_text,
                 }),
                 .label = "not found",
-                .help = suggestIn(comp, module, name_text),
+                .help = try suggestIn(comp, module, name_text),
             });
             return null;
         };
@@ -634,8 +627,7 @@ pub fn findExported(
                 target = next_decl.module;
                 continue;
             },
-            // `pub use helper` re-exports a module name, and a declaration
-            // was asked for, so there is nothing here to find
+            // a re-exported module name, where a declaration was asked for
             .module, .builtin => return found,
         }
     }
@@ -711,8 +703,11 @@ fn pathComponents(
     return null;
 }
 
-/// The closest declared name, offered when a lookup misses.
-fn suggestIn(comp: *Compilation, module: *const Module, name: []const u8) ?[]const u8 {
+fn suggestIn(
+    comp: *Compilation,
+    module: *const Module,
+    name: []const u8,
+) Allocator.Error!?[]const u8 {
     var best: ?[]const u8 = null;
     var best_distance: u32 = 3;
 
@@ -727,5 +722,5 @@ fn suggestIn(comp: *Compilation, module: *const Module, name: []const u8) ?[]con
         }
     }
     const found = best orelse return null;
-    return comp.fmt("did you mean '{s}'?", .{found}) catch null;
+    return try comp.fmt("did you mean '{s}'?", .{found});
 }

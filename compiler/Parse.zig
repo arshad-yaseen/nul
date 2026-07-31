@@ -16,13 +16,13 @@ const depth_max = 128;
 const errors_max = 64;
 
 gpa: Allocator,
-/// Backs `errors` and every string in it, so freeing them all is one call.
+/// Backs `errors` and its strings, so freeing them is one call.
 arena: std.heap.ArenaAllocator,
 source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
-/// The tag column, which the cursor reads on nearly every step.
+/// The column the cursor reads on nearly every step.
 tags: []const Token.Tag,
-/// The `.eof` every token list ends with, which the cursor never passes.
+/// The `.eof` the cursor never passes.
 eof_index: Token.Index,
 /// Only ever moves forward.
 token_index: Token.Index,
@@ -31,7 +31,7 @@ extra: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Diagnostic),
 depth: u32,
-/// Set when the parser gave up. Everything after that point is a consequence.
+/// Set when the parser gave up. Everything after is a consequence.
 bailed: bool,
 
 pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
@@ -88,7 +88,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     };
 }
 
-/// The tag `ahead` tokens past the cursor, or `.eof` past the end.
+/// Or `.eof` past the end.
 fn peek(self: *const Parse, ahead: u32) Token.Tag {
     assert(ahead <= 1);
     const index = self.token_index.after(ahead).int();
@@ -96,7 +96,6 @@ fn peek(self: *const Parse, ahead: u32) Token.Tag {
     return .eof;
 }
 
-/// The tag under the cursor.
 fn current(self: *const Parse) Token.Tag {
     assert(self.token_index.int() < self.tags.len);
     return self.peek(0);
@@ -112,7 +111,7 @@ fn eof(self: *const Parse) bool {
     return self.token_index.int() >= self.eof_index.int();
 }
 
-/// Stops at the `.eof`, so the cursor always names a token that exists.
+/// Stops at the `.eof`, so the cursor always names a token.
 fn nextToken(self: *Parse) Token.Index {
     assert(self.token_index.int() <= self.eof_index.int());
 
@@ -148,7 +147,7 @@ fn here(self: *const Parse) Diagnostic.Span {
     return self.spanOf(self.token_index);
 }
 
-/// From `from` to the last token consumed, so exactly what was just parsed.
+/// From `from` to the last token consumed.
 fn spanSince(self: *const Parse, from: Token.Index) Diagnostic.Span {
     assert(from.int() <= self.token_index.int());
     const last = if (self.token_index.int() > from.int()) self.token_index.before(1) else from;
@@ -170,7 +169,7 @@ fn err(self: *Parse, diagnostic: Diagnostic) Allocator.Error!void {
     if (self.errors.items.len == errors_max) self.stop();
 }
 
-/// Steps over whatever is left of a statement, so one mistake reports once.
+/// Over the rest of a statement, so one mistake reports once.
 fn skipToEndOfStatement(self: *Parse) void {
     assert(self.token_index.int() <= self.eof_index.int());
 
@@ -231,7 +230,7 @@ fn expectEndOfStatement(self: *Parse) Allocator.Error!void {
     const found = self.current().symbol();
     switch (self.current()) {
         .semi => self.token_index = self.token_index.after(1),
-        // a block or the file itself can end a statement too
+        // a block or the file itself ends a statement too
         .r_brace, .eof => {},
         else => {
             try self.err(.{
@@ -300,8 +299,8 @@ fn hole(self: *Parse) Allocator.Error!Node.Index {
     return self.addNode(.{ .tag = .err, .main_token = self.token_index, .data = .{ .none = {} } });
 }
 
-/// A hole over a token that can be part of nothing, stepping past it so the
-/// caller's loop is guaranteed to move.
+/// A hole over a token nothing can use, stepping past it so the caller loop
+/// is guaranteed to move.
 fn skip(self: *Parse) Allocator.Error!Node.Index {
     @branchHint(.cold);
 
@@ -313,8 +312,7 @@ fn skip(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
-/// Every append below keeps the length inside a `u32`, so this cast is bounded
-/// by the appends themselves.
+/// Bounded by the appends below, which keep the length inside a `u32`.
 fn extraStart(self: *const Parse) AST.ExtraIndex {
     assert(self.extra.items.len < std.math.maxInt(u32));
     return @enumFromInt(@as(u32, @intCast(self.extra.items.len)));
@@ -341,7 +339,7 @@ fn extraOpt(self: *Parse, node: Node.OptionalIndex) Allocator.Error!void {
 }
 
 fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
-    // one item per node at most, which `addNode` keeps inside a `u32`
+    // one item per node at most, which `addNode` bounds
     assert(items.len <= self.nodes.len);
     try self.extraWord(@intCast(items.len));
 
@@ -374,11 +372,10 @@ const starts_decl = TokenSet.initMany(&.{
 
 const ends_list = starts_decl.unionWith(TokenSet.initMany(&.{ .l_brace, .r_brace, .semi }));
 
-/// Every bracketed, comma-separated list in the grammar. Type parameters, value
-/// parameters, call arguments, type arguments, and struct literal fields are one
-/// function because they recover the same way.
+/// Every bracketed, comma separated list in the grammar. They are one function
+/// because they recover the same way.
 const List = struct {
-    /// What one element is. Each lands in `scratch`.
+    /// Each element lands in `scratch`.
     item: *const fn (*Parse) Allocator.Error!Node.Index,
     starts: TokenSet,
     closer: Token.Tag,
@@ -490,7 +487,7 @@ fn parseUseDecl(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
-/// A dotted name, either an import path or the head of a type.
+/// An import path, or the head of a type.
 fn parsePath(self: *Parse) Allocator.Error!Node.Index {
     assert(self.depth <= depth_max);
     assert(self.eof() == false or self.current() == .eof);
@@ -545,7 +542,7 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
             if (self.at(.kw_fn)) {
                 try self.scratch.append(self.gpa, try self.parseFnDecl());
             } else {
-                // a `pub` inside a struct body can only introduce a function
+                // a `pub` inside a struct body introduces a function
                 try self.errExpected(.expected_struct_member, "a function after 'pub'");
                 try self.scratch.append(self.gpa, try self.hole());
                 self.skipToEndOfStatement();
@@ -782,8 +779,8 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-/// The likeliest cause is the newline before it, which ended the `if`. Its arm is
-/// read anyway, so the mistake reports once rather than once per token inside it.
+/// The likeliest cause is the newline that ended the `if`. The arm is read
+/// anyway, so the mistake reports once, not once per token inside it.
 fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
     const entry = self.token_index;
     defer assert(self.token_index.int() > entry.int() or self.eof());
@@ -799,12 +796,12 @@ fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
     return if (self.at(.kw_if)) self.parseIf() else self.parseBlock();
 }
 
-/// No parentheses, and braces are mandatory, so no arm can dangle.
+/// No parentheses, and mandatory braces, so no arm can dangle.
 fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     const entry = self.token_index;
     defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_if));
-    // an `else if` chain recurses with no block in between, so it guards itself
+    // an `else if` chain recurses with no block between, so it guards itself
     if (self.depth >= depth_max) return self.tooDeep();
     self.depth += 1;
     defer self.depth -= 1;
@@ -815,7 +812,7 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     const capture = try self.parseCapture();
     const then_block = try self.parseBlock();
     const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
-        // `else if` chains as a nested `if_stmt`, so one shape covers every arm
+        // `else if` nests as an `if_stmt`, so one shape covers every arm
         (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
     else
         .none;
@@ -834,7 +831,7 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
-/// `|v|`, naming what an optional held or what error a `catch` caught.
+/// `|v|`, naming an optional payload or a caught error.
 fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
     assert(self.depth <= depth_max);
     assert(self.token_index.int() <= self.eof_index.int());
@@ -884,7 +881,7 @@ fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
     const entry = self.token_index;
     defer assert(self.token_index.int() > entry.int() or self.eof());
     const keyword = self.nextToken();
-    // a report can reach `errors_max` and jump the cursor to the end of file
+    // a report can reach `errors_max` and jump the cursor to end of file
     if (self.bailed == false) {
         assert(self.tags[keyword.int()] == .kw_let or self.tags[keyword.int()] == .kw_var);
     }
@@ -1037,8 +1034,8 @@ fn parseSuffixExpr(self: *Parse) Allocator.Error!Node.Index {
     assert(self.depth <= depth_max);
     var node = try self.parsePrimaryExpr();
     assert(node.int() < self.nodes.len);
-    // each suffix wraps the one before it, so a chain is tree depth even though
-    // it is written as a loop, and every later walk descends it
+    // each suffix wraps the one before, so a chain written as a loop is still
+    // tree depth for every later walk
     var suffixes: u32 = 0;
 
     while (true) {
@@ -1098,8 +1095,7 @@ fn parseCall(self: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
     return node;
 }
 
-/// `Box[i64]` in a type and `create[Node]` in a call are the same thing, so they
-/// are the same node.
+/// `Box[i64]` in a type and `create[Node]` in a call are one node.
 fn parseInstance(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     const entry = self.token_index;
     defer assert(self.token_index.int() > entry.int() or self.eof());
@@ -1183,7 +1179,7 @@ fn parseErrorValue(self: *Parse) Allocator.Error!Node.Index {
         try self.errExpected(.expected_token, Token.Tag.ident.symbol());
         return self.hole();
     }
-    // `main_token` is the member, so the keyword is two tokens before it
+    // `main_token` is the member, so the keyword is two before it
     const name = self.nextToken();
     assert(self.tags[name.before(2).int()] == .kw_error);
     return self.addNode(.{ .tag = .error_value, .main_token = name, .data = .{ .none = {} } });

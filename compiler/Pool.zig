@@ -1,5 +1,4 @@
-//! The interned pool. Every type and every constant is one row here, so
-//! equality anywhere in the compiler is index equality.
+//! One row per type and per constant, so equality is index equality.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -7,25 +6,23 @@ const Allocator = std.mem.Allocator;
 
 const AST = @import("AST.zig");
 
-/// Tag and payload columns for every interned row.
 items: std.MultiArrayList(Item),
 /// Wide payloads. A 128-bit integer, or a float and its type.
 extra: std.ArrayList(u32),
-/// Every interned string, null-terminated. Names and error tags share it.
+/// Every interned string, null terminated.
 bytes: std.ArrayList(u8),
 /// Row lookup, so one (tag, payload) is one index forever.
 map: std.HashMapUnmanaged(Index, void, IndexContext, std.hash_map.default_max_load_percentage),
-/// String lookup into `bytes`.
 string_map: std.HashMapUnmanaged(String, void, StringContext, load_percentage),
 
 const load_percentage = std.hash_map.default_max_load_percentage;
 
 const Pool = @This();
 
-/// A type or a constant. The named rows are interned by `init` in this order,
-/// so they can be compared and switched on without a lookup.
+/// A type or a constant. `init` interns the named rows in this order, so they
+/// compare and switch without a lookup.
 pub const Index = enum(u32) {
-    /// Both a broken type and a broken value. Anything it touches stays silent.
+    /// A broken type and a broken value. Anything it touches stays silent.
     poison,
     bool_type,
     i8_type,
@@ -38,7 +35,7 @@ pub const Index = enum(u32) {
     u64_type,
     f32_type,
     f64_type,
-    /// What a function with no return type returns. Not nameable in source.
+    /// What a function with no return type returns. Not nameable.
     nothing_type,
     /// A number that has not met a type yet.
     untyped_int_type,
@@ -56,8 +53,8 @@ pub const Index = enum(u32) {
     }
 };
 
-/// A struct instantiation. The rows live on `Compilation`, because they name
-/// declarations, but the pool references them, so the index type lives here.
+/// A struct instantiation. The rows live on `Compilation`; only the index
+/// type lives here, because the pool references it.
 pub const Instance = enum(u32) {
     _,
 
@@ -97,20 +94,59 @@ pub const Simple = enum(u32) {
     true,
     false,
     null,
+
+    /// The row this static occupies. The two enums are one numbering.
+    pub fn index(simple: Simple) Index {
+        return @enumFromInt(@intFromEnum(simple));
+    }
+
+    /// Whether source may write this name. The tag name is the spelling.
+    fn isUniversal(simple: Simple) bool {
+        return switch (simple) {
+            .bool => true,
+            .i8, .i16, .i32, .i64 => true,
+            .u8, .u16, .u32, .u64 => true,
+            .f32, .f64 => true,
+            .poison, .nothing, .untyped_int, .untyped_float, .@"error" => false,
+            .true, .false, .null => false,
+        };
+    }
 };
 
-/// What one row means, reconstructed by `keyOf` and interned by `intern`.
+// the universal scope
+
+/// The type a name means in every file. One name per type and no synonyms,
+/// read off the static rows so the two cannot drift apart.
+pub fn universalType(text: []const u8) ?Index {
+    return universal.get(text);
+}
+
+/// For a suggestion when a name is missed.
+pub const universal_names = universal.keys();
+
+const universal = build: {
+    const simples = std.enums.values(Simple);
+    var entries: [simples.len]struct { []const u8, Index } = undefined;
+    var count: usize = 0;
+    for (simples) |simple| {
+        if (simple.isUniversal() == false) continue;
+        entries[count] = .{ @tagName(simple), simple.index() };
+        count += 1;
+    }
+    break :build std.StaticStringMap(Index).initComptime(entries[0..count].*);
+};
+
 pub const Key = union(enum) {
     simple: Simple,
     pointer: Fields.Pointer,
     optional: Index,
     error_union: Index,
-    /// A nominal struct. Identity is the instantiation, so it is the payload.
+    /// A nominal struct, whose identity is the instantiation.
     struct_type: Instance,
     int: Fields.Int,
     float: Fields.Float,
     error_value: String,
-    /// `null` after it met an optional type, which is the payload.
+    /// `null` after it met an optional type.
     null_typed: Index,
 
     pub const Fields = struct {
@@ -175,9 +211,9 @@ const Item = struct {
         optional,
         error_union,
         struct_type,
-        /// `data` points at `extra`, holding the type and four value words.
+        /// `data` points at `extra`: the type and four value words.
         int,
-        /// `data` points at `extra`, holding the type and two value words.
+        /// `data` points at `extra`: the type and two value words.
         float,
         error_value,
         null_typed,
@@ -186,7 +222,7 @@ const Item = struct {
 
 comptime {
     assert(@sizeOf(Item.Tag) == 1);
-    // the statics must line up name for name, since init interns by this order
+    // the statics line up name for name, since `init` interns in this order
     const simples = @typeInfo(Simple).@"enum".fields;
     for (simples, 0..) |field, row| {
         const name = @typeInfo(Index).@"enum".fields[row].name;
@@ -213,7 +249,7 @@ pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
 
     for (std.enums.values(Simple)) |simple| {
         const index = try pool.intern(gpa, .{ .simple = simple });
-        assert(index.int() == @intFromEnum(simple));
+        assert(index == simple.index());
     }
     assert(pool.items.len == @typeInfo(Simple).@"enum".fields.len);
 }
@@ -323,7 +359,6 @@ pub fn stringText(pool: *const Pool, index: String) [:0]const u8 {
 
 // questions every stage asks
 
-/// The type of a constant. Poison stays poison.
 pub fn typeOfValue(pool: *const Pool, value: Index) Index {
     return switch (pool.keyOf(value)) {
         .simple => |simple| switch (simple) {
@@ -373,7 +408,6 @@ pub fn isNumeric(index: Index) bool {
     return isFloat(index);
 }
 
-/// Whether an integer value fits a numeric type.
 pub fn fitsInt(value: i128, type_index: Index) bool {
     assert(isInteger(type_index) or isFloat(type_index));
     return switch (type_index) {
@@ -394,22 +428,19 @@ pub fn fitsInt(value: i128, type_index: Index) bool {
 
 // the constant-folding core
 
-/// What folding produced. Everything except `value` is a mistake the caller
-/// reports where the operator was written.
+/// Everything except `value` is a mistake, reported at the operator.
 pub const Fold = union(enum) {
     value: Index,
     /// The 128 bits constants fold in ran out.
     overflow,
     division_by_zero,
-    /// The result, folded wide, refused by the type both operands carry.
+    /// Folded wide, then refused by the type both operands carry.
     does_not_fit: struct { value: i128, type: Index },
-    /// The two operand types disagree.
     mismatch: struct { left: Index, right: Index },
-    /// The operator refuses this operand type outright.
     bad_operand: Index,
 };
 
-/// The one folding core. Every site that folds two constants calls this.
+/// The one folding core.
 pub fn fold(
     pool: *Pool,
     gpa: Allocator,
@@ -470,17 +501,15 @@ pub fn foldNot(pool: *const Pool, operand: Index) Fold {
     return .{ .value = if (value) .false_value else .true_value };
 }
 
-/// What happened when a constant met a type.
 pub const Meet = union(enum) {
     value: Index,
-    /// The value is right in kind and wrong in size. The caller spells it.
+    /// Right in kind, wrong in size.
     does_not_fit,
-    /// The value can never be this type, whatever its size.
     wrong_kind,
 };
 
-/// A constant meeting a type, the check by value rather than by type. Optional
-/// and error wrapping stay with the caller, because they produce instructions.
+/// The check by value rather than by type. Optional and error wrapping stay
+/// with the caller, because they produce instructions.
 pub fn meet(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocator.Error!Meet {
     if (value == .poison) return .{ .value = .poison };
     if (type_index == .poison) return .{ .value = .poison };
@@ -550,7 +579,7 @@ pub fn meet(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Alloca
 
 // the arms of the core
 
-/// A numeric constant, widened so the fold has one integer and one float shape.
+/// Widened, so the fold has one integer and one float shape.
 const Number = struct {
     type: Index,
     int: i128,
@@ -581,8 +610,8 @@ fn boolOf(key: Key) ?bool {
     };
 }
 
-/// The type two constant operands share, or null when they disagree. An
-/// untyped operand takes the other side's type, which is the Go rule.
+/// The type two operands share, or null. An untyped operand takes the other
+/// side, which is the Go rule.
 fn merge(left: Index, right: Index) ?Index {
     if (left == right) return left;
     if (left == .untyped_int_type) return right;
@@ -660,7 +689,7 @@ fn foldFloat(
     }
 }
 
-/// An error compares with `==` and `!=`, and that is its only operation.
+/// An error compares with `==` and `!=`, and nothing else.
 fn foldError(pool: *const Pool, op: AST.BinaryOp, lhs: Index, rhs: Index) Fold {
     const left = pool.keyOf(lhs);
     const right = pool.keyOf(rhs);
@@ -681,8 +710,8 @@ fn boolFold(value: bool) Fold {
     return .{ .value = if (value) Index.true_value else Index.false_value };
 }
 
-/// A folded integer becomes a row, unless the type its operands carry refuses
-/// the value, which is the moment overflow in a sized type is caught.
+/// Where overflow in a sized type is caught, since the operands carry the type
+/// that refuses the value.
 fn internInt(
     pool: *Pool,
     gpa: Allocator,
@@ -705,7 +734,7 @@ fn internFloat(pool: *Pool, gpa: Allocator, value: f64, type_index: Index) Alloc
     }) };
 }
 
-/// An integer value carried into a type already checked to hold it.
+/// Into a type already checked to hold the value.
 fn internWith(pool: *Pool, gpa: Allocator, value: i128, type_index: Index) Allocator.Error!Index {
     if (isFloat(type_index)) {
         const wide: f64 = @floatFromInt(value);
@@ -798,13 +827,9 @@ const StringContext = struct {
 
 const testing = std.testing;
 
-fn testPool(pool: *Pool) !void {
-    try pool.init(testing.allocator);
-}
-
 test "one value is one row, and the statics sit where their names say" {
     var pool: Pool = undefined;
-    try testPool(&pool);
+    try pool.init(testing.allocator);
     defer pool.deinit(testing.allocator);
 
     const five = try pool.intern(testing.allocator, .{
@@ -828,9 +853,25 @@ test "one value is one row, and the statics sit where their names say" {
     }));
 }
 
+test "every universal name is its own static row, and nothing else has one" {
+    try testing.expectEqual(Index.bool_type, universalType("bool"));
+    try testing.expectEqual(Index.i8_type, universalType("i8"));
+    try testing.expectEqual(Index.u64_type, universalType("u64"));
+    try testing.expectEqual(Index.f64_type, universalType("f64"));
+
+    try testing.expectEqual(null, universalType("nothing"));
+    try testing.expectEqual(null, universalType("error"));
+    try testing.expectEqual(null, universalType("true"));
+    try testing.expectEqual(null, universalType("poison"));
+    try testing.expectEqual(null, universalType("int"));
+
+    try testing.expectEqual(11, universal_names.len);
+    for (universal_names) |name| try testing.expect(universalType(name) != null);
+}
+
 test "folding is 128 bits wide and reports the edge" {
     var pool: Pool = undefined;
-    try testPool(&pool);
+    try pool.init(testing.allocator);
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
@@ -851,7 +892,7 @@ test "folding is 128 bits wide and reports the edge" {
 
 test "a typed operand types the fold, and the type refuses what it cannot hold" {
     var pool: Pool = undefined;
-    try testPool(&pool);
+    try pool.init(testing.allocator);
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
@@ -870,7 +911,7 @@ test "a typed operand types the fold, and the type refuses what it cannot hold" 
 
 test "a constant meets a type by value, not by type" {
     var pool: Pool = undefined;
-    try testPool(&pool);
+    try pool.init(testing.allocator);
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
