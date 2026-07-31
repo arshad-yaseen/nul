@@ -124,7 +124,7 @@ fn runTree(
         }
         return 1;
     }
-    try compiler.dump(tree, out);
+    try compiler.dump.tree(tree, out);
     return 0;
 }
 

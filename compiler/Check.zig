@@ -11,6 +11,8 @@ const IR = @import("IR.zig");
 const Module = @import("Module.zig");
 const Pool = @import("Pool.zig");
 const Token = @import("Token.zig");
+const edit_distance = @import("util/edit_distance.zig");
+const spell = @import("util/spell.zig");
 
 const Decl = Module.Decl;
 const Node = AST.Node;
@@ -2510,7 +2512,7 @@ fn findField(
     }
 
     var out: std.Io.Writer.Allocating = .init(comp.arena.allocator());
-    comp.spellInstance(&out.writer, instance) catch {};
+    spell.writeInstance(comp, &out.writer, instance) catch {};
     try check.failToken(name_token, .{
         .code = .no_such_member,
         .message = try comp.fmt("'{s}' has no field named '{s}'", .{
@@ -2561,7 +2563,7 @@ fn suggestField(check: *Check, instance: Pool.Instance, name_text: []const u8) ?
     const rows = comp.instances.items[instance.int()];
     for (rows.rows_start..rows.rows_start + rows.rows_len) |raw| {
         const candidate = comp.pool.stringText(comp.rows.items[raw].name);
-        const distance = Compilation.editDistance(name_text, candidate);
+        const distance = edit_distance.between(name_text, candidate);
         if (distance < best_distance) {
             best_distance = distance;
             best = candidate;
@@ -4333,7 +4335,7 @@ fn suggestName(check: *Check, text: []const u8) ?[]const u8 {
 }
 
 fn considerName(candidate: []const u8, text: []const u8, best: *?[]const u8, distance: *u32) void {
-    const measured = Compilation.editDistance(text, candidate);
+    const measured = edit_distance.between(text, candidate);
     if (measured < distance.*) {
         distance.* = measured;
         best.* = candidate;

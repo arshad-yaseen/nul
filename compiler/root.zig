@@ -11,7 +11,7 @@ pub const Pool = @import("Pool.zig");
 pub const Source = @import("Source.zig");
 pub const Token = @import("Token.zig");
 pub const Tokenizer = @import("Tokenizer.zig");
-pub const dump = @import("util/dump.zig").dump;
+pub const dump = @import("util/dump.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

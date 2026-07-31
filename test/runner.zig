@@ -129,7 +129,7 @@ fn runParse(
 
     // the dump has to survive every tree, including one made mostly of holes
     var sink: Writer.Discarding = .init(&.{});
-    try compiler.dump(tree, &sink.writer);
+    try compiler.dump.tree(tree, &sink.writer);
 
     switch (kind) {
         .@"parse-pass" => {
@@ -140,7 +140,7 @@ fn runParse(
                 }
                 return false;
             }
-            try compiler.dump(tree, actual);
+            try compiler.dump.tree(tree, actual);
         },
         .@"parse-error" => {
             if (tree.errors.len == 0) {

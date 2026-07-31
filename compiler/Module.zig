@@ -10,6 +10,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Pool = @import("Pool.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
+const edit_distance = @import("util/edit_distance.zig");
 
 /// The identity key, `space:stem/stem`, so one file is one module.
 key: []const u8,
@@ -719,7 +720,7 @@ fn suggestIn(comp: *Compilation, module: *const Module, name: []const u8) ?[]con
     for (comp.decls.items[module.decls_start..decls_end]) |decl| {
         if (decl.owner != .none) continue;
         const candidate = comp.pool.stringText(decl.name);
-        const distance = Compilation.editDistance(name, candidate);
+        const distance = edit_distance.between(name, candidate);
         if (distance < best_distance) {
             best_distance = distance;
             best = candidate;
