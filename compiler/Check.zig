@@ -1,8 +1,4 @@
-//! The one walker. It goes over a declaration's tree once and decides, per
-//! expression, whether the value is a constant it folds or code it emits into
-//! the IR. There is no untyped middle form. Every entry point here is reached
-//! through `Compilation.ensure`, so everything below is memoized, poisoned on
-//! failure, and silent about values that are already broken.
+//! Lower to IR.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -15,7 +11,6 @@ const IR = @import("IR.zig");
 const Module = @import("Module.zig");
 const Pool = @import("Pool.zig");
 const Token = @import("Token.zig");
-const string_literal = @import("util/string_literal.zig");
 
 const Decl = Module.Decl;
 const Node = AST.Node;
@@ -169,7 +164,7 @@ fn sizeWalkType(
         .struct_type => |embedded| try comp.ensure(.of(.size, embedded), from),
         .optional, .error_union => |child| try sizeWalkType(comp, child, from, depth + 1),
         .simple, .pointer => {},
-        .int, .float, .str, .error_value, .null_typed => unreachable,
+        .int, .float, .error_value, .null_typed => unreachable,
     }
 }
 
@@ -572,7 +567,7 @@ fn typeReachesMemory(check: *Check, type_index: Pool.Index, depth: u32) Allocato
             return false;
         },
         .simple => return false,
-        .int, .float, .str, .error_value, .null_typed => unreachable,
+        .int, .float, .error_value, .null_typed => unreachable,
     }
 }
 
@@ -817,15 +812,6 @@ fn blockOpen(check: *const Check) bool {
     return builder.blocks.items[builder.current.int()].terminator == .none;
 }
 
-/// Seal the current block and open a fresh one nothing jumps to. Whatever
-/// lands there is analysis past an exit, dropped at finish without a trace.
-fn startDeadBlock(check: *Check) Allocator.Error!void {
-    assert(check.blockOpen() == false);
-    const dead = try check.newBlock();
-    check.startBlock(dead);
-    check.builder.?.live = false;
-}
-
 // scopes, locals, and every way out
 
 fn pushScope(check: *Check, node: Node.Index) Allocator.Error!void {
@@ -969,10 +955,28 @@ fn findLocal(check: *const Check, name: []const u8) ?Builder.Local {
 fn checkBlockBody(check: *Check, node: Node.Index) Allocator.Error!void {
     assert(check.tree.nodeTag(node) == .block);
     const statements = check.tree.viewOf(node).block;
-    for (statements) |statement| {
-        if (check.blockOpen() == false) try check.startDeadBlock();
+    for (statements, 0..) |statement, position| {
+        if (check.blockOpen() == false or check.builder.?.live == false) {
+            assert(position > 0);
+            return check.reportUnreachable(statement, statements[position - 1]);
+        }
         try check.checkStatement(statement);
     }
+}
+
+fn reportUnreachable(
+    check: *Check,
+    statement: Node.Index,
+    exit: Node.Index,
+) Allocator.Error!void {
+    try check.fail(statement, .{
+        .code = .unreachable_code,
+        .message = "this cannot be reached",
+        .label = "never runs",
+        .notes = try check.comp.notes(&.{
+            check.comp.noteAt(check.module_index, exit, "the block already left here"),
+        }),
+    });
 }
 
 /// A block statement in its own scope, an `if` arm or a loop body.
@@ -1563,7 +1567,6 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
     switch (check.tree.viewOf(node)) {
         .ident => return check.checkIdent(node),
         .number_literal => return check.checkNumber(node),
-        .str_literal => return check.checkString(node),
         .bool_literal => |view| {
             return .{ .constant = if (view.value) .true_value else .false_value };
         },
@@ -1727,19 +1730,6 @@ fn reportBadNumber(check: *Check, node: Node.Index, text: []const u8) Allocator.
     });
 }
 
-fn checkString(check: *Check, node: Node.Index) Allocator.Error!Value {
-    const comp = check.comp;
-    const raw = check.tree.tokenSlice(check.tree.nodeMainToken(node));
-    assert(raw.len >= 2);
-
-    const buffer = try comp.gpa.alloc(u8, raw.len);
-    defer comp.gpa.free(buffer);
-
-    const length = string_literal.decode(raw, buffer);
-    const text = try comp.pool.string(comp.gpa, buffer[0..length]);
-    return .{ .constant = try comp.pool.intern(comp.gpa, .{ .str = text }) };
-}
-
 fn checkBinary(check: *Check, node: Node.Index, view: AST.View.Binary) Allocator.Error!Value {
     if (view.op == .bool_and or view.op == .bool_or) {
         return check.checkShortCircuit(node, view);
@@ -1853,7 +1843,7 @@ fn emitBinary(
         .mod => Pool.isInteger(left),
         .less_than, .less_or_equal, .greater_than, .greater_or_equal => Pool.isNumeric(left),
         .equal, .not_equal => Pool.isNumeric(left) or left == .bool_type or
-            left == .str_type or left == .error_type,
+            left == .error_type,
         .bool_and, .bool_or => unreachable,
     };
     if (admissible == false) {
@@ -1978,7 +1968,7 @@ fn checkUnary(check: *Check, node: Node.Index, view: AST.View.Unary) Allocator.E
             }
             const found = check.typeOf(operand);
             const signed = switch (found) {
-                .i8_type, .i16_type, .i32_type, .i64_type, .isize_type => true,
+                .i8_type, .i16_type, .i32_type, .i64_type => true,
                 .f32_type, .f64_type => true,
                 else => false,
             };
@@ -2405,7 +2395,7 @@ fn checkFieldAccess(
     }
 }
 
-/// A field read from a value, through a struct, one pointer, or `str.len`.
+/// A field read from a value, through a struct or through one pointer.
 fn valueField(
     check: *Check,
     node: Node.Index,
@@ -2415,24 +2405,6 @@ fn valueField(
 ) Allocator.Error!Value {
     const comp = check.comp;
     const name_text = check.tree.tokenSlice(view.name_token);
-
-    if (found == .str_type) {
-        if (std.mem.eql(u8, name_text, "len")) {
-            const builder_ok = check.builder != null;
-            if (builder_ok == false) return check.needRuntime(node, "'.len'");
-            const length = try check.emit(.str_len, .usize_type, node, .{
-                .a = @intFromEnum(check.refOf(base)),
-                .b = 0,
-            });
-            return .{ .runtime = .{ .ref = length, .type = .usize_type } };
-        }
-        try check.fail(node, .{
-            .code = .no_such_member,
-            .message = try comp.fmt("a str has '.len' and nothing else named '{s}'", .{name_text}),
-            .label = "not on str",
-        });
-        return .poison;
-    }
 
     switch (comp.pool.keyOf(found)) {
         .struct_type => |instance| {
@@ -3185,7 +3157,6 @@ fn peelOnePointer(comp: *const Compilation, type_index: Pool.Index) Pool.Index {
 
 fn reportNotMethod(check: *Check, name_token: Token.Index, found: Pool.Index) Allocator.Error!void {
     const name_text = check.tree.tokenSlice(name_token);
-    const dot_len = std.mem.eql(u8, name_text, "len") and found == .str_type;
     try check.failToken(name_token, .{
         .code = .no_such_member,
         .message = try check.comp.fmt("{s} has no method named '{s}'", .{
@@ -3193,7 +3164,6 @@ fn reportNotMethod(check: *Check, name_token: Token.Index, found: Pool.Index) Al
             name_text,
         }),
         .label = "no such method",
-        .help = if (dot_len) "'.len' is read, not called; drop the '()'" else null,
     });
 }
 
@@ -3875,14 +3845,6 @@ fn placeField(
         },
         else => {
             const text = check.tree.tokenSlice(name_token);
-            if (base.type == .str_type and std.mem.eql(u8, text, "len")) {
-                try check.fail(node, .{
-                    .code = .not_assignable,
-                    .message = "'.len' is a measurement, not a place",
-                    .label = "cannot be written",
-                });
-                return null;
-            }
             try check.reportNoField(node, base.type, text);
             return null;
         },
@@ -4362,7 +4324,7 @@ fn suggestName(check: *Check, text: []const u8) ?[]const u8 {
         if (decl.owner != .none) continue;
         considerName(comp.pool.stringText(decl.name), text, &best, &best_distance);
     }
-    for ([_][]const u8{ "bool", "i64", "u64", "isize", "usize", "f64", "str" }) |name| {
+    for ([_][]const u8{ "bool", "i64", "u64", "u32", "f64" }) |name| {
         considerName(name, text, &best, &best_distance);
     }
 
@@ -4414,9 +4376,8 @@ fn failToken(check: *Check, token: Token.Index, report: Compilation.Report) Allo
     try check.comp.reportToken(check.module_index, token, report);
 }
 
-/// Blocks nothing jumps to are dropped, instructions renumbered, and the
-/// finished body committed to the root object's table. Analysis past an exit
-/// leaves no trace.
+/// Blocks nothing jumps to are dropped and the finished body committed to the
+/// root object's table.
 fn finishFunc(check: *Check) Allocator.Error!void {
     const comp = check.comp;
     const builder = check.builder.?;
@@ -4447,70 +4408,44 @@ fn finishFunc(check: *Check) Allocator.Error!void {
         }
     }
 
-    // compact. live blocks keep their order, instructions renumber densely
+    // only the block list is renumbered. instructions keep the positions they
+    // were built at, so every ref stays valid and a dropped block's words are
+    // simply never reached
     var block_map = try comp.gpa.alloc(u32, block_count);
     defer comp.gpa.free(block_map);
-    var inst_map = try comp.gpa.alloc(u32, builder.insts.len);
-    defer comp.gpa.free(inst_map);
-    @memset(inst_map, std.math.maxInt(u32));
-
-    var insts: IR.Func.InstList = .empty;
-    errdefer insts.deinit(comp.gpa);
-    var blocks: std.ArrayList(IR.Block) = .empty;
-    errdefer blocks.deinit(comp.gpa);
 
     var live_blocks: u32 = 0;
-    var live_insts: u32 = 0;
-    for (builder.blocks.items, 0..) |block, raw| {
+    for (0..block_count) |raw| {
         if (live.isSet(raw)) {
             block_map[raw] = live_blocks;
             live_blocks += 1;
-            live_insts += block.count;
         } else {
             block_map[raw] = std.math.maxInt(u32);
         }
     }
-    try insts.ensureTotalCapacity(comp.gpa, live_insts);
-    try blocks.ensureTotalCapacity(comp.gpa, live_blocks);
 
-    const tags = builder.insts.items(.tag);
-    const types = builder.insts.items(.type);
-    const nodes = builder.insts.items(.node);
-    const datas = builder.insts.items(.data);
+    var blocks: std.ArrayList(IR.Block) = .empty;
+    errdefer blocks.deinit(comp.gpa);
+    try blocks.ensureTotalCapacity(comp.gpa, live_blocks);
 
     for (builder.blocks.items, 0..) |block, raw| {
         if (live.isSet(raw) == false) continue;
-
-        const first: u32 = @intCast(insts.len);
-        for (block.first..block.first + block.count) |old| {
-            inst_map[old] = @intCast(insts.len);
-            insts.appendAssumeCapacity(.{
-                .tag = tags[old],
-                .type = types[old],
-                .node = nodes[old],
-                .data = remapData(tags[old], datas[old], inst_map, builder.extra.items),
-            });
-        }
-
         blocks.appendAssumeCapacity(.{
-            .first = first,
+            .first = block.first,
             .count = block.count,
             .terminator = switch (block.terminator) {
                 .none => unreachable,
                 .jump => |target| .{ .jump = @enumFromInt(block_map[target.int()]) },
                 .branch => |branch| .{ .branch = .{
-                    .cond = remapRef(branch.cond, inst_map),
+                    .cond = branch.cond,
                     .then_block = @enumFromInt(block_map[branch.then_block.int()]),
                     .else_block = @enumFromInt(block_map[branch.else_block.int()]),
                 } },
-                .ret => |value| .{
-                    .ret = if (value == .none) .none else remapRef(value, inst_map),
-                },
+                .ret => |value| .{ .ret = value },
             },
         });
     }
     assert(blocks.items.len == live_blocks);
-    assert(insts.len == live_insts);
 
     const extra = try comp.gpa.dupe(u32, builder.extra.items);
     errdefer comp.gpa.free(extra);
@@ -4521,7 +4456,7 @@ fn finishFunc(check: *Check) Allocator.Error!void {
     const func_index: IR.Func.Index = @enumFromInt(@as(u32, @intCast(comp.funcs.items.len)));
     try comp.funcs.append(comp.gpa, .{
         .instance = builder.instance,
-        .insts = insts.toOwnedSlice(),
+        .insts = builder.insts.toOwnedSlice(),
         .extra = extra,
         .blocks = blocks_owned,
     });
@@ -4536,78 +4471,4 @@ fn finishFuncVisit(
     if (live.isSet(target)) return;
     live.set(target);
     frontier.appendAssumeCapacity(target);
-}
-
-/// Rewrite a payload's instruction refs to the compacted numbering. Refs in
-/// `extra` are rewritten in place, which is safe because each extra run
-/// belongs to exactly one instruction.
-fn remapData(
-    tag: IR.Inst.Tag,
-    data: IR.Inst.Data,
-    inst_map: []const u32,
-    extra: []u32,
-) IR.Inst.Data {
-    switch (tag) {
-        .param, .local, .arena_init, .scope_begin => return data,
-        .load,
-        .str_len,
-        .negate,
-        .not,
-        .arena_child,
-        .arena_create,
-        .arena_reset,
-        .arena_destroy,
-        .wrap_optional,
-        .has_value,
-        .unwrap_value,
-        .wrap_ok,
-        .wrap_err,
-        .is_error,
-        .unwrap_ok,
-        .unwrap_err,
-        .scope_end,
-        => return .{ .a = remapWord(data.a, inst_map), .b = data.b },
-        .field_ptr, .field_val => return .{ .a = remapWord(data.a, inst_map), .b = data.b },
-        .store,
-        .arena_copy,
-        .add,
-        .sub,
-        .mul,
-        .div,
-        .mod,
-        .cmp_eq,
-        .cmp_ne,
-        .cmp_lt,
-        .cmp_le,
-        .cmp_gt,
-        .cmp_ge,
-        => return .{ .a = remapWord(data.a, inst_map), .b = remapWord(data.b, inst_map) },
-        .call => {
-            const count = extra[data.a + 1];
-            for (extra[data.a + 2 ..][0..count]) |*word| word.* = remapWord(word.*, inst_map);
-            return data;
-        },
-        .struct_init => {
-            const count = extra[data.a];
-            for (extra[data.a + 1 ..][0..count]) |*word| word.* = remapWord(word.*, inst_map);
-            return data;
-        },
-    }
-}
-
-fn remapWord(word: u32, inst_map: []const u32) u32 {
-    return @intFromEnum(remapRef(@enumFromInt(word), inst_map));
-}
-
-fn remapRef(ref: Ref, inst_map: []const u32) Ref {
-    assert(ref != .none);
-    switch (ref.unwrap()) {
-        .constant => return ref,
-        .inst => |inst| {
-            const mapped = inst_map[inst.int()];
-            // a live instruction never uses a dropped one's result
-            assert(mapped != std.math.maxInt(u32));
-            return .fromInst(@enumFromInt(mapped));
-        },
-    }
 }

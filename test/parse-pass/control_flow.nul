@@ -26,6 +26,6 @@ fn loops(a: i64, limit: i64) {
 fn cleanup(arena: Arena) {
     var scratch = arena.child()
     defer scratch.destroy()
-    defer report("done")
+    defer report(0)
     return
 }

@@ -3,13 +3,11 @@ const std = @import("std");
 const zon = @import("build.zig.zon");
 
 const test_dirs = [_][]const u8{
-    "test/parse",
+    "test/parse-pass",
     "test/parse-error",
-    "test/hostile",
     "test/pass",
     "test/fail",
     "test/multi",
-    "test/program",
 };
 
 const unit_test_roots = [_][]const u8{

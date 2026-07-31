@@ -98,8 +98,6 @@ pub const Inst = struct {
         field_ptr,
         /// `a` is a struct value, `b` a row. Produces the field's value.
         field_val,
-        /// `a` is a `str`. Produces its length as `usize`.
-        str_len,
 
         add,
         sub,
@@ -224,7 +222,6 @@ fn dumpInst(
             if (name != .empty) try writer.print(" {s}", .{comp.pool.stringText(name)});
         },
         .load,
-        .str_len,
         .negate,
         .not,
         .arena_child,

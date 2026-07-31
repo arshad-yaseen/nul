@@ -43,8 +43,6 @@ pub const Code = enum(u16) {
     nesting_too_deep = 111,
     invalid_bytes = 112,
     stray_else = 113,
-    unterminated_string = 114,
-    invalid_escape = 115,
     var_at_top_level = 116,
 
     undefined_name = 201,
@@ -63,7 +61,6 @@ pub const Code = enum(u16) {
     not_constant = 214,
     var_needs_type = 215,
     no_literal_context = 216,
-    no_such_field = 217,
     missing_field = 218,
     no_such_member = 219,
     private = 220,
@@ -96,6 +93,7 @@ pub const Code = enum(u16) {
     bad_number = 247,
     not_a_number = 248,
     analysis_too_deep = 249,
+    unreachable_code = 250,
 };
 
 pub const Color = enum { off, on };

@@ -111,7 +111,7 @@ fn node(
             if (operand.unwrap()) |value| try node(tree, writer, value, below, "value");
         },
 
-        .ident, .number_literal, .str_literal => |token| {
+        .ident, .number_literal => |token| {
             try writer.print(" {s}\n", .{tree.tokenSlice(token)});
         },
         .bool_literal => |it| try writer.print(" {s}\n", .{if (it.value) "true" else "false"}),

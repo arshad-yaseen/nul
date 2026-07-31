@@ -2,7 +2,7 @@ pub fn create[T](self: Arena) *var T = builtin.arena_create
 
 fn double(a: i64) i64 = a + a
 
-pub fn name() str = "nul"
+pub fn name() i64 = 7
 
 pub struct Arena {
     base: i64

@@ -7,7 +7,6 @@ const Diagnostic = @import("Diagnostic.zig");
 const Token = @import("Token.zig");
 const Source = @import("Source.zig");
 const Tokenizer = @import("Tokenizer.zig");
-const string_literal = @import("util/string_literal.zig");
 
 const Node = AST.Node;
 
@@ -354,9 +353,9 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,     .number,  .str,      .kw_true,     .kw_false,
-    .kw_null,   .l_paren, .dot,      .minus,       .bang,
-    .ampersand, .kw_try,  .kw_error, .str_escaped, .unterminated_str,
+    .ident,   .number,  .kw_true,   .kw_false,
+    .kw_null, .l_paren, .dot,       .minus,
+    .bang,    .kw_try,  .ampersand, .kw_error,
     .invalid,
 });
 
@@ -1141,8 +1140,6 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .number => return self.addLeaf(.number_literal),
         .kw_true, .kw_false => return self.addLeaf(.bool_literal),
         .kw_null => return self.addLeaf(.null_literal),
-        .str => return self.addLeaf(.str_literal),
-        .str_escaped => return self.parseEscapedString(),
         .kw_error => return self.parseErrorValue(),
         .dot => return self.parseStructLiteral(),
         .l_paren => {
@@ -1154,16 +1151,6 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
                 .main_token = lparen,
                 .data = .{ .node = inner },
             });
-        },
-        .unterminated_str => {
-            try self.err(.{
-                .code = .unterminated_string,
-                .span = self.here(),
-                .message = "this string is never closed",
-                .label = "no closing '\"' before the end of the line",
-                .help = "a string literal stays on one line",
-            });
-            return self.skip();
         },
         .invalid => {
             try self.err(.{
@@ -1179,32 +1166,6 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
             return self.hole();
         },
     }
-}
-
-fn parseEscapedString(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
-    assert(self.at(.str_escaped));
-
-    const token = self.nextToken();
-    const span = self.spanOf(token);
-    if (string_literal.badEscape(self.source[span.start..span.end])) |offset| {
-        const start = span.start + offset;
-        // the closing quote is always past the backslash, so this stays in the token
-        const escaped = if (start + 1 < self.source.len) self.source[start + 1] else 0;
-        try self.err(.{
-            .code = .invalid_escape,
-            .span = .{ .start = start, .end = start + 2 },
-            .message = if (std.ascii.isPrint(escaped))
-                try self.fmt("'\\{c}' is not an escape", .{escaped})
-            else
-                try self.fmt("'\\x{x:0>2}' is not an escape", .{escaped}),
-            .label = "unknown escape",
-            .help = "the escapes are " ++ string_literal.escapes,
-        });
-    }
-    return self.addNode(.{ .tag = .str_literal, .main_token = token, .data = .{ .none = {} } });
 }
 
 fn parseErrorValue(self: *Parse) Allocator.Error!Node.Index {

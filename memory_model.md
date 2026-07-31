@@ -535,10 +535,10 @@ an access path:
 
 ```nul
 struct Handle {
-    slot: usize                   // an index, not a pointer
+    slot: u32                     // an index, not a pointer
 }
 
-fn remember(arena: Arena, position: usize) *Handle {
+fn remember(arena: Arena, position: u32) *Handle {
     var h = arena.create[Handle]()
     h.slot = position             // a plain number crosses arenas freely
     return h
@@ -604,21 +604,32 @@ universal error set, with `try`, all three `catch` forms, and an ignored
 from context, every field named and present; `defer` running at scope exit
 on every path out, once per loop iteration, and on the path a `try` takes;
 untyped constants folding at 128 bits, flowing through `let`, and taking any
-type their value fits, with one name per type and no synonyms; `str` as a
-distinct immutable primitive with `==`, `!=`, and `.len`; modules on disk
+type their value fits, with one name per type and no synonyms; the numeric
+types `i8` through `i64`, `u8` through `u64`, `f32`, `f64`, and `bool`, all of
+them a fixed width, because a type whose size depends on the target is a type
+whose meaning depends on the target; code past a `return`, a `break`, or an
+`if` whose arms all leave, reported rather than dropped; modules on disk
 with `pub` enforced across files and value cycles reported with their chain;
 and the whole `Arena` interface exactly as declared in `lib/std/mem.nul` —
 creation, children, `copy` with its refusal, and release by name. A call
 writes its type arguments, `arena.create[Node]()`, or omits them when a
 value argument pins them down, `arena.copy(p)`.
 
-Designed, and shown in examples above, but not yet in the grammar: slices
-`[]T`, iteration `for x in` — `for` is not a keyword yet, and loops are
-`while` — string interpolation, and the library that needs them: `List`,
-`io`, the pool and reference counted types. A function that can fail returns
-`!T` with a real payload; a fail-with-nothing form is not spellable yet. An
-example using these shows where the language is going, not where the parser
-is.
+Designed, and shown in examples above, but not in the grammar: `str`, and
+with it string literals and interpolation. Every example here that names a
+path or a label is written against the `str` the language will have, not one
+it has. When it returns it brings a question the model has not answered: a
+literal's bytes are static and carry no region, but bytes built at run time
+live somewhere, and `copy` promising to duplicate the characters makes `str`
+the one type that reaches other memory and is copied anyway. Settle that
+before the type comes back.
+
+Also designed and not in the grammar: slices `[]T`, iteration `for x in` —
+`for` is not a keyword yet, and loops are `while` — and the library that
+needs them: `List`, `io`, the pool and reference counted types. A function
+that can fail returns `!T` with a real payload; a fail-with-nothing form is
+not spellable yet. An example using these shows where the language is going,
+not where the parser is.
 
 Specified here but the next stage of the compiler: the region checker — every
 "rejected" above that names a lifetime, from `box.item = temp` to the reset
@@ -630,5 +641,6 @@ The flow-level proofs are the checker's job, and the IR it will read — scope
 ends, arena instructions, places — is already built.
 
 The files under `test/` are the executable record of this boundary: what
-compiles and to which IR (`test/pass/`, `test/program/`), what is refused and
+compiles and to which IR (`test/pass/`), what parses and to which tree
+(`test/parse-pass/`), what is refused and
 with exactly which words (`test/fail/`, `test/multi/`).

@@ -62,4 +62,4 @@ root
             arg: instance
               base: ident Pair
               arg: ident i64
-              arg: ident str
+              arg: ident bool

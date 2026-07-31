@@ -1,0 +1,25 @@
+fn read(arena: Arena, path: i64) !i64 {
+    let value = try io.read_file(arena, path)
+    return value
+}
+
+fn fallback(arena: Arena) i64 {
+    return read(arena, 1) catch 0
+}
+
+fn handled(arena: Arena) {
+    let value = read(arena, 1) catch |e| {
+        report(e)
+    }
+    _ = value
+}
+
+fn named() !i64 {
+    let e = error.NotFound
+    _ = e
+    return error.OutOfRange
+}
+
+fn chained(arena: Arena) i64 {
+    return read(arena, 1) catch read(arena, 2) catch 3
+}

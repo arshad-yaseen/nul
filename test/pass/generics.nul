@@ -11,11 +11,11 @@ pub struct Pair[K, V] {
     }
 }
 
-pub type Named = Pair[str, i64]
+pub type Named = Pair[bool, i64]
 
 fn make(arena: Arena) *var Named {
-    var pair = arena.create[Pair[str, i64]]()
-    pair.key = "answer"
+    var pair = arena.create[Pair[bool, i64]]()
+    pair.key = true
     pair.value = 41
     return pair
 }

@@ -1,0 +1,2 @@
+pub fn read(arena: Arena, path: i64) !i64 {
+    let value = try io.read_file(arena, pa

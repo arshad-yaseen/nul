@@ -5,38 +5,30 @@ const Writer = std.Io.Writer;
 
 const compiler = @import("compiler");
 
-/// The directory a test lives in decides what is expected of it. It is the
-/// component after `test/` in the path, so a multi-module case nests freely.
 const Kind = enum {
-    /// Must parse. The golden is its tree.
-    parse,
-    /// Must not parse. The golden is its diagnostics.
+    /// Must parse.
+    @"parse-pass",
+    /// Must not parse.
     @"parse-error",
-    /// Bytes chosen to break the compiler rather than the language. That there
-    /// is a golden rather than a stack trace is the point.
-    hostile,
-    /// Must compile clean. The golden is its typed IR.
+    /// Must compile clean.
     pass,
-    /// Must be refused. The golden is its diagnostics.
+    /// Must be refused.
     fail,
-    /// A directory of modules entered at `main.nul`. The golden holds
-    /// whichever the case produces, diagnostics or IR.
+    /// A directory of modules entered at `main.nul`.
     multi,
-    /// A whole program, compiled clean, with its IR as the golden.
-    program,
 
     fn extension(kind: Kind) []const u8 {
         return switch (kind) {
-            .parse => ".tree",
-            .@"parse-error", .hostile, .fail, .multi => ".expected",
-            .pass, .program => ".ir",
+            .@"parse-pass" => ".tree",
+            .@"parse-error", .fail, .multi => ".expected",
+            .pass => ".ir",
         };
     }
 
     fn analyzes(kind: Kind) bool {
         return switch (kind) {
-            .parse, .@"parse-error", .hostile => false,
-            .pass, .fail, .multi, .program => true,
+            .@"parse-pass", .@"parse-error" => false,
+            .pass, .fail, .multi => true,
         };
     }
 };
@@ -140,7 +132,7 @@ fn runParse(
     try compiler.dump(tree, &sink.writer);
 
     switch (kind) {
-        .parse => {
+        .@"parse-pass" => {
             if (tree.errors.len > 0) {
                 try log.print("{s}: expected to parse, but\n", .{path});
                 for (tree.errors) |diagnostic| {
@@ -156,11 +148,6 @@ fn runParse(
                 return false;
             }
             for (tree.errors) |diagnostic| try diagnostic.render(gpa, &source, actual, .off);
-        },
-        .hostile => if (tree.errors.len > 0) {
-            for (tree.errors) |diagnostic| try diagnostic.render(gpa, &source, actual, .off);
-        } else {
-            try compiler.dump(tree, actual);
         },
         else => unreachable,
     }
@@ -185,7 +172,7 @@ fn runCompile(
 
     const failed = comp.diagnostics.items.len > 0;
     switch (kind) {
-        .pass, .program => {
+        .pass => {
             if (failed) {
                 try log.print("{s}: expected to compile, but\n", .{path});
                 try comp.renderAll(log, .off);

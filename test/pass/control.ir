@@ -47,18 +47,18 @@ b1:
   %9 = cmp_ge %8, %0 : bool
   branch %9, b3, b4
 b2:
-  %10 = load %2 : i64
-  %11 = scope_end %1
-  return %10
+  %14 = load %2 : i64
+  %15 = scope_end %1
+  return %14
 b3:
-  %12 = scope_begin
-  %13 = scope_end %12
-  %14 = scope_end %4
+  %10 = scope_begin
+  %11 = scope_end %10
+  %12 = scope_end %4
   jump b2
 b4:
   jump b5
 b5:
-  %15 = scope_end %4
+  %13 = scope_end %4
   jump b1
 
 fn shorted(a: bool, value: i64) bool
@@ -92,23 +92,23 @@ b5:
   %16 = store %15, %12
   branch %12, b7, b8
 b6:
-  %17 = load %13 : bool
-  %18 = local : *var bool
-  %19 = store %18, %17
-  branch %17, b10, b9
+  %21 = load %13 : bool
+  %22 = local : *var bool
+  %23 = store %22, %21
+  branch %21, b10, b9
 b7:
-  %20 = cmp_lt %1, 10:i64 : bool
-  %21 = store %15, %20
+  %17 = cmp_lt %1, 10:i64 : bool
+  %18 = store %15, %17
   jump b8
 b8:
-  %22 = load %15 : bool
-  %23 = store %13, %22
+  %19 = load %15 : bool
+  %20 = store %13, %19
   jump b6
 b9:
   %24 = not %0 : bool
-  %25 = store %18, %24
+  %25 = store %22, %24
   jump b10
 b10:
-  %26 = load %18 : bool
+  %26 = load %22 : bool
   %27 = scope_end %2
   return %26

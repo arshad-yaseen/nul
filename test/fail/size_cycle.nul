@@ -1,4 +1,4 @@
 struct Tree {
-    label: str
+    label: i64
     left: Tree
 }

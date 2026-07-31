@@ -82,12 +82,6 @@ root
         rhs: number_literal 1e10
       assign
         lhs: ident _
-        rhs: str_literal "text"
-      assign
-        lhs: ident _
-        rhs: str_literal "escapes \n \t \r \\ \""
-      assign
-        lhs: ident _
         rhs: bool_literal true
       assign
         lhs: ident _

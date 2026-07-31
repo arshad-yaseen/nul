@@ -3,7 +3,7 @@ use std.mem.Arena
 struct Plain {
     a: i64
     b: bool
-    label: str
+    label: u32
 }
 
 fn duplicate(arena: Arena, source: Plain) Plain {

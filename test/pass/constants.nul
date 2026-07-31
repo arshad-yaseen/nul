@@ -1,6 +1,6 @@
 let kilobyte = 1024
 let scaled = kilobyte * kilobyte * 4
-let truth = scaled > kilobyte and "a" != "b"
+let truth = scaled > kilobyte and kilobyte != scaled
 
 pub let bytes_max: u32 = scaled
 let narrow_seed: i64 = 200

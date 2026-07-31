@@ -5,7 +5,7 @@ struct Point {
 
 fn build(a: i64) Point {
     let p: Point = .{ x: a, y: 2 }
-    let nested: Wrapper = .{ inner: .{ x: 1, y: 2 }, tag: "n" }
+    let nested: Wrapper = .{ inner: .{ x: 1, y: 2 }, tag: 9 }
     let empty: Point = .{}
     let spread: Point = .{
         x: 1,

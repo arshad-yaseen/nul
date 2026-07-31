@@ -45,7 +45,6 @@ pub fn next(tokenizer: *Tokenizer) Token {
     const source = tokenizer.source;
     var cursor = tokenizer.cursor;
     var start = cursor;
-    var escaped = false;
 
     const tag: Token.Tag = state: switch (State.start) {
         .start => switch (source[cursor]) {
@@ -87,11 +86,6 @@ pub fn next(tokenizer: *Tokenizer) Token {
 
             'a'...'z', 'A'...'Z', '_' => continue :state .ident,
             '0'...'9' => continue :state .number,
-            '"' => {
-                cursor += 1;
-                continue :state .str;
-            },
-
             '=' => break :state pair(source, &cursor, '=', .eq_eq, .eq),
             '!' => break :state pair(source, &cursor, '=', .bang_eq, .bang),
             '<' => break :state pair(source, &cursor, '=', .lt_eq, .lt),
@@ -128,41 +122,6 @@ pub fn next(tokenizer: *Tokenizer) Token {
                 },
                 else => break :state .number,
             }
-        },
-
-        .str => {
-            while (is_str_body[source[cursor]]) cursor += 1;
-            switch (source[cursor]) {
-                0 => {
-                    if (cursor == source.len) break :state .unterminated_str;
-                    cursor += 1;
-                    continue :state .str;
-                },
-                '\n' => break :state .unterminated_str,
-                '\\' => {
-                    escaped = true;
-                    cursor += 1;
-                    continue :state .str_backslash;
-                },
-                else => {
-                    assert(source[cursor] == '"');
-                    cursor += 1;
-                    break :state if (escaped) .str_escaped else .str;
-                },
-            }
-        },
-
-        .str_backslash => switch (source[cursor]) {
-            0 => {
-                if (cursor == source.len) break :state .unterminated_str;
-                cursor += 1;
-                continue :state .str;
-            },
-            '\n' => break :state .unterminated_str,
-            else => {
-                cursor += 1;
-                continue :state .str;
-            },
         },
 
         .slash => {
@@ -247,8 +206,6 @@ const State = enum {
     start,
     ident,
     number,
-    str,
-    str_backslash,
     slash,
     comment_start,
     line_comment,
@@ -292,8 +249,7 @@ fn endOfLine(source: [:0]const u8, from: u32) u32 {
 
 const is_blank = classOf(" \t\r");
 const is_ident = classOf("_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
-const is_str_body = complementOf("\x00\n\\\"");
-const is_token_start = classOf(" \t\r\n\"_0123456789abcdefghijklmnopqrstuvwxyz" ++
+const is_token_start = classOf(" \t\r\n_0123456789abcdefghijklmnopqrstuvwxyz" ++
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ(){}[],.:;|&?=!<>+-*/%");
 
 fn classOf(comptime members: []const u8) [256]bool {
@@ -362,18 +318,6 @@ test "a closing bracket ends a statement, an opening one does not" {
     try expectTags("type A = B[C]\n", &.{
         .kw_type, .ident, .eq, .ident, .l_bracket, .ident, .r_bracket, .semi,
     });
-}
-
-test "a string stops at the newline it never closed" {
-    try expectTags("\"abc\ny", &.{ .unterminated_str, .semi, .ident, .semi });
-    try expectTags("\"abc", &.{ .unterminated_str, .semi });
-    try expectTags("\"a\\", &.{ .unterminated_str, .semi });
-}
-
-test "a backslash anywhere in a string marks it for checking" {
-    try expectTags("\"plain\"", &.{ .str, .semi });
-    try expectTags("\"a\\nb\"", &.{ .str_escaped, .semi });
-    try expectTags("\"a\\\"b\"", &.{ .str_escaped, .semi });
 }
 
 test "invalid bytes gather into one token" {

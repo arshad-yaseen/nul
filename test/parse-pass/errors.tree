@@ -3,11 +3,11 @@ root
     param arena
       type: ident Arena
     param path
-      type: ident str
+      type: ident i64
     ret: error_union_type
-      child: ident str
+      child: ident i64
     body: block
-      var_decl text let
+      var_decl value let
         init: try_expr
           child: call
             callee: field_access read_file
@@ -15,29 +15,29 @@ root
             arg: ident arena
             arg: ident path
       return_stmt
-        value: ident text
+        value: ident value
   fn_decl fallback
     param arena
       type: ident Arena
-    ret: ident str
+    ret: ident i64
     body: block
       return_stmt
         value: catch_expr
           lhs: call
             callee: ident read
             arg: ident arena
-            arg: str_literal "a"
-          rhs: str_literal "default"
+            arg: number_literal 1
+          rhs: number_literal 0
   fn_decl handled
     param arena
       type: ident Arena
     body: block
-      var_decl text let
+      var_decl value let
         init: catch_expr
           lhs: call
             callee: ident read
             arg: ident arena
-            arg: str_literal "a"
+            arg: number_literal 1
           capture: capture e
           rhs: block
             call
@@ -45,7 +45,7 @@ root
               arg: ident e
       assign
         lhs: ident _
-        rhs: ident text
+        rhs: ident value
   fn_decl named
     ret: error_union_type
       child: ident i64
@@ -60,17 +60,17 @@ root
   fn_decl chained
     param arena
       type: ident Arena
-    ret: ident str
+    ret: ident i64
     body: block
       return_stmt
         value: catch_expr
           lhs: call
             callee: ident read
             arg: ident arena
-            arg: str_literal "a"
+            arg: number_literal 1
           rhs: catch_expr
             lhs: call
               callee: ident read
               arg: ident arena
-              arg: str_literal "b"
-            rhs: str_literal "last"
+              arg: number_literal 2
+            rhs: number_literal 3

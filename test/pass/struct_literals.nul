@@ -6,14 +6,14 @@ struct Point {
 struct Frame {
     origin: Point
     size: Point
-    label: str
+    label: u32
 }
 
 fn framed(width: i64) Frame {
     return .{
         origin: .{ x: 0, y: 0 },
         size: .{ x: width, y: width * 2 },
-        label: "frame",
+        label: 7,
     }
 }
 

@@ -8,14 +8,10 @@ start: u32,
 pub const Tag = enum(u8) {
     /// Bytes that cannot begin a token.
     invalid,
-    unterminated_str,
     eof,
 
     ident,
     number,
-    str,
-    /// A string holding at least one backslash, so only these need checking.
-    str_escaped,
     /// `///` and the rest of its line. Belongs to the declaration below it.
     doc_comment,
     file_doc_comment,
@@ -78,8 +74,8 @@ pub const Tag = enum(u8) {
     /// The fixed text of a tag, or null for the tags whose text is the source.
     pub fn lexeme(tag: Tag) ?[]const u8 {
         return switch (tag) {
-            .invalid, .unterminated_str, .eof => null,
-            .ident, .number, .str, .str_escaped, .doc_comment, .file_doc_comment => null,
+            .invalid, .eof => null,
+            .ident, .number, .doc_comment, .file_doc_comment => null,
 
             .kw_and => "and",
             .kw_break => "break",
@@ -177,11 +173,11 @@ comptime {
     assert(@sizeOf(Index) == 4);
 }
 
-/// Whether a newline after this tag ends a statement. The two lexical errors
-/// are here because a newline after a broken value still ends its statement.
+/// Whether a newline after this tag ends a statement. The lexical error is
+/// here because a newline after a broken value still ends its statement.
 pub fn endsStatement(tag: Tag) bool {
     return switch (tag) {
-        .ident, .number, .str, .str_escaped, .unterminated_str, .invalid => true,
+        .ident, .number, .invalid => true,
         .r_paren, .r_brace, .r_bracket => true,
         .kw_true, .kw_false, .kw_null => true,
         .kw_return, .kw_break, .kw_continue => true,
@@ -243,11 +239,9 @@ const symbols: [tag_count][]const u8 = blk: {
     for (std.enums.values(Tag)) |tag| {
         table[@intFromEnum(tag)] = switch (tag) {
             .invalid => "invalid bytes",
-            .unterminated_str => "an unterminated string",
             .eof => "end of file",
             .ident => "an identifier",
             .number => "a number",
-            .str, .str_escaped => "a string literal",
             .doc_comment => "a doc comment",
             .file_doc_comment => "a file doc comment",
             .semi => "the end of the line",

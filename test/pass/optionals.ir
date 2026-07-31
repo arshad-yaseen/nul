@@ -24,13 +24,13 @@ b0:
   %2 = has_value %0 : bool
   branch %2, b1, b2
 b1:
-  %3 = unwrap_value %0 : i64
-  %4 = scope_end %1
-  return %3
-b2:
-  %5 = scope_begin
-  %6 = scope_end %5
+  %6 = unwrap_value %0 : i64
   %7 = scope_end %1
+  return %6
+b2:
+  %3 = scope_begin
+  %4 = scope_end %3
+  %5 = scope_end %1
   return -1:i64
 
 fn tested(maybe: ?i64) i64

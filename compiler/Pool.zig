@@ -11,7 +11,7 @@ const AST = @import("AST.zig");
 items: std.MultiArrayList(Item),
 /// Wide payloads. A 128-bit integer, or a float and its type.
 extra: std.ArrayList(u32),
-/// Every interned string, null-terminated, shared by names and `str` values.
+/// Every interned string, null-terminated. Names and error tags share it.
 bytes: std.ArrayList(u8),
 /// Row lookup, so one (tag, payload) is one index forever.
 map: std.HashMapUnmanaged(Index, void, IndexContext, std.hash_map.default_max_load_percentage),
@@ -36,11 +36,8 @@ pub const Index = enum(u32) {
     u16_type,
     u32_type,
     u64_type,
-    isize_type,
-    usize_type,
     f32_type,
     f64_type,
-    str_type,
     /// What a function with no return type returns. Not nameable in source.
     nothing_type,
     /// A number that has not met a type yet.
@@ -91,11 +88,8 @@ pub const Simple = enum(u32) {
     u16,
     u32,
     u64,
-    isize,
-    usize,
     f32,
     f64,
-    str,
     nothing,
     untyped_int,
     untyped_float,
@@ -115,7 +109,6 @@ pub const Key = union(enum) {
     struct_type: Instance,
     int: Fields.Int,
     float: Fields.Float,
-    str: String,
     error_value: String,
     /// `null` after it met an optional type, which is the payload.
     null_typed: Index,
@@ -147,7 +140,7 @@ pub const Key = union(enum) {
                 hasher.update(std.mem.asBytes(&it.type));
                 hasher.update(std.mem.asBytes(&bits));
             },
-            .str, .error_value => |text| hasher.update(std.mem.asBytes(&text)),
+            .error_value => |text| hasher.update(std.mem.asBytes(&text)),
         }
         return hasher.final();
     }
@@ -166,7 +159,6 @@ pub const Key = union(enum) {
             // by bits, so 1.0 and -0.0 questions never reach float equality
             .float => |it| it.type == other.float.type and
                 @as(u64, @bitCast(it.value)) == @as(u64, @bitCast(other.float.value)),
-            .str => |text| text == other.str,
             .error_value => |text| text == other.error_value,
         };
     }
@@ -187,7 +179,6 @@ const Item = struct {
         int,
         /// `data` points at `extra`, holding the type and two value words.
         float,
-        str,
         error_value,
         null_typed,
     };
@@ -264,7 +255,6 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
             .tag = .float,
             .data = try pool.addExtra(gpa, it.type, &wordsOf(@as(u64, @bitCast(it.value)))),
         },
-        .str => |text| .{ .tag = .str, .data = text.int() },
         .error_value => |text| .{ .tag = .error_value, .data = text.int() },
         .null_typed => |child| .{ .tag = .null_typed, .data = child.int() },
     };
@@ -295,7 +285,6 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
             .type = @enumFromInt(pool.extra.items[data]),
             .value = @bitCast(@as(u64, @bitCast(pool.extraWords(data + 1, 2).*))),
         } },
-        .str => .{ .str = @enumFromInt(data) },
         .error_value => .{ .error_value = @enumFromInt(data) },
         .null_typed => .{ .null_typed = @enumFromInt(data) },
     };
@@ -346,7 +335,6 @@ pub fn typeOfValue(pool: *const Pool, value: Index) Index {
         },
         .int => |it| it.type,
         .float => |it| it.type,
-        .str => .str_type,
         .error_value => .error_type,
         .null_typed => |child| child,
         .pointer, .optional, .error_union, .struct_type => unreachable,
@@ -360,7 +348,7 @@ pub fn isType(pool: *const Pool, index: Index) bool {
             else => true,
         },
         .pointer, .optional, .error_union, .struct_type => true,
-        .int, .float, .str, .error_value, .null_typed => false,
+        .int, .float, .error_value, .null_typed => false,
     };
 }
 
@@ -368,7 +356,7 @@ pub fn isInteger(index: Index) bool {
     return switch (index) {
         .i8_type, .i16_type, .i32_type, .i64_type => true,
         .u8_type, .u16_type, .u32_type, .u64_type => true,
-        .isize_type, .usize_type, .untyped_int_type => true,
+        .untyped_int_type => true,
         else => false,
     };
 }
@@ -385,20 +373,18 @@ pub fn isNumeric(index: Index) bool {
     return isFloat(index);
 }
 
-/// Whether an integer value fits a numeric type. The pointer-width types are
-/// 64 bits here, the width of every target the compiler will meet first.
+/// Whether an integer value fits a numeric type.
 pub fn fitsInt(value: i128, type_index: Index) bool {
     assert(isInteger(type_index) or isFloat(type_index));
     return switch (type_index) {
         .i8_type => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
         .i16_type => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
         .i32_type => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
-        .i64_type, .isize_type => value >= std.math.minInt(i64) and
-            value <= std.math.maxInt(i64),
+        .i64_type => value >= std.math.minInt(i64) and value <= std.math.maxInt(i64),
         .u8_type => value >= 0 and value <= std.math.maxInt(u8),
         .u16_type => value >= 0 and value <= std.math.maxInt(u16),
         .u32_type => value >= 0 and value <= std.math.maxInt(u32),
-        .u64_type, .usize_type => value >= 0 and value <= std.math.maxInt(u64),
+        .u64_type => value >= 0 and value <= std.math.maxInt(u64),
         .untyped_int_type => true,
         // every i128 is below the smallest float infinity, so it always fits
         .f32_type, .f64_type, .untyped_float_type => true,
@@ -447,7 +433,6 @@ pub fn fold(
         else => {},
     }
 
-    if (left == .str or right == .str) return pool.foldStr(op, lhs, rhs);
     if (left == .error_value or right == .error_value) return pool.foldError(op, lhs, rhs);
 
     const a = numberOf(left) orelse return .{ .bad_operand = pool.typeOfValue(lhs) };
@@ -537,7 +522,6 @@ pub fn meet(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Alloca
             }
             return .wrong_kind;
         },
-        .str => return if (type_index == .str_type) .{ .value = value } else .wrong_kind,
         .simple => |simple| switch (simple) {
             .true, .false => {
                 return if (type_index == .bool_type) .{ .value = value } else .wrong_kind;
@@ -674,23 +658,6 @@ fn foldFloat(
         .greater_or_equal => return boolFold(a >= b),
         .bool_and, .bool_or => unreachable,
     }
-}
-
-/// `str` supports exactly equality here. Interning makes it index equality.
-fn foldStr(pool: *const Pool, op: AST.BinaryOp, lhs: Index, rhs: Index) Fold {
-    const left = pool.keyOf(lhs);
-    const right = pool.keyOf(rhs);
-    if (left != .str or right != .str) {
-        return .{ .mismatch = .{
-            .left = pool.typeOfValue(lhs),
-            .right = pool.typeOfValue(rhs),
-        } };
-    }
-    return switch (op) {
-        .equal => boolFold(left.str == right.str),
-        .not_equal => boolFold(left.str != right.str),
-        else => .{ .bad_operand = .str_type },
-    };
 }
 
 /// An error compares with `==` and `!=`, and that is its only operation.
@@ -913,10 +880,6 @@ test "a constant meets a type by value, not by type" {
 
     const big = try pool.intern(gpa, .{ .int = .{ .type = .untyped_int_type, .value = 256 } });
     try testing.expectEqual(Meet.does_not_fit, try pool.meet(gpa, big, .u8_type));
-
-    const text = try pool.string(gpa, "hello");
-    const value = try pool.intern(gpa, .{ .str = text });
-    try testing.expectEqual(Meet.wrong_kind, try pool.meet(gpa, value, .u8_type));
 
     const optional = try pool.intern(gpa, .{ .optional = .i64_type });
     const met = try pool.meet(gpa, .null_value, optional);

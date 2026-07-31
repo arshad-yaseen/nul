@@ -15,8 +15,8 @@ root
       lhs: ident a
       rhs: ident a
   fn_decl name pub
-    ret: ident str
-    body: str_literal "nul"
+    ret: ident i64
+    body: number_literal 7
   struct_decl Arena pub
     field base
       type: ident i64

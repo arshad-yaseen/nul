@@ -1,11 +1,11 @@
 let outer = 1
 
-struct str {
+struct bool {
     byte: u8
 }
 
 fn drive() i64 {
     let outer = 2
-    let usize = 3
-    return outer + usize
+    let u32 = 3
+    return outer + u32
 }

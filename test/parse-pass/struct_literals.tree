@@ -26,7 +26,7 @@ root
               struct_field_init y
                 value: number_literal 2
           struct_field_init tag
-            value: str_literal "n"
+            value: number_literal 9
       var_decl empty let
         type: ident Point
         init: struct_literal

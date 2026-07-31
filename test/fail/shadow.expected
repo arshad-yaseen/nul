@@ -1,8 +1,8 @@
-error[E0205]: 'str' is already the name of a type every file can see
+error[E0205]: 'bool' is already the name of a type every file can see
  --> test/fail/shadow.nul:3:8
   |
-3 | struct str {
-  |        ^^^ a universal name
+3 | struct bool {
+  |        ^^^^ a universal name
   |
   = help: pick another name, and alias it with 'type' if you want a synonym
 
@@ -17,9 +17,9 @@ note: declared here
 1 | let outer = 1
   | ^^^^^^^^^^^^^
 
-error[E0205]: 'usize' is the name of a type every file can see
+error[E0205]: 'u32' is the name of a type every file can see
  --> test/fail/shadow.nul:9:5
   |
-9 |     let usize = 3
-  |     ^^^^^^^^^^^^^ shadows it
+9 |     let u32 = 3
+  |     ^^^^^^^^^^^ shadows it
 

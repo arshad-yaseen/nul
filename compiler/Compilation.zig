@@ -44,8 +44,6 @@ funcs: std.ArrayList(IR.Func),
 diagnostics: std.ArrayList(Entry),
 /// One row per (module, code, offset), so re-walked code reports once.
 reported: std.AutoHashMapUnmanaged(ReportKey, void),
-/// Who needed what. Incremental compilation waiting to be switched on.
-edges: std.ArrayList(Edge),
 
 // transient analysis state
 
@@ -163,8 +161,6 @@ pub const Origin = struct { module: Module.Index, node: AST.Node.Index };
 
 const Frame = struct { unit: Unit, origin: Origin };
 
-const Edge = struct { from: Unit, to: Unit };
-
 const ReportKey = struct { module: Module.Index, code: Diagnostic.Code, offset: u32 };
 
 pub const Entry = struct { module: Module.Index, diagnostic: Diagnostic };
@@ -194,7 +190,6 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .funcs = .empty,
         .diagnostics = .empty,
         .reported = .empty,
-        .edges = .empty,
         .stack = .empty,
         .instance_depth = 0,
         .depth = 0,
@@ -229,7 +224,6 @@ pub fn deinit(comp: *Compilation) void {
     comp.rows_scratch.deinit(gpa);
     comp.diagnostics.deinit(gpa);
     comp.reported.deinit(gpa);
-    comp.edges.deinit(gpa);
     comp.stack.deinit(gpa);
     comp.arena.deinit();
     comp.* = undefined;
@@ -315,8 +309,6 @@ pub fn isGeneric(comp: *const Compilation, decl_index: Decl.Index) bool {
 // ensure, the one door into every memoized computation
 
 pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!void {
-    try comp.depend(unit);
-
     switch (comp.unitState(unit)) {
         .done, .poisoned => return,
         .in_progress => {
@@ -413,12 +405,6 @@ fn setUnitState(comp: *Compilation, unit: Unit, state: Decl.State) void {
         .rows, .signature => comp.instances.items[unit.index].rows_state = state,
         .size, .body => comp.instances.items[unit.index].deep_state = state,
     }
-}
-
-fn depend(comp: *Compilation, to: Unit) Allocator.Error!void {
-    const top = comp.stack.items.len;
-    if (top == 0) return;
-    try comp.edges.append(comp.gpa, .{ .from = comp.stack.items[top - 1].unit, .to = to });
 }
 
 /// A re-entry is a cycle. The report lands on the reference that closed it,
@@ -801,7 +787,7 @@ pub fn spellType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
                 current = child;
             },
             .struct_type => |instance| return comp.spellInstance(writer, instance),
-            .int, .float, .str, .error_value, .null_typed => unreachable,
+            .int, .float, .error_value, .null_typed => unreachable,
         }
     }
     try writer.writeAll("...");
@@ -850,7 +836,7 @@ fn spellArgs(
     try writer.writeByte(']');
 }
 
-/// `(a: i64, b: str) i64` from a resolved signature, for the IR header.
+/// `(a: i64, b: bool) i64` from a resolved signature, for the IR header.
 pub fn spellSignature(
     comp: *const Compilation,
     writer: *Writer,
@@ -899,7 +885,6 @@ pub fn spellConstant(
                 try comp.spellType(writer, it.type);
             }
         },
-        .str => |text| try spellQuoted(writer, comp.pool.stringText(text)),
         .error_value => |name| try writer.print("error.{s}", .{comp.pool.stringText(name)}),
         .null_typed => try writer.writeAll("null"),
         .pointer, .optional, .error_union, .struct_type => unreachable,
@@ -925,19 +910,6 @@ fn spellConstantBare(
         .float => |it| try writer.print("{d}", .{it.value}),
         else => try comp.spellConstant(writer, value),
     }
-}
-
-fn spellQuoted(writer: *Writer, text: []const u8) Writer.Error!void {
-    try writer.writeByte('"');
-    for (text) |byte| switch (byte) {
-        '\n' => try writer.writeAll("\\n"),
-        '\t' => try writer.writeAll("\\t"),
-        '\r' => try writer.writeAll("\\r"),
-        '\\' => try writer.writeAll("\\\\"),
-        '"' => try writer.writeAll("\\\""),
-        else => try writer.writeByte(byte),
-    };
-    try writer.writeByte('"');
 }
 
 /// The name a message or a dump uses for a type, in the diagnostic arena.
@@ -976,11 +948,8 @@ const universal = std.StaticStringMap(Pool.Index).initComptime(.{
     .{ "u16", .u16_type },
     .{ "u32", .u32_type },
     .{ "u64", .u64_type },
-    .{ "isize", .isize_type },
-    .{ "usize", .usize_type },
     .{ "f32", .f32_type },
     .{ "f64", .f64_type },
-    .{ "str", .str_type },
 });
 
 /// One name per type, and no synonyms. This is the whole universal scope.

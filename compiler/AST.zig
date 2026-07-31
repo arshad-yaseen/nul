@@ -110,7 +110,6 @@ pub const Node = struct {
 
         ident,
         number_literal,
-        str_literal,
         bool_literal,
         null_literal,
 
@@ -290,7 +289,6 @@ pub const View = union(enum) {
 
     ident: Token.Index,
     number_literal: Token.Index,
-    str_literal: Token.Index,
     bool_literal: Bool,
     null_literal: Token.Index,
 
@@ -454,7 +452,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
 
         .ident => .{ .ident = main },
         .number_literal => .{ .number_literal = main },
-        .str_literal => .{ .str_literal = main },
         .bool_literal => .{ .bool_literal = .{
             .value = tree.tokenTag(main) == .kw_true,
             .token = main,
@@ -635,7 +632,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
         switch (tree.viewOf(current)) {
             .root => return if (side == .leftmost) .first else main,
             .err, .type_param, .capture, .break_stmt, .continue_stmt => return main,
-            .ident, .number_literal, .str_literal, .null_literal => return main,
+            .ident, .number_literal, .null_literal => return main,
             .bool_literal => |it| return it.token,
             .error_value => |token| {
                 // the name token. the `error` keyword sits two before it

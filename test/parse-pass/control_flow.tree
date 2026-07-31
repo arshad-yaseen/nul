@@ -70,5 +70,5 @@ root
       defer_stmt
         child: call
           callee: ident report
-          arg: str_literal "done"
+          arg: number_literal 0
       return_stmt
