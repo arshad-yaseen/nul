@@ -59,6 +59,15 @@ pub const Func = struct {
         return func.refsAt(start + 1, func.extra[start]);
     }
 
+    /// Every instruction some block holds, in block order.
+    pub fn instructions(func: *const Func) Instructions {
+        return .{
+            .func = func,
+            .block = 0,
+            .at = if (func.blocks.len > 0) func.blocks[0].first else 0,
+        };
+    }
+
     fn refsAt(func: *const Func, start: u32, len: u32) []const Ref {
         assert(start + len <= func.extra.len);
         // a `Ref` is one `u32`, asserted below
@@ -188,11 +197,37 @@ pub const Inst = struct {
     };
 };
 
+/// Walks the instructions of one body, block by block.
+pub const Instructions = struct {
+    func: *const Func,
+    block: u32,
+    at: u32,
+
+    pub fn next(walk: *Instructions) ?Inst.Index {
+        while (walk.block < walk.func.blocks.len) {
+            if (walk.at < walk.func.blocks[walk.block].end()) {
+                defer walk.at += 1;
+                return @enumFromInt(walk.at);
+            }
+            walk.block += 1;
+            if (walk.block < walk.func.blocks.len) {
+                walk.at = walk.func.blocks[walk.block].first;
+            }
+        }
+        return null;
+    }
+};
+
 pub const Block = struct {
-    /// Instructions `first ..< first + count`, contiguous.
+    /// Instructions `first ..< end()`, contiguous.
     first: u32,
     count: u32,
     terminator: Terminator,
+
+    /// One past the last instruction this block holds.
+    pub fn end(block: Block) u32 {
+        return block.first + block.count;
+    }
 
     pub const Index = enum(u32) {
         entry = 0,

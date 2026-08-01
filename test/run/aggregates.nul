@@ -1,0 +1,25 @@
+struct Point {
+    x: i64
+    y: i64
+}
+
+fn maybe(n: i64) ?i64 {
+    if n > 10 {
+        return n
+    }
+    return null
+}
+
+fn risky(n: i64) !i64 {
+    if n < 0 {
+        return error.Negative
+    }
+    return n
+}
+
+pub fn main() i64 {
+    let p: Point = .{ x: 7, y: 5 }
+    let m = maybe(3) orelse 1
+    let r = risky(0 - 1) catch 2
+    return p.x + p.y + m + r
+}

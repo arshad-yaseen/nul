@@ -198,7 +198,7 @@ pub fn func(comp: *const Compilation, body: *const IR.Func, writer: *Writer) Wri
         assert(block.terminator != .none);
         try writer.print("b{d}:\n", .{block_index});
 
-        for (block.first..block.first + block.count) |raw| {
+        for (block.first..block.end()) |raw| {
             const index: IR.Inst.Index = @enumFromInt(@as(u32, @intCast(raw)));
             try inst(comp, body, index, writer);
         }

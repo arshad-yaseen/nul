@@ -16,19 +16,25 @@ const Kind = enum {
     fail,
     /// A directory of modules entered at `main.nul`.
     multi,
+    /// Must emit C that a C compiler accepts.
+    emit,
+    /// Must compile and run, and leave the recorded exit code.
+    run,
 
     fn extension(kind: Kind) []const u8 {
         return switch (kind) {
             .@"parse-pass" => ".tree",
             .@"parse-error", .fail, .multi => ".expected",
             .pass => ".ir",
+            .emit => ".c",
+            .run => ".exit",
         };
     }
 
     fn analyzes(kind: Kind) bool {
         return switch (kind) {
             .@"parse-pass", .@"parse-error" => false,
-            .pass, .fail, .multi => true,
+            .pass, .fail, .multi, .emit, .run => true,
         };
     }
 };
@@ -192,9 +198,79 @@ fn runCompile(
         } else {
             try comp.dumpIR(actual);
         },
+        .emit, .run => {
+            if (failed) {
+                try log.print("{s}: expected to compile, but\n", .{path});
+                try comp.renderAll(log, .off);
+                return false;
+            }
+            if (kind == .emit) {
+                _ = try compiler.EmitC.run(&comp, gpa, actual);
+            } else {
+                const code = try runCompiled(gpa, io, &comp, path, log) orelse return false;
+                try actual.print("{d}\n", .{code});
+            }
+        },
         else => unreachable,
     }
     return true;
+}
+
+/// Emit, hand the C to a compiler, run the result, and report its exit code.
+/// This is the only layer that tests what a program means rather than how it
+/// is spelled.
+fn runCompiled(
+    gpa: Allocator,
+    io: std.Io,
+    comp: *const compiler.Compilation,
+    path: []const u8,
+    log: *Writer,
+) !?u8 {
+    var source: Writer.Allocating = .init(gpa);
+    defer source.deinit();
+    if (try compiler.EmitC.run(comp, gpa, &source.writer) == false) {
+        try log.print("{s}: no 'main', so there is nothing to run\n", .{path});
+        return null;
+    }
+
+    const stem = std.fs.path.stem(path);
+    const c_path = try std.fmt.allocPrint(gpa, ".zig-cache/nul-{s}.c", .{stem});
+    defer gpa.free(c_path);
+    const exe_path = try std.fmt.allocPrint(gpa, ".zig-cache/nul-{s}.exe", .{stem});
+    defer gpa.free(exe_path);
+
+    const cwd: std.Io.Dir = .cwd();
+    try cwd.writeFile(io, .{ .sub_path = c_path, .data = source.written() });
+    defer cwd.deleteFile(io, c_path) catch {};
+
+    const built = try std.process.run(gpa, io, .{ .argv = &.{
+        "zig", "cc", "-std=c99", "-pedantic", "-O1", "-o", exe_path, c_path,
+    } });
+    defer gpa.free(built.stdout);
+    defer gpa.free(built.stderr);
+    defer cwd.deleteFile(io, exe_path) catch {};
+
+    switch (built.term) {
+        .exited => |code| if (code != 0) {
+            try log.print("{s}: the C compiler refused it\n{s}", .{ path, built.stderr });
+            return null;
+        },
+        else => {
+            try log.print("{s}: the C compiler did not finish\n", .{path});
+            return null;
+        },
+    }
+
+    const ran = try std.process.run(gpa, io, .{ .argv = &.{exe_path} });
+    defer gpa.free(ran.stdout);
+    defer gpa.free(ran.stderr);
+    return switch (ran.term) {
+        .exited => |code| code,
+        else => {
+            try log.print("{s}: the program did not exit normally\n", .{path});
+            return null;
+        },
+    };
 }
 
 /// The kind is the path component after `test/`.

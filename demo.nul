@@ -1,7 +1,17 @@
-fn count_up(limit: i64) !i64 {
-    return error.Nice
-}
+let kilobyte = 1024
+let scaled = kilobyte * kilobyte * 4
+let truth = scaled > kilobyte and kilobyte != scaled
 
-pub fn main() i64 {
-    return count_up(100) catch 0
+pub let bytes_max: u32 = scaled
+let narrow_seed: i64 = 200
+
+fn narrowing() u8 {
+    let across: u8 = narrow_seed
+    let folded = 3 * 4 - 2
+    let precise: f64 = 1.5 + 0.25
+    _ = precise
+    if truth {
+        return across
+    }
+    return folded
 }

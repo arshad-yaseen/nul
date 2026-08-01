@@ -250,7 +250,7 @@ fn body(emit: *EmitC, func: *const IR.Func) Error!void {
     for (func.blocks, 0..) |block, index| {
         // a label nothing jumps to is a warning, and the entry falls through
         if (isTarget(func, @intCast(index))) try emit.out.print("b{d}:;\n", .{index});
-        for (block.first..block.first + block.count) |raw| {
+        for (block.first..block.end()) |raw| {
             try emit.inst(func, @intCast(raw));
         }
         try emit.terminator(block.terminator, @intCast(index + 1));
@@ -280,9 +280,10 @@ fn isTarget(func: *const IR.Func, index: u32) bool {
 /// in the numbering, and a temporary for one would never be assigned.
 fn temporaries(emit: *EmitC, func: *const IR.Func) Error!void {
     const params: u32 = @intCast(emit.comp.instanceRows(func.instance).len);
-    for (func.blocks) |block| {
-        for (block.first..block.first + block.count) |raw| {
-            const index: u32 = @intCast(raw);
+    var walk = func.instructions();
+    while (walk.next()) |instruction| {
+        {
+            const index = instruction.int();
             if (index < params) continue;
             const produced = func.insts.items(.type)[index];
             if (produced == .nothing_type) continue;

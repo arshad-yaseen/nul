@@ -8,6 +8,8 @@ const test_dirs = [_][]const u8{
     "test/pass",
     "test/fail",
     "test/multi",
+    "test/emit",
+    "test/run",
 };
 
 const unit_test_roots = [_][]const u8{
