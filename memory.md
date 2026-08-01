@@ -377,6 +377,54 @@ store its own arena's memory into `out` without asking again.
 A `*T` parameter carries no obligation at all, because a function that cannot write
 through a pointer cannot make one dangle.
 
+## One arena is a whole program
+
+The three rules say what is possible, not what is required. The smallest program that
+obeys all of them makes one arena, passes it down, and stops:
+
+```nul
+fn main() !i64 {
+    var arena = Arena.init()
+
+    let tree = try parse(arena, "input.txt")
+    let report = try analyze(arena, tree)
+
+    return report.score
+}
+```
+
+No child, no `reset`, no `destroy`. Nothing crosses an arena, because there is only one
+arena to cross. Every check the compiler makes compares where a value lives against where
+it is being put, and here those are the same name every time, so the checker is not quiet
+by luck. It has nothing to say about a program written this way, and it never will.
+
+The cost is one parameter on a function that allocates, which is a parameter you were
+writing anyway to say where its memory comes from. That is the complete memory vocabulary
+of such a program.
+
+What it gives up is reclamation. Memory grows with everything the program ever allocates
+rather than with what it is still using, and the release comes at the end of `main`. For
+a program that runs, produces an answer, and exits, that is not a compromise, it is the
+design. A compiler, a converter, a one-shot tool: allocate freely, and let exit be the
+free.
+
+A loop is what changes the arithmetic. A server, a game, an editor, anything that runs
+until it is told to stop, allocates without bound in time, and no amount of safety saves
+a program that runs out of memory. `child` and `reset` exist for that moment and for no
+other:
+
+```nul
+    while {
+        var request = arena.child()          // dies at the end of every iteration
+        try handle(request, try accept(socket))
+    }
+```
+
+Nothing was rewritten to get here. `handle` takes an arena because it allocates, which was
+true on the first day. Adding the child changed one line in the caller and no signature
+anywhere, because the parameter was always doing both jobs. A program only starts reading
+it as a lifetime once it has more than one.
+
 ## Aliasing is unrestricted
 
 Any number of pointers may refer to one object, and every one of them may write through
