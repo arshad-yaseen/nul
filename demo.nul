@@ -1,11 +1,7 @@
-fn count_up(limit: i64) i64 {
-    var i: i64 = 1
-    while i < limit {
-        i = i * 2
-    }
-    return i
+fn count_up(limit: i64) !i64 {
+    return error.Nice
 }
 
 pub fn main() i64 {
-    return count_up(100)
+    return count_up(100) catch 0
 }
