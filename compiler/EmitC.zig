@@ -40,7 +40,9 @@ pub fn run(comp: *const Compilation, gpa: Allocator, out: *Writer) Error!bool {
     return emit.entryPoint();
 }
 
-// types
+fn section(emit: *EmitC, wrote: bool) Error!void {
+    if (wrote) try emit.out.writeByte('\n');
+}
 
 /// Every error name in the pool, numbered so zero can mean "no error".
 fn errorEnum(emit: *EmitC) Error!void {
@@ -60,13 +62,14 @@ fn errorEnum(emit: *EmitC) Error!void {
             else => {},
         }
     }
-    try emit.out.writeByte('\n');
+    try emit.section(true);
 }
 
 /// A tag for every aggregate, so one can be named before it is defined. A
 /// struct reaching itself through a pointer needs this.
 fn forwardStructs(emit: *EmitC) Error!void {
     const comp = emit.comp;
+    var wrote = false;
     for (0..comp.pool.items.len) |raw| {
         const index: Pool.Index = @enumFromInt(@as(u32, @intCast(raw)));
         switch (comp.pool.keyOf(index)) {
@@ -78,8 +81,9 @@ fn forwardStructs(emit: *EmitC) Error!void {
         try emit.out.writeByte(' ');
         try emit.typeName(index);
         try emit.out.writeAll(";\n");
+        wrote = true;
     }
-    try emit.out.writeByte('\n');
+    try emit.section(wrote);
 }
 
 /// Every aggregate in the pool, each after whatever it embeds by value. A
@@ -92,7 +96,7 @@ fn types(emit: *EmitC, gpa: Allocator) Error!void {
             else => {},
         }
     }
-    try emit.out.writeByte('\n');
+    try emit.section(emit.defined.count() > 0);
 }
 
 /// One type definition, preceded by whatever it embeds by value. A pointer
@@ -196,12 +200,11 @@ fn typeName(emit: *EmitC, index: Pool.Index) Error!void {
 // functions
 
 fn prototypes(emit: *EmitC) Error!void {
-    try emit.out.writeByte('\n');
     for (emit.comp.funcs.items) |*func| {
         try emit.signature(func);
         try emit.out.writeAll(";\n");
     }
-    try emit.out.writeByte('\n');
+    try emit.section(emit.comp.funcs.items.len > 0);
 }
 
 fn signature(emit: *EmitC, func: *const IR.Func) Error!void {
@@ -250,7 +253,7 @@ fn body(emit: *EmitC, func: *const IR.Func) Error!void {
         for (block.first..block.first + block.count) |raw| {
             try emit.inst(func, @intCast(raw));
         }
-        try emit.terminator(block.terminator);
+        try emit.terminator(block.terminator, @intCast(index + 1));
     }
     try emit.out.writeAll("}\n\n");
 }
@@ -258,10 +261,11 @@ fn body(emit: *EmitC, func: *const IR.Func) Error!void {
 /// Whether any terminator names this block, so an unreachable label is never
 /// written.
 fn isTarget(func: *const IR.Func, index: u32) bool {
-    for (func.blocks) |block| {
+    for (func.blocks, 0..) |block, from| {
         switch (block.terminator) {
             .none => unreachable,
-            .jump => |target| if (target.int() == index) return true,
+            // a jump to the block below is a fall through, which names nothing
+            .jump => |target| if (target.int() == index and from + 1 != index) return true,
             .branch => |branch| {
                 if (branch.then_block.int() == index) return true;
                 if (branch.else_block.int() == index) return true;
@@ -287,6 +291,13 @@ fn temporaries(emit: *EmitC, func: *const IR.Func) Error!void {
             try emit.out.writeAll("    ");
             try emit.writeType(produced);
             try emit.out.print(" t{d};\n", .{index});
+
+            // a slot is the storage its pointer names, declared beside it
+            if (func.insts.items(.tag)[index] == .local) {
+                try emit.out.writeAll("    ");
+                try emit.writeType(emit.comp.pool.keyOf(produced).pointer.child);
+                try emit.out.print(" t{d}_slot;\n", .{index});
+            }
         }
     }
 }
@@ -302,12 +313,7 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
         // arena checker's business rather than the backend's
         .param, .scope_begin, .scope_end => return,
 
-        .local => {
-            const slot = comp.pool.keyOf(produced).pointer.child;
-            try emit.out.writeAll("    ");
-            try emit.writeType(slot);
-            try emit.out.print(" t{d}_slot; t{d} = &t{d}_slot;\n", .{ index, index, index });
-        },
+        .local => try emit.out.print("    t{d} = &t{d}_slot;\n", .{ index, index }),
         .load => {
             try emit.out.print("    t{d} = *", .{index});
             try emit.ref(data.un);
@@ -495,10 +501,12 @@ fn unsignedOf(index: Pool.Index) ?[]const u8 {
     };
 }
 
-fn terminator(emit: *EmitC, term: IR.Terminator) Error!void {
+fn terminator(emit: *EmitC, term: IR.Terminator, next: u32) Error!void {
     switch (term) {
         .none => unreachable,
-        .jump => |target| try emit.out.print("    goto b{d};\n", .{target.int()}),
+        .jump => |target| {
+            if (target.int() != next) try emit.out.print("    goto b{d};\n", .{target.int()});
+        },
         .branch => |branch| {
             try emit.out.writeAll("    if (");
             try emit.ref(branch.cond);
@@ -537,10 +545,17 @@ fn constant(emit: *EmitC, value: Pool.Index) Error!void {
             else => unreachable,
         }),
         .int => |it| {
-            const suffix: []const u8 = if (it.value < 0) "LL" else "ULL";
-            try emit.out.writeAll("(");
-            try emit.writeType(if (it.type == .untyped_int_type) .i64_type else it.type);
-            try emit.out.print("){d}{s}", .{ it.value, suffix });
+            const target: Pool.Index = if (it.type == .untyped_int_type) .i64_type else it.type;
+            try emit.out.writeByte('(');
+            try emit.writeType(target);
+            try emit.out.writeByte(')');
+            if (it.value == std.math.minInt(i64)) {
+                try emit.out.writeAll("INT64_MIN");
+            } else if (it.value > std.math.maxInt(i64)) {
+                try emit.out.print("{d}ULL", .{it.value});
+            } else {
+                try emit.out.print("{d}", .{it.value});
+            }
         },
         .float => |it| try emit.out.print("{d}", .{it.value}),
         .error_value => |name| {
@@ -557,8 +572,7 @@ fn constant(emit: *EmitC, value: Pool.Index) Error!void {
 
 // the entry point
 
-/// `main` in the root module is where a program starts. C wants an `int`, so
-/// the result is narrowed the way an exit status already is.
+/// `main` in the root module is where a program starts.
 fn entryPoint(emit: *EmitC) Error!bool {
     const comp = emit.comp;
     const root = comp.moduleAt(.root);
