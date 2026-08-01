@@ -14,6 +14,11 @@ const unit_test_roots = [_][]const u8{
     "compiler/root.zig",
 };
 
+/// Analysis recurses once per nesting level and nothing bounds the total, so
+/// every binary that runs it asks for room for the deepest source the parser
+/// and `Compilation.analyze_max` between them allow.
+const analysis_stack_bytes = 256 << 20;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -39,6 +44,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.stack_size = analysis_stack_bytes;
     b.installArtifact(exe);
 
     // the standard library ships as source beside the binary
@@ -62,6 +68,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
+        t.stack_size = analysis_stack_bytes;
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
 
@@ -74,6 +81,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "compiler", .module = compiler }},
         }),
     });
+    runner.stack_size = analysis_stack_bytes;
 
     const file_tests = b.addRunArtifact(runner);
     addTestFiles(b, file_tests);

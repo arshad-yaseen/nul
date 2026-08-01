@@ -51,10 +51,6 @@ reported: std.AutoHashMapUnmanaged(ReportKey, void),
 stack: std.ArrayList(Frame),
 /// Frames on the stack that are instantiations, capped at `instantiate_max`.
 instance_depth: u32,
-/// Where analysis started, so spending can be measured rather than guessed.
-stack_base: usize,
-/// The budget ran out. One fact per compilation, reported once.
-stack_exhausted: bool,
 /// Backs diagnostic text, module keys, and paths until deinit.
 arena: std.heap.ArenaAllocator,
 
@@ -71,8 +67,6 @@ const Compilation = @This();
 
 pub const instantiate_max = 64;
 pub const analyze_max = 128;
-pub const stack_bytes_max = 1 << 20;
-const stack_headroom = 4;
 const diagnostics_max = 256;
 
 /// The whole floor of the language. Every one is an effect, so every one
@@ -167,8 +161,6 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .reported = .empty,
         .stack = .empty,
         .instance_depth = 0,
-        .stack_base = 0,
-        .stack_exhausted = false,
         .arena = .init(gpa),
         .root_dir = std.fs.path.dirname(options.root_path) orelse ".",
         .root_stem = std.fs.path.stem(options.root_path),
@@ -210,10 +202,6 @@ pub fn deinit(comp: *Compilation) void {
 /// top-level declaration, and every body needing no instantiation.
 pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     assert(comp.modules.items.len == 0);
-
-    var base: u8 = undefined;
-    comp.stack_base = @intFromPtr(&base);
-    assertStackHeadroom();
 
     const in_std = comp.std_dir != null and pathInside(comp.std_dir.?, comp.root_dir);
     const space: Module.Space = if (in_std) .std else .root;
@@ -676,20 +664,6 @@ pub fn noteAt(
     };
 }
 
-fn assertStackHeadroom() void {
-    if (std.posix.rlimit_resource == void) return;
-    const limits = std.posix.getrlimit(.STACK) catch return;
-    if (limits.cur == std.math.maxInt(@TypeOf(limits.cur))) return;
-    assert(limits.cur >= stack_bytes_max * stack_headroom);
-}
-
-/// The stack grows down on every target the compiler runs on.
-pub fn stackSpent(comp: *const Compilation) usize {
-    assert(comp.stack_base != 0);
-    var probe: u8 = undefined;
-    return comp.stack_base -% @intFromPtr(&probe);
-}
-
 pub fn notes(comp: *Compilation, list: []const Diagnostic.Note) Allocator.Error![]Diagnostic.Note {
     return comp.arena.allocator().dupe(Diagnostic.Note, list);
 }
@@ -830,30 +804,30 @@ test "plain depth is bounded by the budget, not the instantiation limit" {
     try testing.expectEqual(0, comp.diagnostics.items.len);
 }
 
-test "the analysis budget reports once instead of overflowing the stack" {
+test "the deepest nesting that reaches analysis does not overflow the stack" {
     const gpa = testing.allocator;
 
-    var adversary: Writer.Allocating = .init(gpa);
-    defer adversary.deinit();
-    for (0..60) |level| {
-        try adversary.writer.print("fn g{d}(n: i64) i64 {{ return ", .{level});
-        try adversary.writer.splatBytesAll("(1 + ", 50);
-        try adversary.writer.print("g{d}(n)", .{level + 1});
-        try adversary.writer.splatBytesAll(")", 50);
-        try adversary.writer.writeAll(" }\n");
+    const levels = analyze_max - 1;
+    const nesting = 100;
+
+    var deep: Writer.Allocating = .init(gpa);
+    defer deep.deinit();
+    for (0..levels) |level| {
+        try deep.writer.print("fn g{d}(n: i64) i64 {{ return ", .{level});
+        var call_buffer: [16]u8 = undefined;
+        const call = try std.fmt.bufPrint(&call_buffer, "g{d}(", .{level + 1});
+        try deep.writer.splatBytesAll(call, nesting);
+        try deep.writer.writeAll("n");
+        try deep.writer.splatBytesAll(")", nesting);
+        try deep.writer.writeAll(" }\n");
     }
-    try adversary.writer.writeAll("fn g60(n: i64) i64 { return n }\n");
+    try deep.writer.print("fn g{d}(n: i64) i64 {{ return n }}\n", .{levels});
 
     var comp: Compilation = undefined;
     try comp.init(gpa, testing.io, .{ .root_path = "test.nul", .std_dir = null });
     defer comp.deinit();
-    try comp.compile(try testSource(gpa, adversary.written()));
-
-    var reported: u32 = 0;
-    for (comp.diagnostics.items) |entry| {
-        if (entry.diagnostic.code == .analysis_too_deep) reported += 1;
-    }
-    try testing.expectEqual(1, reported);
+    try comp.compile(try testSource(gpa, deep.written()));
+    try testing.expectEqual(0, comp.diagnostics.items.len);
 }
 
 test "a diagnostic renders across files" {

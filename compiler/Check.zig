@@ -332,7 +332,6 @@ fn resolveWrittenType(check: *Check, node: Node.Index) Allocator.Error!Pool.Inde
 
 fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
-    if (try check.enterDepth(node) == false) return .poison;
 
     switch (check.tree.viewOf(node)) {
         .ident => return check.resolveTypeName(node),
@@ -957,12 +956,11 @@ fn checkScopedBlock(check: *Check, node: Node.Index) Allocator.Error!void {
 
 fn checkStatement(check: *Check, node: Node.Index) Allocator.Error!void {
     assert(check.builder != null);
-    if (try check.enterDepth(node) == false) return;
 
     switch (check.tree.viewOf(node)) {
         .var_decl => try check.checkVarDecl(node),
         .assign => |assign| try check.checkAssign(node, assign),
-        .if_stmt => |view| try check.checkIf(node, view),
+        .if_stmt => |view| try check.checkIf(view),
         .while_stmt => |view| try check.checkWhile(view),
         .return_stmt => |operand| try check.checkReturn(node, operand),
         .break_stmt => try check.checkBreakContinue(node, .breaking),
@@ -1152,9 +1150,7 @@ fn checkAssign(check: *Check, node: Node.Index, assign: AST.View.Pair) Allocator
     try check.emitStore(node, place.ref, refOf(met));
 }
 
-fn checkIf(check: *Check, node: Node.Index, view: AST.View.If) Allocator.Error!void {
-    if (try check.enterDepth(node) == false) return;
-
+fn checkIf(check: *Check, view: AST.View.If) Allocator.Error!void {
     const builder = check.builder.?;
     const entry_live = builder.live;
     const then_block = try check.newBlock();
@@ -1195,7 +1191,7 @@ fn checkIf(check: *Check, node: Node.Index, view: AST.View.If) Allocator.Error!v
     builder.live = entry_live;
     if (view.else_node.unwrap()) |else_node| {
         if (check.tree.nodeTag(else_node) == .if_stmt) {
-            try check.checkIf(else_node, check.tree.viewOf(else_node).if_stmt);
+            try check.checkIf(check.tree.viewOf(else_node).if_stmt);
         } else {
             try check.checkScopedBlock(else_node);
         }
@@ -1482,7 +1478,6 @@ fn expectNothing(check: *Check, node: Node.Index, value: Value) Allocator.Error!
 
 fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     const comp = check.comp;
-    if (try check.enterDepth(node) == false) return .poison;
 
     switch (check.tree.viewOf(node)) {
         .ident => return check.checkIdent(node),
@@ -3363,8 +3358,6 @@ const Place = struct {
 /// An expression as a location. Null means reported, or downstream of one, and
 /// the caller gives up quietly.
 fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
-    if (try check.enterDepth(node) == false) return null;
-
     switch (check.tree.viewOf(node)) {
         .ident => {
             const text = check.tree.tokenSlice(check.tree.nodeMainToken(node));
@@ -4015,25 +4008,6 @@ fn considerName(candidate: []const u8, text: []const u8, best: *?[]const u8, dis
         distance.* = measured;
         best.* = candidate;
     }
-}
-
-/// Whether native stack is left. Guarding the resource itself holds however
-/// large a frame on the path becomes.
-fn enterDepth(check: *Check, node: Node.Index) Allocator.Error!bool {
-    const comp = check.comp;
-    if (comp.stackSpent() < Compilation.stack_bytes_max) return true;
-
-    if (comp.stack_exhausted == false) {
-        comp.stack_exhausted = true;
-        try check.fail(node, .{
-            .code = .analysis_too_deep,
-            .message = "checking this nests deeper than the compiler follows",
-            .label = "past the analysis budget",
-            .help = "expressions, types, and the declarations they demand all nest " ++
-                "together, and this is past what one compilation may spend",
-        });
-    }
-    return false;
 }
 
 fn origin(check: *const Check, node: Node.Index) Compilation.Origin {
