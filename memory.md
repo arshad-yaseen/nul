@@ -521,6 +521,37 @@ already settles the direction. Releasing does not, because every value in that r
 anywhere in the program, dies at that instant, and this function can see almost none of
 them. Whoever created the arena can name it, and that is where the reset belongs.
 
+### A destroy inside a loop
+
+The `process` loop above resets rather than destroys, and that is not a stylistic choice.
+`reset` discards the arena's memory and keeps the arena, so the next iteration allocates
+into it again. `destroy` ends the arena itself, so there is nothing left for the next
+iteration to allocate from:
+
+```nul
+    for item in items {
+        let work = expand(scratch, item)
+        record(arena, work)
+
+        scratch.destroy()                    // rejected: 'scratch' was made outside
+    }                                        // this loop
+```
+
+This is the placement rule read at a loop. `scratch` was declared outside, so the scope
+that ends it is outside, and a release written inside the body runs once per pass. An
+arena declared *inside* the body already has its death at the end of each iteration,
+where the programmer put it, so there is nothing to reject:
+
+```nul
+    for item in items {
+        var pass = arena.child()             // dies at the end of every iteration
+        // ...
+    }
+```
+
+Those are the two shapes a loop wants: `reset` for an arena that outlives the loop, and a
+child inside the body for one that does not.
+
 ## Relationships that outlive an arena
 
 Some relationships genuinely span different lifetimes, such as a long lived reference to

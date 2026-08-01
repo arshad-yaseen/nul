@@ -26,7 +26,6 @@ pub const Note = struct {
     source: ?*Source = null,
 };
 
-/// Never renumbered and never reused, because build output is matched on it.
 /// Parse owns E01xx, analysis E02xx.
 pub const Code = enum(u16) {
     expected_token = 101,
@@ -79,10 +78,8 @@ pub const Code = enum(u16) {
     value_cycle = 234,
     module_not_found = 235,
     two_arenas = 236,
-    copy_reaches_memory = 237,
     release_needs_name = 238,
     redundant_destroy = 239,
-    destroy_in_loop = 240,
     instantiates_too_deep = 241,
     inference_failed = 242,
     builtin_outside_std = 243,

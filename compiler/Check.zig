@@ -6,7 +6,6 @@ const Allocator = std.mem.Allocator;
 
 const AST = @import("AST.zig");
 const Compilation = @import("Compilation.zig");
-const Diagnostic = @import("Diagnostic.zig");
 const IR = @import("IR.zig");
 const Module = @import("Module.zig");
 const Pool = @import("Pool.zig");
@@ -544,51 +543,6 @@ fn typeIsRegion(check: *const Check, type_index: Pool.Index) bool {
     }
 }
 
-/// A pointer inside, or an arena, since an arena you can name is memory you
-/// can reach. This is the one refusal of `copy`.
-fn typeReachesMemory(check: *Check, type_index: Pool.Index, depth: u32) Allocator.Error!bool {
-    const comp = check.comp;
-    if (depth >= type_depth_max) return true;
-
-    switch (comp.pool.keyOf(type_index)) {
-        .pointer => return true,
-        .optional, .error_union => |child| return check.typeReachesMemory(child, depth + 1),
-        .struct_type => |instance| {
-            if (check.typeIsRegion(type_index)) return true;
-            const decl = comp.decls.items[comp.instances.items[instance.int()].decl.int()];
-            try comp.ensure(.of(.rows, instance), .{ .module = decl.module, .node = decl.node });
-            const rows = comp.instances.items[instance.int()];
-            for (rows.rows_start..rows.rows_start + rows.rows_len) |raw| {
-                const row_type = comp.rows.items[raw].type;
-                if (try check.typeReachesMemory(row_type, depth + 1)) return true;
-            }
-            return false;
-        },
-        .simple => return false,
-        .int, .float, .error_value, .null_typed => unreachable,
-    }
-}
-
-/// The field to blame, found only once refusal is sure.
-fn reachingField(check: *Check, type_index: Pool.Index, depth: u32) Allocator.Error!?u32 {
-    const comp = check.comp;
-    if (depth >= type_depth_max) return null;
-    switch (comp.pool.keyOf(type_index)) {
-        .struct_type => |instance| {
-            if (check.typeIsRegion(type_index)) return null;
-            const rows = comp.instances.items[instance.int()];
-            for (rows.rows_start..rows.rows_start + rows.rows_len) |raw| {
-                const row_type = comp.rows.items[raw].type;
-                if (try check.typeReachesMemory(row_type, depth + 1)) return @intCast(raw);
-            }
-            return null;
-        },
-        else => return null,
-    }
-}
-
-// the function body, where the IR is built
-
 /// Everything a body build carries. Blocks are contiguous runs, because one
 /// is always finished before the next starts.
 const Builder = struct {
@@ -616,8 +570,6 @@ const Builder = struct {
         payload: u32,
         /// A `var_slot` ref is a pointer to this.
         type: Pool.Index,
-        /// For the destroy in a loop advice.
-        scope: u32,
 
         const Kind = enum(u8) { let_constant, let_value, var_slot, param, capture };
     };
@@ -700,7 +652,6 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
             .kind = .param,
             .payload = @intFromEnum(param_ref),
             .type = row.type,
-            .scope = 0,
         }, row.node);
     }
 
@@ -1052,7 +1003,6 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
         null;
 
     const value = try check.checkExpr(view.init_expr, annotation);
-    const scope: u32 = @intCast(check.builder.?.scopes.items.len - 1);
 
     switch (value) {
         .poison => {
@@ -1063,7 +1013,6 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
                 .kind = .let_constant,
                 .payload = Pool.Index.poison.int(),
                 .type = .poison,
-                .scope = scope,
             }, node);
             return;
         },
@@ -1075,13 +1024,7 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
             switch (met) {
                 .constant => |final| {
                     if (view.is_mutable) {
-                        try check.checkVarDeclSlot(
-                            node,
-                            name,
-                            .{ .constant = final },
-                            annotation,
-                            scope,
-                        );
+                        try check.checkVarDeclSlot(node, name, .{ .constant = final }, annotation);
                     } else {
                         try check.declareLocal(.{
                             .name = name,
@@ -1089,17 +1032,16 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
                             .kind = .let_constant,
                             .payload = final.int(),
                             .type = comp.pool.typeOfValue(final),
-                            .scope = scope,
                         }, node);
                     }
                 },
-                else => try check.checkVarDeclSlot(node, name, met, annotation, scope),
+                else => try check.checkVarDeclSlot(node, name, met, annotation),
             }
         },
-        .runtime => try check.checkVarDeclSlot(node, name, value, annotation, scope),
+        .runtime => try check.checkVarDeclSlot(node, name, value, annotation),
         else => {
             try check.reportNotValue(view.init_expr, value);
-            try check.declarePoisoned(name, node, scope);
+            try check.declarePoisoned(name, node);
         },
     }
 }
@@ -1111,7 +1053,6 @@ fn checkVarDeclSlot(
     name: Pool.String,
     value: Value,
     annotation: ?Pool.Index,
-    scope: u32,
 ) Allocator.Error!void {
     const comp = check.comp;
     const view = check.tree.viewOf(node).var_decl;
@@ -1126,9 +1067,9 @@ fn checkVarDeclSlot(
             .message = "this produces nothing, so there is nothing to bind",
             .label = "no value here",
         });
-        return check.declarePoisoned(name, node, scope);
+        return check.declarePoisoned(name, node);
     }
-    if (value_type == .poison) return check.declarePoisoned(name, node, scope);
+    if (value_type == .poison) return check.declarePoisoned(name, node);
 
     if (final == .constant and annotation == null) {
         assert(view.is_mutable);
@@ -1149,7 +1090,7 @@ fn checkVarDeclSlot(
                     comp.pool.stringText(name),
                 }),
             });
-            return check.declarePoisoned(name, node, scope);
+            return check.declarePoisoned(name, node);
         }
     }
 
@@ -1160,7 +1101,6 @@ fn checkVarDeclSlot(
             .kind = .let_value,
             .payload = @intFromEnum(refOf(final)),
             .type = value_type,
-            .scope = scope,
         }, node);
         return;
     }
@@ -1173,23 +1113,16 @@ fn checkVarDeclSlot(
         .kind = .var_slot,
         .payload = @intFromEnum(slot),
         .type = value_type,
-        .scope = scope,
     }, node);
 }
 
-fn declarePoisoned(
-    check: *Check,
-    name: Pool.String,
-    node: Node.Index,
-    scope: u32,
-) Allocator.Error!void {
+fn declarePoisoned(check: *Check, name: Pool.String, node: Node.Index) Allocator.Error!void {
     try check.declareLocal(.{
         .name = name,
         .node = node,
         .kind = .let_constant,
         .payload = Pool.Index.poison.int(),
         .type = .poison,
-        .scope = scope,
     }, node);
 }
 
@@ -1393,7 +1326,6 @@ fn bindCapture(
         .kind = .capture,
         .payload = @intFromEnum(ref),
         .type = payload,
-        .scope = @intCast(check.builder.?.scopes.items.len - 1),
     }, capture);
 }
 
@@ -3027,8 +2959,6 @@ fn checkCallResolved(
         const self_node = receiver_node orelse if (args.len > 0) args[0] else null;
         return check.emitBuiltin(node, .{
             .bound = bound,
-            .instance = instance,
-            .owner_count = @intCast(owner_count),
             .receiver_node = self_node,
         }, refs[0..refs_len], return_type);
     }
@@ -3322,9 +3252,6 @@ fn reportReceiverMismatch(
 
 const BuiltinCall = struct {
     bound: Compilation.Builtin,
-    instance: Pool.Instance,
-    /// How many leading instantiation arguments belong to the owner.
-    owner_count: u32,
     /// As written, for the rules that judge shape.
     receiver_node: ?Node.Index,
 };
@@ -3338,7 +3265,6 @@ fn emitBuiltin(
     refs: []const Ref,
     return_type: Pool.Index,
 ) Allocator.Error!Value {
-    const comp = check.comp;
     switch (call.bound) {
         .arena_init => {
             assert(refs.len == 0);
@@ -3357,9 +3283,6 @@ fn emitBuiltin(
         },
         .arena_copy => {
             assert(refs.len == 2);
-            const own_args = comp.instanceArgs(call.instance)[call.owner_count..];
-            assert(own_args.len == 1);
-            try check.checkCopyable(node, own_args[0]);
             const result = try check.emit(.arena_copy, return_type, node, .{
                 .a = @intFromEnum(refs[0]),
                 .b = @intFromEnum(refs[1]),
@@ -3368,8 +3291,8 @@ fn emitBuiltin(
         },
         .arena_reset, .arena_destroy => {
             assert(refs.len == 1);
-            const named = try check.checkReleaseName(node, call) orelse return .poison;
-            if (call.bound == .arena_destroy) try check.checkDestroySite(node, named);
+            if (try check.checkReleaseName(node, call) == false) return .poison;
+            if (call.bound == .arena_destroy) try check.checkDestroyInDefer(node);
             const tag: IR.Inst.Tag = if (call.bound == .arena_reset)
                 .arena_reset
             else
@@ -3380,62 +3303,19 @@ fn emitBuiltin(
     }
 }
 
-/// `copy` refuses any type that reaches other memory.
-fn checkCopyable(check: *Check, node: Node.Index, copied: Pool.Index) Allocator.Error!void {
-    const comp = check.comp;
-    if (copied == .poison) return;
-    const reaches = try check.typeReachesMemory(copied, 0);
-    if (reaches == false) return;
-
-    var culprit_notes: []Diagnostic.Note = &.{};
-    if (try check.reachingField(copied, 0)) |row| {
-        const field = comp.rows.items[row];
-        const owner_module = fieldModule(comp, copied);
-        const why: []const u8 = if (check.typeIsRegion(field.type))
-            "is an arena, and an arena you can still name is memory you can still reach"
-        else
-            "reaches other memory";
-        culprit_notes = try comp.notes(&.{comp.noteAt(
-            owner_module,
-            field.node,
-            try comp.fmt("'{s}' {s}", .{ comp.pool.stringText(field.name), why }),
-        )});
-    }
-
-    try check.fail(node, .{
-        .code = .copy_reaches_memory,
-        .message = try comp.fmt("'{s}' reaches other memory, so 'copy' refuses it", .{
-            try comp.typeName(copied),
-        }),
-        .label = "cannot be copied",
-        .help = "copy what the pointers reach, and rebuild the value around it",
-        .notes = culprit_notes,
-    });
-}
-
-fn fieldModule(comp: *const Compilation, type_index: Pool.Index) Module.Index {
-    const instance = comp.pool.keyOf(type_index).struct_type;
-    const decl_index = comp.instances.items[instance.int()].decl;
-    return comp.decls.items[decl_index.int()].module;
-}
-
 /// `reset` and `destroy` demand a name, judged on the call site expression
 /// before any load flattens it.
-fn checkReleaseName(
-    check: *Check,
-    node: Node.Index,
-    call: BuiltinCall,
-) Allocator.Error!?Builder.Local {
-    const verb: []const u8 = if (call.bound == .arena_reset) "reset" else "destroy";
+fn checkReleaseName(check: *Check, node: Node.Index, call: BuiltinCall) Allocator.Error!bool {
     const receiver_node = call.receiver_node orelse node;
 
     if (check.tree.nodeTag(receiver_node) == .ident) {
         const text = check.tree.tokenSlice(check.tree.nodeMainToken(receiver_node));
         if (check.findLocal(text)) |local| {
-            if (check.typeIsRegion(local.type)) return local;
+            if (check.typeIsRegion(local.type)) return true;
         }
     }
 
+    const verb: []const u8 = if (call.bound == .arena_reset) "reset" else "destroy";
     try check.fail(receiver_node, .{
         .code = .release_needs_name,
         .message = try check.comp.fmt(
@@ -3446,39 +3326,18 @@ fn checkReleaseName(
         .help = "every value in the arena dies at this instant, and only the function " ++
             "that created the arena can see them; release it there, by name",
     });
-    return null;
+    return false;
 }
 
-/// A `destroy` where `reset` was meant, or where the scope already does it.
-fn checkDestroySite(check: *Check, node: Node.Index, named: Builder.Local) Allocator.Error!void {
-    const builder = check.builder.?;
-
-    if (builder.in_defer) {
-        try check.fail(node, .{
-            .code = .redundant_destroy,
-            .message = "an arena dies at the end of its scope already",
-            .label = "'defer' fires at scope exit, when this happens anyway",
-            .help = "delete this line; 'destroy' exists to end an arena earlier than its scope",
-        });
-        return;
-    }
-
-    if (builder.loops.items.len > 0) {
-        const loop = builder.loops.items[builder.loops.items.len - 1];
-        if (named.scope < loop.scope) {
-            try check.fail(node, .{
-                .code = .destroy_in_loop,
-                .message = try check.comp.fmt(
-                    "'{s}' was made outside this loop, and the next iteration would " ++
-                        "reach into a destroyed arena",
-                    .{check.comp.pool.stringText(named.name)},
-                ),
-                .label = "destroyed inside a loop",
-                .help = "'reset' discards everything and keeps the arena usable, " ++
-                    "which is what a scratch loop wants",
-            });
-        }
-    }
+/// A `destroy` in a `defer` fires exactly where the scope was ending anyway.
+fn checkDestroyInDefer(check: *Check, node: Node.Index) Allocator.Error!void {
+    if (check.builder.?.in_defer == false) return;
+    try check.fail(node, .{
+        .code = .redundant_destroy,
+        .message = "an arena dies at the end of its scope already",
+        .label = "'defer' fires at scope exit, when this happens anyway",
+        .help = "delete this line; 'destroy' exists to end an arena earlier than its scope",
+    });
 }
 
 /// A location a chain of names reached. An `address` can be stored through
