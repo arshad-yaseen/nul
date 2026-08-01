@@ -53,7 +53,7 @@ stack: std.ArrayList(Frame),
 instance_depth: u32,
 /// Where analysis started, so spending can be measured rather than guessed.
 stack_base: usize,
-/// The budget below ran out. One fact per compilation, reported once.
+/// The budget ran out. One fact per compilation, reported once.
 stack_exhausted: bool,
 /// Backs diagnostic text, module keys, and paths until deinit.
 arena: std.heap.ArenaAllocator,
@@ -70,11 +70,9 @@ std_dir: ?[]const u8,
 const Compilation = @This();
 
 pub const instantiate_max = 64;
-/// How deep `ensure` may recurse for any reason, instantiating or not.
 pub const analyze_max = 128;
-/// Native stack analysis may spend. Expressions, types, and the declarations
-/// they demand nest together, and bytes are the only bound on all three.
 pub const stack_bytes_max = 1 << 20;
+const stack_headroom = 4;
 const diagnostics_max = 256;
 
 /// The whole floor of the language. Every one is an effect, so every one
@@ -215,6 +213,7 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 
     var base: u8 = undefined;
     comp.stack_base = @intFromPtr(&base);
+    assertStackHeadroom();
 
     const in_std = comp.std_dir != null and pathInside(comp.std_dir.?, comp.root_dir);
     const space: Module.Space = if (in_std) .std else .root;
@@ -675,6 +674,13 @@ pub fn noteAt(
         .span = owner.tree.nodeSpan(node),
         .source = &owner.source,
     };
+}
+
+fn assertStackHeadroom() void {
+    if (std.posix.rlimit_resource == void) return;
+    const limits = std.posix.getrlimit(.STACK) catch return;
+    if (limits.cur == std.math.maxInt(@TypeOf(limits.cur))) return;
+    assert(limits.cur >= stack_bytes_max * stack_headroom);
 }
 
 /// The stack grows down on every target the compiler runs on.

@@ -4017,6 +4017,8 @@ fn considerName(candidate: []const u8, text: []const u8, best: *?[]const u8, dis
     }
 }
 
+/// Whether native stack is left. Guarding the resource itself holds however
+/// large a frame on the path becomes.
 fn enterDepth(check: *Check, node: Node.Index) Allocator.Error!bool {
     const comp = check.comp;
     if (comp.stackSpent() < Compilation.stack_bytes_max) return true;
