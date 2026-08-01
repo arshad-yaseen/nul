@@ -1,7 +1,9 @@
 # Nul
 
-A research project exploring compile time memory safety for a systems language with no
-runtime. Not usable, and not intended for use any time soon.
+**As simple as Go, as bare as C. Memory safe at compile time, with nothing to annotate.**
+
+A research project into systems programming without a runtime. Not usable, and not
+intended for use any time soon.
 
 No garbage collector. No hidden allocations. No lifetime annotations.
 
