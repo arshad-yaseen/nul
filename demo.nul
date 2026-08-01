@@ -1,6 +1,11 @@
-pub fn main() i64 {
-    if true {
-        return 2 * 30
+fn count_up(limit: i64) i64 {
+    var i: i64 = 0
+    while i < limit {
+        i = i + 1
     }
-    return 40 + 2
+    return i
+}
+
+pub fn main() i64 {
+    return count_up(100)
 }

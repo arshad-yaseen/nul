@@ -68,6 +68,9 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
         .done => |status| return status,
     };
 
+    // monotonic, so a clock the operator resets cannot make a phase negative
+    const started = std.Io.Clock.awake.now(init.io);
+
     var source: compiler.Source = compiler.Source.load(
         init.gpa,
         init.io,
@@ -109,7 +112,7 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
     switch (request.command) {
         .check => {},
         .ir => try comp.dumpIR(out),
-        .c, .build => return runBackend(init, &comp, request, out, log),
+        .c, .build => return runBackend(init, &comp, request, out, log, started),
         .tree => unreachable,
     }
     return 0;
@@ -121,6 +124,7 @@ fn runBackend(
     request: Request,
     out: *Writer,
     log: *Writer,
+    started: std.Io.Timestamp,
 ) !u8 {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
@@ -128,7 +132,7 @@ fn runBackend(
     var source: Writer.Allocating = .init(gpa);
     defer source.deinit();
 
-    compiler.EmitC.run(comp, gpa, &source.writer) catch |err| switch (err) {
+    const has_entry = compiler.EmitC.run(comp, gpa, &source.writer) catch |err| switch (err) {
         error.ArenaUnsupported => {
             try log.print("nul: the C backend does not support arenas yet\n", .{});
             return 2;
@@ -136,13 +140,26 @@ fn runBackend(
         else => return err,
     };
 
+    const emitted = std.Io.Clock.awake.now(init.io);
+
+    const front = started.durationTo(emitted);
+
     if (request.command == .c) {
-        const path = request.output orelse {
+        if (request.output) |path| {
+            try std.Io.Dir.cwd().writeFile(init.io, .{
+                .sub_path = path,
+                .data = source.written(),
+            });
+        } else {
             try out.writeAll(source.written());
-            return 0;
-        };
-        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = source.written() });
+        }
+        try log.print("nul: checked and emitted in {f}\n", .{front});
         return 0;
+    }
+
+    if (has_entry == false) {
+        try log.print("nul: '{s}' has no 'main', so there is nothing to run\n", .{request.path});
+        return 2;
     }
 
     const exe = request.output orelse "a.out";
@@ -153,9 +170,12 @@ fn runBackend(
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
     try argv.append(gpa, request.compiler);
+
     // the default is the toolchain's own clang, which every install already has
     if (std.mem.eql(u8, request.compiler, "zig")) try argv.append(gpa, "cc");
     try argv.appendSlice(gpa, &.{ "-std=c99", "-pedantic", "-O2", "-o", exe, c_path });
+
+    const compiling = std.Io.Clock.awake.now(init.io);
 
     const result = std.process.run(gpa, init.io, .{ .argv = argv.items }) catch |err| {
         std.Io.Dir.cwd().deleteFile(init.io, c_path) catch {};
@@ -177,7 +197,18 @@ fn runBackend(
     }
 
     try std.Io.Dir.cwd().deleteFile(init.io, c_path);
+
+    // the two are named apart, because the second is not nul's time
+    const backend = compiling.durationTo(std.Io.Clock.awake.now(init.io));
+    try log.print("nul: checked and emitted in {f}, {s} in {f}\n", .{
+        front, label(request.compiler), backend,
+    });
     return 0;
+}
+
+fn label(compiler_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, compiler_name, "zig")) return "zig cc";
+    return compiler_name;
 }
 
 fn runTree(

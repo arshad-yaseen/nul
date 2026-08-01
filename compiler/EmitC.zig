@@ -20,9 +20,7 @@ const EmitC = @This();
 
 pub const Error = Writer.Error || Allocator.Error || error{ArenaUnsupported};
 
-/// Emit the whole program. Nothing is written unless every function checked,
-/// so the walk below can assume the tables are complete.
-pub fn run(comp: *const Compilation, gpa: Allocator, out: *Writer) Error!void {
+pub fn run(comp: *const Compilation, gpa: Allocator, out: *Writer) Error!bool {
     assert(comp.diagnostics.items.len == 0);
 
     var emit: EmitC = .{ .comp = comp, .out = out, .defined = .empty };
@@ -39,7 +37,7 @@ pub fn run(comp: *const Compilation, gpa: Allocator, out: *Writer) Error!void {
     try emit.types(gpa);
     try emit.prototypes();
     for (comp.funcs.items) |*func| try emit.body(func);
-    try emit.entryPoint();
+    return emit.entryPoint();
 }
 
 // types
@@ -561,7 +559,7 @@ fn constant(emit: *EmitC, value: Pool.Index) Error!void {
 
 /// `main` in the root module is where a program starts. C wants an `int`, so
 /// the result is narrowed the way an exit status already is.
-fn entryPoint(emit: *EmitC) Error!void {
+fn entryPoint(emit: *EmitC) Error!bool {
     const comp = emit.comp;
     const root = comp.moduleAt(.root);
     for (comp.funcs.items) |*func| {
@@ -574,7 +572,8 @@ fn entryPoint(emit: *EmitC) Error!void {
         try emit.out.writeAll("int main(void) { return (int)");
         try emit.funcName(func.instance);
         try emit.out.writeAll("(); }\n");
-        return;
+        return true;
     }
     _ = root;
+    return false;
 }
