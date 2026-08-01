@@ -164,7 +164,6 @@ comptime {
     assert(@sizeOf(Node.Tag) == 1);
     assert(@sizeOf(Node.Index) == 4);
     assert(@sizeOf(ExtraIndex) == 4);
-    // safe builds add a tag to the bare union
     if (std.debug.runtime_safety == false) assert(@sizeOf(Node.Data) == 8);
 }
 
@@ -540,8 +539,7 @@ pub fn nodeMainToken(tree: AST, node: Node.Index) Token.Index {
     return tree.nodes.items(.main_token)[node.int()];
 }
 
-/// The first of the run of doc comments above a declaration. Nothing is
-/// stored; they sit in the token stream.
+/// The first of the run of doc comments above a declaration.
 pub fn docComment(tree: AST, decl: Node.Index) ?Token.Index {
     var first = tree.declStart(decl);
     if (first == .first) return null;

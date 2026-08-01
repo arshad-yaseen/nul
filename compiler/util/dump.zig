@@ -220,9 +220,13 @@ fn inst(
 
     try writer.print("  %{d} = {t}", .{ index.int(), tag });
     switch (tag) {
-        .param, .local => {
-            const name: Pool.String = @enumFromInt(data.a);
-            if (name != .empty) try writer.print(" {s}", .{comp.pool.stringText(name)});
+        .param => {
+            if (data.param.name != .empty) {
+                try writer.print(" {s}", .{comp.pool.stringText(data.param.name)});
+            }
+        },
+        .local => {
+            if (data.name != .empty) try writer.print(" {s}", .{comp.pool.stringText(data.name)});
         },
         .load,
         .negate,
@@ -242,7 +246,7 @@ fn inst(
         .scope_end,
         => {
             try writer.writeByte(' ');
-            try ref(comp, @enumFromInt(data.a), writer);
+            try ref(comp, data.un, writer);
         },
         .store,
         .arena_copy,
@@ -259,37 +263,35 @@ fn inst(
         .cmp_ge,
         => {
             try writer.writeByte(' ');
-            try ref(comp, @enumFromInt(data.a), writer);
+            try ref(comp, data.bin.lhs, writer);
             try writer.writeAll(", ");
-            try ref(comp, @enumFromInt(data.b), writer);
+            try ref(comp, data.bin.rhs, writer);
         },
         .field_ptr, .field_val => {
             try writer.writeByte(' ');
-            try ref(comp, @enumFromInt(data.a), writer);
-            try writer.print(", .{s}", .{comp.rowName(data.b)});
+            try ref(comp, data.field.base, writer);
+            try writer.print(", .{s}", .{comp.rowName(data.field.row)});
         },
         .call => {
-            const callee: Pool.Instance = @enumFromInt(body.extra[data.a]);
-            const count = body.extra[data.a + 1];
+            const call = body.callAt(data.payload);
             try writer.writeByte(' ');
-            try spell.writeInstance(comp, writer, callee);
+            switch (call.callee.unwrap()) {
+                .instance => |callee| try spell.writeInstance(comp, writer, callee),
+            }
             try writer.writeByte('(');
-            for (body.extra[data.a + 2 ..][0..count], 0..) |raw, position| {
+            for (call.args, 0..) |operand, position| {
                 if (position > 0) try writer.writeAll(", ");
-                try ref(comp, @enumFromInt(raw), writer);
+                try ref(comp, operand, writer);
             }
             try writer.writeByte(')');
         },
         .struct_init => {
-            const count = body.extra[data.a];
-            const instance = comp.pool.keyOf(type_index).struct_type;
-            const rows_start = comp.instances.items[instance.int()].rows_start;
+            const rows = comp.instanceAt(comp.pool.keyOf(type_index).struct_type).rows;
             try writer.writeAll(" .{ ");
-            for (body.extra[data.a + 1 ..][0..count], 0..) |raw, position| {
+            for (body.structInitAt(data.payload), 0..) |operand, position| {
                 if (position > 0) try writer.writeAll(", ");
-                const row: u32 = rows_start + @as(u32, @intCast(position));
-                try writer.print("{s}: ", .{comp.rowName(row)});
-                try ref(comp, @enumFromInt(raw), writer);
+                try writer.print("{s}: ", .{comp.rowName(rows.at(@intCast(position)))});
+                try ref(comp, operand, writer);
             }
             try writer.writeAll(" }");
         },

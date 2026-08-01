@@ -47,13 +47,13 @@ pub fn writeInstance(
     writer: *Writer,
     index: Pool.Instance,
 ) Writer.Error!void {
-    const instance = comp.instances.items[index.int()];
-    const decl = comp.decls.items[instance.decl.int()];
+    const instance = comp.instanceAt(index);
+    const decl = comp.declAt(instance.decl);
     const args = comp.instanceArgs(index);
 
     var skip: usize = 0;
     if (decl.owner.unwrap()) |owner_index| {
-        const owner = comp.decls.items[owner_index.int()];
+        const owner = comp.declAt(owner_index);
         try writer.writeAll(comp.pool.stringText(owner.name));
         // the owner's parameters lead the argument list
         const owner_params = comp.typeParamCount(owner_index);
@@ -89,7 +89,7 @@ pub fn writeSignature(
     writer: *Writer,
     index: Pool.Instance,
 ) Writer.Error!void {
-    const instance = comp.instances.items[index.int()];
+    const instance = comp.instanceAt(index);
     assert(instance.rows_state == .done or instance.rows_state == .poisoned);
 
     try writer.writeByte('(');

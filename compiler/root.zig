@@ -1,6 +1,3 @@
-//! Source bytes in, typed IR or diagnostics out. Pipeline order: Source,
-//! Token, Tokenizer, AST, Parse, Pool, Module, Compilation, Check, IR.
-
 pub const AST = @import("AST.zig");
 pub const Compilation = @import("Compilation.zig");
 pub const Diagnostic = @import("Diagnostic.zig");

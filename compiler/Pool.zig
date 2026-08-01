@@ -53,8 +53,8 @@ pub const Index = enum(u32) {
     }
 };
 
-/// A struct instantiation. The rows live on `Compilation`; only the index
-/// type lives here, because the pool references it.
+/// A struct instantiation. The rows live on `Compilation`. Only the index type
+/// lives here, because the pool references it.
 pub const Instance = enum(u32) {
     _,
 

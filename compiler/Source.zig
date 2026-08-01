@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 path: []const u8,
 /// The file, with `padding` zero bytes past the end.
 bytes: [:0]const u8,
-/// Built on first use; most files never need it.
+/// Built on first use. Most files never need it.
 line_starts: ?[]u32 = null,
 
 pub const padding = 1;

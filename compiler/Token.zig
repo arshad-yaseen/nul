@@ -186,51 +186,21 @@ pub fn endsStatement(tag: Tag) bool {
 
 pub fn keywordOrIdent(bytes: []const u8) Tag {
     assert(bytes.len > 0);
-
-    if (bytes.len < keyword_length_min or bytes.len > keyword_length_max) return .ident;
-
-    const entry = &keywords[hash(bytes[0], bytes[1], bytes[bytes.len - 1], @intCast(bytes.len))];
-    if (entry.length != bytes.len) return .ident;
-    if (std.mem.eql(u8, entry.text[0..bytes.len], bytes) == false) return .ident;
-
-    assert(entry.tag != .ident);
-    return entry.tag;
-}
-
-const keyword_length_min = 2;
-const keyword_length_max = 8;
-const keyword_slots = 32;
-
-const Keyword = struct { text: [keyword_length_max]u8, length: u8, tag: Tag };
-
-fn hash(first: u8, second: u8, last: u8, length: u32) u32 {
-    assert(length >= keyword_length_min);
-    assert(length <= keyword_length_max);
-    const sum = @as(u32, first) + @as(u32, second) * 20 + @as(u32, last) * 22 + length * 11;
-    return sum & (keyword_slots - 1);
+    return keywords.get(bytes) orelse .ident;
 }
 
 /// Derived from `lexeme`, so the table cannot drift from the tags.
-const keywords: [keyword_slots]Keyword = blk: {
-    var table: [keyword_slots]Keyword = @splat(.{ .text = @splat(0), .length = 0, .tag = .ident });
-    var filled = 0;
-    for (std.enums.values(Tag)) |tag| {
+const keywords = build: {
+    const tags = std.enums.values(Tag);
+    var entries: [tags.len]struct { []const u8, Tag } = undefined;
+    var count = 0;
+    for (tags) |tag| {
         if (std.mem.startsWith(u8, @tagName(tag), "kw_") == false) continue;
-        const text = tag.lexeme().?;
-        assert(text.len >= keyword_length_min);
-        assert(text.len <= keyword_length_max);
-
-        const slot = hash(text[0], text[1], text[text.len - 1], text.len);
-        if (table[slot].length != 0) @compileError("keyword hash collision on " ++ text);
-
-        var entry: Keyword = .{ .text = @splat(0), .length = text.len, .tag = tag };
-        @memcpy(entry.text[0..text.len], text);
-        table[slot] = entry;
-        filled += 1;
+        entries[count] = .{ tag.lexeme().?, tag };
+        count += 1;
     }
-    assert(filled > 0);
-    assert(filled <= keyword_slots);
-    break :blk table;
+    assert(count > 0);
+    break :build std.StaticStringMap(Tag).initComptime(entries[0..count].*);
 };
 
 const symbols: [tag_count][]const u8 = blk: {

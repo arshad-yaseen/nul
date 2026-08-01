@@ -12,14 +12,15 @@ const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const edit_distance = @import("util/edit_distance.zig");
 
+const Range = Compilation.Range;
+
 /// `space:stem/stem`, so one file is one module.
 key: []const u8,
 source: Source,
 tree: AST,
 space: Space,
 /// Rows in the one declaration table, members included.
-decls_start: u32,
-decls_len: u32,
+decls: Range,
 /// Top-level names. Members are found through their struct instead.
 names: std.AutoHashMapUnmanaged(Pool.String, Decl.Index),
 /// A module that failed to parse reported its errors and is never analyzed.
@@ -95,7 +96,7 @@ pub const Decl = struct {
     }
 
     /// Members sit contiguously after their struct.
-    pub fn members(decl: Decl) struct { start: u32, len: u32 } {
+    pub fn members(decl: Decl) Compilation.Range {
         assert(decl.kind == .struct_decl);
         return .{ .start = decl.result, .len = decl.aux };
     }
@@ -140,8 +141,7 @@ pub fn register(
         .source = source,
         .tree = try AST.parse(gpa, source.bytes),
         .space = space,
-        .decls_start = @intCast(comp.decls.items.len),
-        .decls_len = 0,
+        .decls = .{ .start = @intCast(comp.decls.items.len), .len = 0 },
         .names = .empty,
         .failed = false,
     };
@@ -161,7 +161,7 @@ pub fn register(
     }
 
     try registerDecls(comp, module, index);
-    module.decls_len = @intCast(comp.decls.items.len - module.decls_start);
+    module.decls.len = @intCast(comp.decls.items.len - module.decls.start);
     return index;
 }
 
@@ -245,8 +245,8 @@ fn registerMembers(
 
                 if (binds_builtin) {
                     if (boundBuiltin(tree, fn_view.body)) |bound| {
-                        comp.decls.items[member_index.int()].aux = @intFromEnum(bound) + 1;
-                        comp.decls.items[struct_index.int()].is_region = true;
+                        comp.declPtr(member_index).aux = @intFromEnum(bound) + 1;
+                        comp.declPtr(struct_index).is_region = true;
                     }
                 }
             },
@@ -256,8 +256,8 @@ fn registerMembers(
         }
     }
 
-    comp.decls.items[struct_index.int()].result = members_start;
-    comp.decls.items[struct_index.int()].aux = @intCast(comp.decls.items.len - members_start);
+    comp.declPtr(struct_index).result = members_start;
+    comp.declPtr(struct_index).aux = @intCast(comp.decls.items.len - members_start);
 }
 
 const NewDecl = struct { kind: Decl.Kind, node: AST.Node.Index, name_token: Token.Index };
@@ -282,7 +282,7 @@ fn addDecl(
             .label = "not a name",
             .help = "give this declaration a real name",
         });
-        comp.decls.items[decl_index.int()].state = .poisoned;
+        comp.declPtr(decl_index).state = .poisoned;
         return decl_index;
     }
 
@@ -295,20 +295,20 @@ fn addDecl(
             .label = "a universal name",
             .help = "pick another name, and alias it with 'type' if you want a synonym",
         });
-        comp.decls.items[decl_index.int()].state = .poisoned;
+        comp.declPtr(decl_index).state = .poisoned;
         return decl_index;
     }
 
     const gop = module.names.getOrPutAssumeCapacity(name);
     if (gop.found_existing) {
-        const first = comp.decls.items[gop.value_ptr.int()];
+        const first = comp.declAt(gop.value_ptr.*);
         try comp.reportToken(index, new.name_token, .{
             .code = .redeclared,
             .message = try comp.fmt("'{s}' is declared twice in this file", .{text}),
             .label = "declared again here",
             .notes = try comp.notes(&.{comp.noteAt(index, first.node, "first declared here")}),
         });
-        comp.decls.items[decl_index.int()].state = .poisoned;
+        comp.declPtr(decl_index).state = .poisoned;
         return decl_index;
     }
     gop.value_ptr.* = decl_index;
@@ -329,7 +329,7 @@ fn addMember(
 
     // a member clashes with a field or an earlier member of the same struct
     const clash: ?AST.Node.Index = clash: {
-        const owner_row = comp.decls.items[owner.int()];
+        const owner_row = comp.declAt(owner);
         const struct_view = tree.viewOf(owner_row.node).struct_decl;
         for (struct_view.members) |other| {
             if (other == new.node) break;
@@ -352,7 +352,7 @@ fn addMember(
             .label = "declared again here",
             .notes = try comp.notes(&.{comp.noteAt(index, first, "first declared here")}),
         });
-        comp.decls.items[decl_index.int()].state = .poisoned;
+        comp.declPtr(decl_index).state = .poisoned;
     }
     return decl_index;
 }
@@ -424,7 +424,7 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
 
     const key = try comp.fmt("{t}:{s}", .{ space, sub });
     if (comp.module_map.get(key)) |index| {
-        if (comp.modules.items[index.int()].failed) return .not_found;
+        if (comp.moduleAt(index).failed) return .not_found;
         return .{ .module = index };
     }
 
@@ -443,15 +443,15 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
     };
 
     const index = try register(comp, key, space, source);
-    if (comp.modules.items[index.int()].failed) return .not_found;
+    if (comp.moduleAt(index).failed) return .not_found;
     return .{ .module = index };
 }
 
 /// A module, a module plus one public declaration, or the builtin floor. The
 /// result lands in the declaration row.
 pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
-    const decl = comp.decls.items[decl_index.int()];
-    const module = comp.modules.items[decl.module.int()];
+    const decl = comp.declAt(decl_index);
+    const module = comp.moduleAt(decl.module);
     const tree = &module.tree;
     const path = tree.viewOf(decl.node).use_decl.path;
 
@@ -557,14 +557,14 @@ fn setUseTarget(
     target: Decl.UseTarget,
     payload: u32,
 ) void {
-    comp.decls.items[decl_index.int()].aux = @intFromEnum(target);
-    comp.decls.items[decl_index.int()].result = payload;
+    comp.declPtr(decl_index).aux = @intFromEnum(target);
+    comp.declPtr(decl_index).result = payload;
 }
 
 pub const UseResolved = union(enum) { module: Module.Index, decl: Decl.Index, builtin };
 
 pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
-    const decl = comp.decls.items[decl_index.int()];
+    const decl = comp.declAt(decl_index);
     assert(decl.kind == .use);
     assert(decl.state == .done);
     return switch (@as(Decl.UseTarget, @enumFromInt(decl.aux))) {
@@ -586,7 +586,7 @@ pub fn findExported(
     var target = in;
     var remaining: u32 = use_chain_max;
     while (remaining > 0) : (remaining -= 1) {
-        const module = comp.modules.items[target.int()];
+        const module = comp.moduleAt(target);
         const name = try comp.pool.string(comp.gpa, name_text);
 
         const found = module.findDecl(name) orelse {
@@ -601,7 +601,7 @@ pub fn findExported(
             return null;
         };
 
-        const decl = comp.decls.items[found.int()];
+        const decl = comp.declAt(found);
         if (origin.module != target and declIsPub(comp, found) == false) {
             try comp.report(origin.module, at, .{
                 .code = .private,
@@ -619,10 +619,10 @@ pub fn findExported(
 
         // a re-export. resolve it and keep walking
         try comp.ensure(.forDecl(found), origin);
-        if (comp.decls.items[found.int()].state != .done) return null;
+        if (comp.declAt(found).state != .done) return null;
         switch (useTarget(comp, found)) {
             .decl => |next| {
-                const next_decl = comp.decls.items[next.int()];
+                const next_decl = comp.declAt(next);
                 if (next_decl.kind != .use) return next;
                 target = next_decl.module;
                 continue;
@@ -641,8 +641,8 @@ pub fn findExported(
 }
 
 pub fn declIsPub(comp: *const Compilation, decl_index: Decl.Index) bool {
-    const decl = comp.decls.items[decl_index.int()];
-    const tree = &comp.modules.items[decl.module.int()].tree;
+    const decl = comp.declAt(decl_index);
+    const tree = comp.treeOf(decl.module);
     return switch (tree.viewOf(decl.node)) {
         .use_decl => |view| view.is_pub,
         .struct_decl => |view| view.is_pub,
@@ -711,8 +711,7 @@ fn suggestIn(
     var best: ?[]const u8 = null;
     var best_distance: u32 = 3;
 
-    const decls_end = module.decls_start + module.decls_len;
-    for (comp.decls.items[module.decls_start..decls_end]) |decl| {
+    for (comp.decls.items[module.decls.start..module.decls.end()]) |decl| {
         if (decl.owner != .none) continue;
         const candidate = comp.pool.stringText(decl.name);
         const distance = edit_distance.between(name, candidate);

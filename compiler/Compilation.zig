@@ -35,8 +35,8 @@ instance_map: std.HashMapUnmanaged(
     InstanceIndexContext,
     std.hash_map.default_max_load_percentage,
 ),
-/// Signature parameters and struct fields share one row shape, so one table.
-/// An instance holds a contiguous range, staged below and committed at once.
+/// Signature parameters and struct fields share one shape, so one table. An
+/// instance holds a contiguous range, staged below and committed at once.
 rows: std.ArrayList(Row),
 /// Marked and restored, because resolving one signature can demand another.
 rows_scratch: std.ArrayList(Row),
@@ -84,17 +84,32 @@ pub const Builtin = enum(u8) {
 /// A member function starts with its owner's arguments.
 pub const Instance = struct {
     decl: Decl.Index,
-    args_start: u32,
-    args_len: u32,
+    args: Range,
     /// A struct type, or a function return type once resolved.
     type: Pool.Index,
     /// Fields for a struct, parameters for a function.
-    rows_start: u32,
-    rows_len: u32,
+    rows: Range,
     /// Fields resolved, or signature resolved.
     rows_state: Decl.State,
     /// The size walk, or the body check.
     deep_state: Decl.State,
+};
+
+/// A contiguous run in one of the tables.
+pub const Range = struct {
+    start: u32,
+    len: u32,
+
+    pub const empty: Range = .{ .start = 0, .len = 0 };
+
+    pub fn end(range: Range) u32 {
+        return range.start + range.len;
+    }
+
+    pub fn at(range: Range, position: u32) u32 {
+        assert(position < range.len);
+        return range.start + position;
+    }
 };
 
 /// A parameter or a field.
@@ -199,7 +214,7 @@ pub fn deinit(comp: *Compilation) void {
 // the driver
 
 /// Check one program from its root file, whose source this takes over. Every
-/// top-level declaration, and every body needing no instantiation.
+/// top-level declaration, and every body that needs no instantiation.
 pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     assert(comp.modules.items.len == 0);
 
@@ -209,13 +224,12 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 
     const index = try Module.register(comp, key, space, root_source);
     assert(index == .root);
-    const module = comp.modules.items[index.int()];
+    const module = comp.moduleAt(index);
     if (module.failed) return;
 
-    const decls_end = module.decls_start + module.decls_len;
-    for (module.decls_start..decls_end) |raw| {
+    for (module.decls.start..module.decls.end()) |raw| {
         const decl_index: Decl.Index = @enumFromInt(@as(u32, @intCast(raw)));
-        const decl = comp.decls.items[decl_index.int()];
+        const decl = comp.declAt(decl_index);
         if (decl.owner != .none) continue;
 
         const origin: Origin = .{ .module = index, .node = decl.node };
@@ -227,7 +241,7 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 
 /// A plain function, and the plain methods of a plain struct.
 fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
-    const decl = comp.decls.items[decl_index.int()];
+    const decl = comp.declAt(decl_index);
     switch (decl.kind) {
         .use, .type_alias, .let => {},
         .fn_decl => try comp.ensureBodiesFn(decl_index, origin),
@@ -244,7 +258,7 @@ fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allo
 }
 
 fn ensureBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
-    const decl = comp.decls.items[decl_index.int()];
+    const decl = comp.declAt(decl_index);
     if (decl.kind != .fn_decl) return;
     if (decl.state == .poisoned) return;
     if (comp.isGeneric(decl_index)) return;
@@ -258,7 +272,7 @@ fn ensureBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Al
 /// Whether a declaration takes type parameters, or belongs to a struct that
 /// does, so it only means something once instantiated.
 pub fn isGeneric(comp: *const Compilation, decl_index: Decl.Index) bool {
-    const decl = comp.decls.items[decl_index.int()];
+    const decl = comp.declAt(decl_index);
     if (comp.typeParamCount(decl_index) > 0) return true;
     if (decl.owner.unwrap()) |owner| return comp.isGeneric(owner);
     return false;
@@ -270,15 +284,15 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
     switch (comp.unitState(unit)) {
         .done, .poisoned => return,
         .in_progress => {
-            // recursion, not a cycle: a signature is all a call needs
+            // recursion, not a cycle. a signature is all a call needs
             if (unit.kind == .body) return;
             return comp.reportCycle(unit, origin);
         },
         .unanalyzed => {},
     }
 
-    // analysis recurses through whatever it demands, so even plain
-    // declarations need a bound
+    // analysis recurses through whatever it demands, so plain declarations
+    // need a bound too
     if (comp.stack.items.len >= analyze_max) {
         try comp.reportNode(origin.module, origin.node, .{
             .code = .analysis_too_deep,
@@ -330,7 +344,7 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
 }
 
 fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
-    const decl = comp.decls.items[decl_index.int()];
+    const decl = comp.declAt(decl_index);
     switch (decl.kind) {
         .use => return Module.resolveUse(comp, decl_index),
         .type_alias => return Check.typeAlias(comp, decl_index),
@@ -349,17 +363,17 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
 
 fn unitState(comp: *const Compilation, unit: Unit) Decl.State {
     return switch (unit.kind) {
-        .decl => comp.decls.items[unit.index].state,
-        .rows, .signature => comp.instances.items[unit.index].rows_state,
-        .size, .body => comp.instances.items[unit.index].deep_state,
+        .decl => comp.declAt(@enumFromInt(unit.index)).state,
+        .rows, .signature => comp.instanceAt(@enumFromInt(unit.index)).rows_state,
+        .size, .body => comp.instanceAt(@enumFromInt(unit.index)).deep_state,
     };
 }
 
 fn setUnitState(comp: *Compilation, unit: Unit, state: Decl.State) void {
     switch (unit.kind) {
-        .decl => comp.decls.items[unit.index].state = state,
-        .rows, .signature => comp.instances.items[unit.index].rows_state = state,
-        .size, .body => comp.instances.items[unit.index].deep_state = state,
+        .decl => comp.declPtr(@enumFromInt(unit.index)).state = state,
+        .rows, .signature => comp.instancePtr(@enumFromInt(unit.index)).rows_state = state,
+        .size, .body => comp.instancePtr(@enumFromInt(unit.index)).deep_state = state,
     }
 }
 
@@ -370,7 +384,7 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
 
     const name = try comp.unitName(unit);
     const message = switch (unit.kind) {
-        .decl => switch (comp.decls.items[unit.index].kind) {
+        .decl => switch (comp.declAt(@enumFromInt(unit.index)).kind) {
             .let => try comp.fmt("'{s}' takes its value from itself", .{name}),
             .type_alias => try comp.fmt("type '{s}' is an alias of itself", .{name}),
             .use => "this import goes in a circle",
@@ -416,7 +430,7 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
 fn unitName(comp: *Compilation, unit: Unit) Allocator.Error![]const u8 {
     switch (unit.kind) {
         .decl => {
-            const decl = comp.decls.items[unit.index];
+            const decl = comp.declAt(@enumFromInt(unit.index));
             return comp.pool.stringText(decl.name);
         },
         else => return comp.instanceName(@enumFromInt(unit.index)),
@@ -430,7 +444,7 @@ pub fn instantiate(
     decl_index: Decl.Index,
     args: []const Pool.Index,
 ) Allocator.Error!Pool.Instance {
-    const decl = comp.decls.items[decl_index.int()];
+    const decl = comp.declAt(decl_index);
     assert(decl.kind == .struct_decl or decl.kind == .fn_decl);
 
     const gop = try comp.instance_map.getOrPutContextAdapted(
@@ -448,53 +462,85 @@ pub fn instantiate(
     try comp.instance_args.appendSlice(comp.gpa, args);
     try comp.instances.append(comp.gpa, .{
         .decl = decl_index,
-        .args_start = args_start,
-        .args_len = @intCast(args.len),
+        .args = .{ .start = args_start, .len = @intCast(args.len) },
         .type = .poison,
-        .rows_start = 0,
-        .rows_len = 0,
+        .rows = .empty,
         .rows_state = .unanalyzed,
         .deep_state = .unanalyzed,
     });
     gop.key_ptr.* = index;
 
-    // a type the moment it exists, fields or not, which lets a struct name
-    // itself
+    // a type the moment it exists, fields or not, so a struct can name itself
     if (decl.kind == .struct_decl) {
-        comp.instances.items[index.int()].type = try comp.pool.intern(comp.gpa, .{
+        comp.instancePtr(index).type = try comp.pool.intern(comp.gpa, .{
             .struct_type = index,
         });
     }
     return index;
 }
 
+pub fn declAt(comp: *const Compilation, index: Decl.Index) Decl {
+    assert(index.int() < comp.decls.items.len);
+    return comp.decls.items[index.int()];
+}
+
+pub fn declPtr(comp: *Compilation, index: Decl.Index) *Decl {
+    assert(index.int() < comp.decls.items.len);
+    return &comp.decls.items[index.int()];
+}
+
+pub fn instanceAt(comp: *const Compilation, index: Pool.Instance) Instance {
+    assert(index.int() < comp.instances.items.len);
+    return comp.instances.items[index.int()];
+}
+
+pub fn instancePtr(comp: *Compilation, index: Pool.Instance) *Instance {
+    assert(index.int() < comp.instances.items.len);
+    return &comp.instances.items[index.int()];
+}
+
+pub fn moduleAt(comp: *const Compilation, index: Module.Index) *Module {
+    assert(index.int() < comp.modules.items.len);
+    return comp.modules.items[index.int()];
+}
+
+/// The tree a declaration was parsed from.
+pub fn treeOf(comp: *const Compilation, index: Module.Index) *const AST {
+    return &comp.moduleAt(index).tree;
+}
+
+pub fn rowAt(comp: *const Compilation, at: u32) Row {
+    assert(at < comp.rows.items.len);
+    return comp.rows.items[at];
+}
+
 /// The declaration an instantiation came from.
 pub fn instanceDecl(comp: *const Compilation, index: Pool.Instance) Decl.Index {
-    return comp.instances.items[index.int()].decl;
+    return comp.instanceAt(index).decl;
 }
 
 /// A struct's type, or a function's return type once its signature resolves.
 pub fn instanceType(comp: *const Compilation, index: Pool.Instance) Pool.Index {
-    return comp.instances.items[index.int()].type;
+    return comp.instanceAt(index).type;
 }
 
 pub fn ensureRows(comp: *Compilation, index: Pool.Instance) Allocator.Error!void {
-    const decl = comp.decls.items[comp.instanceDecl(index).int()];
+    const decl = comp.declAt(comp.instanceDecl(index));
     try comp.ensure(.of(.rows, index), .{ .module = decl.module, .node = decl.node });
 }
 
 /// The slice points into the one arguments table, so instantiating anything
 /// else invalidates it.
 pub fn instanceArgs(comp: *const Compilation, index: Pool.Instance) []const Pool.Index {
-    const instance = comp.instances.items[index.int()];
-    return comp.instance_args.items[instance.args_start..][0..instance.args_len];
+    const instance = comp.instanceAt(index);
+    return comp.instance_args.items[instance.args.start..][0..instance.args.len];
 }
 
 /// Fields, or signature parameters. The slice points into the one rows table,
 /// so committing any other rows invalidates it.
 pub fn instanceRows(comp: *const Compilation, index: Pool.Instance) []const Row {
-    const instance = comp.instances.items[index.int()];
-    return comp.rows.items[instance.rows_start..][0..instance.rows_len];
+    const instance = comp.instanceAt(index);
+    return comp.rows.items[instance.rows.start..][0..instance.rows.len];
 }
 
 const InstanceKey = struct { decl: Decl.Index, args: []const Pool.Index };
@@ -510,7 +556,7 @@ const InstanceKeyAdapter = struct {
     }
 
     pub fn eql(adapter: InstanceKeyAdapter, key: InstanceKey, index: Pool.Instance) bool {
-        const instance = adapter.comp.instances.items[index.int()];
+        const instance = adapter.comp.instanceAt(index);
         if (instance.decl != key.decl) return false;
         return std.mem.eql(Pool.Index, key.args, adapter.comp.instanceArgs(index));
     }
@@ -520,7 +566,7 @@ const InstanceIndexContext = struct {
     comp: *const Compilation,
 
     pub fn hash(context: InstanceIndexContext, index: Pool.Instance) u64 {
-        const instance = context.comp.instances.items[index.int()];
+        const instance = context.comp.instanceAt(index);
         return (InstanceKeyAdapter{ .comp = context.comp }).hash(.{
             .decl = instance.decl,
             .args = context.comp.instanceArgs(index),
@@ -547,7 +593,7 @@ pub fn reportNode(
     report_value: Report,
 ) Allocator.Error!void {
     @branchHint(.cold);
-    const tree = &comp.modules.items[module.int()].tree;
+    const tree = comp.treeOf(module);
     try comp.report(module, tree.nodeSpan(node), report_value);
 }
 
@@ -558,7 +604,7 @@ pub fn reportToken(
     report_value: Report,
 ) Allocator.Error!void {
     @branchHint(.cold);
-    const tree = &comp.modules.items[module.int()].tree;
+    const tree = comp.treeOf(module);
     try comp.report(module, .{
         .start = tree.tokenStart(token),
         .end = tree.tokenEnd(token),
@@ -645,7 +691,7 @@ fn unitIsInstantiation(comp: *const Compilation, unit: Unit) bool {
     switch (unit.kind) {
         .decl => return false,
         .rows, .size, .signature, .body => {
-            return comp.instances.items[unit.index].args_len > 0;
+            return comp.instanceAt(@enumFromInt(unit.index)).args.len > 0;
         },
     }
 }
@@ -656,7 +702,7 @@ pub fn noteAt(
     node: AST.Node.Index,
     message: []const u8,
 ) Diagnostic.Note {
-    const owner = comp.modules.items[module.int()];
+    const owner = comp.moduleAt(module);
     return .{
         .message = message,
         .span = owner.tree.nodeSpan(node),
@@ -680,7 +726,7 @@ pub fn fmt(
 pub fn renderAll(comp: *Compilation, writer: *Writer, color: Diagnostic.Color) !void {
     assert(comp.diagnostics.items.len > 0);
     for (comp.diagnostics.items) |entry| {
-        const module = comp.modules.items[entry.module.int()];
+        const module = comp.moduleAt(entry.module);
         try entry.diagnostic.render(comp.gpa, &module.source, writer, color);
     }
 }
@@ -721,12 +767,12 @@ pub fn spellValue(comp: *Compilation, value: Pool.Index) Allocator.Error![]const
 
 pub fn rowName(comp: *const Compilation, row: u32) []const u8 {
     assert(row < comp.rows.items.len);
-    return comp.pool.stringText(comp.rows.items[row].name);
+    return comp.pool.stringText(comp.rowAt(row).name);
 }
 
 pub fn typeParamCount(comp: *const Compilation, decl_index: Decl.Index) u32 {
-    const decl = comp.decls.items[decl_index.int()];
-    const tree = &comp.modules.items[decl.module.int()].tree;
+    const decl = comp.declAt(decl_index);
+    const tree = comp.treeOf(decl.module);
     return switch (tree.viewOf(decl.node)) {
         .struct_decl => |view| @intCast(view.type_params.len),
         .fn_decl => |view| @intCast(view.type_params.len),
@@ -773,7 +819,7 @@ test "instantiation identity is index equality" {
     ));
     try testing.expectEqual(0, comp.diagnostics.items.len);
 
-    const hold = comp.modules.items[0].findDecl(try comp.pool.string(gpa, "hold")).?;
+    const hold = comp.moduleAt(.root).findDecl(try comp.pool.string(gpa, "hold")).?;
     const instance = try comp.instantiate(hold, &.{});
     const rows = comp.instanceRows(instance);
     try testing.expectEqual(3, rows.len);

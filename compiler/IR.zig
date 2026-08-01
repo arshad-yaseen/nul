@@ -7,6 +7,30 @@ const Allocator = std.mem.Allocator;
 const AST = @import("AST.zig");
 const Pool = @import("Pool.zig");
 
+/// `Func.extra`.
+pub const ExtraIndex = enum(u32) { _ };
+
+/// Who a `call` reaches.
+pub const Callee = enum(u32) {
+    _,
+
+    const foreign_bit: u32 = 1 << 31;
+
+    pub fn fromInstance(index: Pool.Instance) Callee {
+        assert(index.int() < foreign_bit);
+        return @enumFromInt(index.int());
+    }
+
+    pub fn unwrap(callee: Callee) union(enum) { instance: Pool.Instance } {
+        const raw = @intFromEnum(callee);
+        assert(raw & foreign_bit == 0);
+        return .{ .instance = @enumFromInt(raw) };
+    }
+};
+
+/// A `call` payload, read back.
+pub const Call = struct { callee: Callee, args: []const Ref };
+
 /// One checked body, owned by `Compilation.funcs`.
 pub const Func = struct {
     instance: Pool.Instance,
@@ -17,6 +41,29 @@ pub const Func = struct {
     blocks: []const Block,
 
     pub const InstList = std.MultiArrayList(Inst);
+
+    /// A call's callee and its arguments.
+    pub fn callAt(func: *const Func, at: ExtraIndex) Call {
+        const start = @intFromEnum(at);
+        assert(start + 2 <= func.extra.len);
+        return .{
+            .callee = @enumFromInt(func.extra[start]),
+            .args = func.refsAt(start + 2, func.extra[start + 1]),
+        };
+    }
+
+    /// A struct literal's fields, in declaration order.
+    pub fn structInitAt(func: *const Func, at: ExtraIndex) []const Ref {
+        const start = @intFromEnum(at);
+        assert(start + 1 <= func.extra.len);
+        return func.refsAt(start + 1, func.extra[start]);
+    }
+
+    fn refsAt(func: *const Func, start: u32, len: u32) []const Ref {
+        assert(start + len <= func.extra.len);
+        // a `Ref` is one `u32`, asserted below
+        return @ptrCast(func.extra[start..][0..len]);
+    }
 
     pub fn deinit(func: *Func, gpa: Allocator) void {
         func.insts.deinit(gpa);
@@ -67,25 +114,32 @@ pub const Inst = struct {
         }
     };
 
-    /// Two words whose meaning the tag decides.
-    pub const Data = struct { a: u32, b: u32 };
+    pub const Data = union {
+        none: void,
+        un: Ref,
+        bin: struct { lhs: Ref, rhs: Ref },
+        field: struct { base: Ref, row: u32 },
+        name: Pool.String,
+        param: struct { name: Pool.String, position: u32 },
+        payload: ExtraIndex,
+    };
 
     pub const Tag = enum(u8) {
-        /// `a` names it, `b` is its position. One per parameter, in order.
+        /// Uses `param`. One per parameter, in order.
         param,
-        /// Storage for a `var`, producing its address. `a` names it, `.empty`
+        /// Storage for a `var`, producing its address. Uses `name`, `.empty`
         /// for a temporary the checker made.
         local,
-        /// `a` is a place. Produces the pointee.
+        /// Uses `un`, a place. Produces the pointee.
         load,
-        /// `a` is a place, `b` the value.
+        /// Uses `bin`: the place, then the value.
         store,
-        /// `a` is a struct pointer, `b` a row. Produces a field pointer, as
-        /// mutable as its base.
+        /// Uses `field`. Produces a field pointer, as mutable as its base.
         field_ptr,
-        /// `a` is a struct value, `b` a row. Produces the field's value.
+        /// Uses `field`. Produces the field's value.
         field_val,
 
+        // all `bin`
         add,
         sub,
         mul,
@@ -97,13 +151,16 @@ pub const Inst = struct {
         cmp_le,
         cmp_gt,
         cmp_ge,
+
+        // both `un`
         negate,
         not,
 
-        /// `a` points at `extra`: callee instance, count, argument refs.
+        /// Uses `payload`, an `IR.Call`.
         call,
 
-        // the six primitives. `a` is the arena, `b` is `arena_copy`'s value.
+        // the six primitives. `un` is the arena, `arena_copy` uses `bin` for
+        // the arena and the value, `arena_init` uses `none`
         arena_init,
         arena_child,
         arena_create,
@@ -111,6 +168,7 @@ pub const Inst = struct {
         arena_reset,
         arena_destroy,
 
+        // all `un`
         wrap_optional,
         has_value,
         unwrap_value,
@@ -120,12 +178,12 @@ pub const Inst = struct {
         unwrap_ok,
         unwrap_err,
 
-        /// `a` points at `extra`: count, one ref per field in order.
+        /// Uses `payload`, an `IR.StructInit`.
         struct_init,
 
-        /// Opens a scope. Its result names it, so the end hangs off one ref.
+        /// Uses `none`. Its result names the scope, so the end hangs off it.
         scope_begin,
-        /// `a` is the `scope_begin`. Emitted on every path out.
+        /// Uses `un`, the `scope_begin`. Emitted on every path out.
         scope_end,
     };
 };
@@ -158,6 +216,7 @@ pub const Terminator = union(enum) {
 comptime {
     assert(@sizeOf(Inst.Tag) == 1);
     assert(@sizeOf(Ref) == 4);
-    assert(@sizeOf(Inst.Data) == 8);
+    assert(@sizeOf(Callee) == 4);
+    if (std.debug.runtime_safety == false) assert(@sizeOf(Inst.Data) == 8);
     assert(@sizeOf(Block) <= 24);
 }
