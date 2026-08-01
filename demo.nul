@@ -1,25 +1,6 @@
-use std.mem.Arena
-
-pub struct Box[T] {
-    item: T
-}
-
-pub struct Pair[K, V] {
-    key: K
-    value: V
-}
-
-pub type IntBox = Box[i64]
-pub type Nested = Box[Box[i64]]
-
-pub fn make[T](arena: Arena, v: T) *var Box[T] {
-    let b = arena.create[Box[T]]()
-    return b
-}
-
-fn main() {
-    var arena = Arena.init()
-
-    _ = make[i64](arena, 1)
-    _ = arena.create[Pair[i64, bool]]()
+pub fn main() i64 {
+    if true {
+        return 2 * 30
+    }
+    return 40 + 2
 }

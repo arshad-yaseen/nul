@@ -1,6 +1,7 @@
 pub const AST = @import("AST.zig");
 pub const Compilation = @import("Compilation.zig");
 pub const Diagnostic = @import("Diagnostic.zig");
+pub const EmitC = @import("EmitC.zig");
 pub const IR = @import("IR.zig");
 pub const Module = @import("Module.zig");
 pub const Pool = @import("Pool.zig");

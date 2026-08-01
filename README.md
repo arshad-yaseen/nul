@@ -11,32 +11,64 @@ allocator you were already passing down, without a borrow checker to learn?
 ```zig
 use std.mem.Arena
 
-pub struct Box[T] {
-    item: T
+struct Node {
+    value: i64
+    next: *Node
 }
 
-pub struct Pair[K, V] {
-    key: K
-    value: V
+fn build(arena: Arena, value: i64) *var Node {
+    var node = arena.create[Node]()
+    node.value = value
+    return node
 }
 
-pub type IntBox = Box[i64]
-pub type Nested = Box[Box[i64]]
-
-pub fn make[T](arena: Arena, v: T) *var Box[T] {
-    let b = arena.create[Box[T]]()
-    return b
-}
-
-fn main() {
+fn main() i64 {
     var arena = Arena.init()
+    var scratch = arena.child()   // dies at the end of this scope
 
-    _ = make[i64](arena, 1)
-    _ = arena.create[Pair[i64, bool]]()
+    let kept = build(arena, 1)
+    let temp = build(scratch, 2)
+
+    kept.next = temp              // rejected: 'temp' dies before 'kept' does
+    return kept.value
 }
+```
+
+`arena` is where a function allocates. It is also the name of a lifetime, and you wrote
+it because you needed somewhere to allocate from. That is the entire annotation budget.
+[The model](memory.md) is one page, and the last line above is the only thing it rejects.
+
+## Try it
+
+```console
+$ zig build
+$ ./zig-out/bin/nul build program.nul -o program
+$ ./program; echo $?
+42
+```
+
+```
+An entry is one file. Everything it imports is part of the program.
+
+commands:
+  check <entry>   report the type and memory mistakes in the program
+  tree  <entry>   print one file's syntax tree
+  ir    <entry>   print the typed IR
+  c     <entry>   write the program as C
+  build <entry>   compile the program to an executable
+
+options:
+  -o <path>        where to write the output
+  --cc <program>   the C compiler to run (default: zig cc)
+  --std <dir>      where the standard library lives
 ```
 
 ## Status
 
-Design first, implementation second. The compiler is incomplete, the surface will
-change, and nothing here is stable. Read it as a set of ideas, not a toolchain.
+Design first, implementation second. The front end is real: parsing with recovery,
+modules, generics instantiated on demand, and a typed control flow graph. The backend
+emits C99 and compiles it.
+
+The region checker is not written, so the rejection above is the model rather than the
+implementation. Arenas do not reach the backend yet, and there is no IO, so a program
+speaks through its exit code. Read this as a set of ideas, not a toolchain.

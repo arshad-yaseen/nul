@@ -1,7 +1,7 @@
 # The Nul Memory Model
 
-Nul is a systems language with no garbage collector, no runtime, and no compiler
-inserted cleanup code. Every program is memory safe, and the compiler proves it before
+Nul is a systems language with no garbage collector, no runtime, and no cleanup code
+you did not ask for. Every program is memory safe, and the compiler proves it before
 the program runs. The programmer never writes a lifetime annotation, never learns
 ownership or borrowing vocabulary, and never argues with an analysis they cannot see.
 
@@ -459,6 +459,26 @@ one you wrote: putting `var scratch = arena.child()` in a scope is how you say h
 its memory lives. Nothing else is needed, and **an explicit release at the end of a scope
 is always redundant**, because the arena was dying there anyway.
 
+### What "no inserted cleanup" means
+
+Two claims hide behind that phrase, and only one of them is about code.
+
+The compiler decides **nothing** about when memory dies. Every arena in a program ends
+somewhere you wrote: at the scope that declared it, or at a `reset` or `destroy` you
+placed by hand. Writing `var scratch = arena.child()` in a scope *is* how you write its
+release, because the scope is the statement of the lifetime. There is no destructor to
+discover, no drop glue, and no cleanup threaded through a path you cannot see.
+
+The compiler does **emit** that release, at the end of the scope you put the arena in and
+nowhere else. What it costs depends on which arena it is. A child is a range inside its
+parent, so its death is restoring the parent's offset. That is one store, and no allocator
+is involved. A root arena owns pages from the operating system, so its death returns them,
+which is one call at the end of the scope that made it. A program usually has one root
+arena, in `main`.
+
+So the guarantee is not that nothing runs at the end of a scope. It is that nothing runs
+you did not ask for, and nothing runs anywhere but where you asked for it.
+
 `reset` and `destroy` exist to depart from that default, both of them *earlier*. `reset`
 discards everything in the arena and keeps the arena, which is what makes the scratch loop
 work. `destroy` ends the arena before its scope does, for a function that is finished with
@@ -599,7 +619,8 @@ What the compiler guarantees:
 - Every value in an arena outlives every pointer that can reach it, so no pointer ever
   refers to dead memory.
 - No use of any value belonging to an arena after that arena dies or resets.
-- No allocator call inserted, no destructor run, no cleanup path you did not write.
+- No destructor run and no cleanup path you did not write. The one release the compiler
+  emits is the one you placed, at the scope you placed it in.
 
 What it does not attempt:
 

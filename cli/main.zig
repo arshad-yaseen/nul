@@ -26,21 +26,27 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 const usage =
-    \\usage: nul <command> <file>
+    \\usage: nul <command> <entry>
+    \\
+    \\An entry is one file. Everything it imports is part of the program.
     \\
     \\commands:
-    \\  check <file>   report what is wrong with the file
-    \\  tree <file>    print the syntax tree
-    \\  ir <file>      print the typed IR
+    \\  check <entry>   report the type and memory mistakes in the program
+    \\  tree  <entry>   print one file's syntax tree
+    \\  ir    <entry>   print the typed IR
+    \\  c     <entry>   write the program as C
+    \\  build <entry>   compile the program to an executable
     \\
     \\options:
+    \\  -o <path>             where to write the output
+    \\  --cc <program>        the C compiler to run (default: zig cc)
     \\  --std <dir>           where the standard library lives
     \\  --color auto|on|off   colour the output (default: auto)
     \\  --version             print the version
     \\
 ;
 
-const Command = enum { tree, check, ir };
+const Command = enum { tree, check, ir, c, build };
 
 const ColorChoice = enum { auto, on, off };
 
@@ -49,6 +55,9 @@ const Request = struct {
     path: []const u8,
     color: ColorChoice,
     std_dir: ?[]const u8,
+    /// Standard output when the command writes C and nothing was asked for.
+    output: ?[]const u8,
+    compiler: []const u8,
 };
 
 fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *Writer) !u8 {
@@ -100,8 +109,74 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
     switch (request.command) {
         .check => {},
         .ir => try comp.dumpIR(out),
+        .c, .build => return runBackend(init, &comp, request, out, log),
         .tree => unreachable,
     }
+    return 0;
+}
+
+fn runBackend(
+    init: std.process.Init,
+    comp: *const compiler.Compilation,
+    request: Request,
+    out: *Writer,
+    log: *Writer,
+) !u8 {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+
+    var source: Writer.Allocating = .init(gpa);
+    defer source.deinit();
+
+    compiler.EmitC.run(comp, gpa, &source.writer) catch |err| switch (err) {
+        error.ArenaUnsupported => {
+            try log.print("nul: the C backend does not support arenas yet\n", .{});
+            return 2;
+        },
+        else => return err,
+    };
+
+    if (request.command == .c) {
+        const path = request.output orelse {
+            try out.writeAll(source.written());
+            return 0;
+        };
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = source.written() });
+        return 0;
+    }
+
+    const exe = request.output orelse "a.out";
+    const c_path = try std.fmt.allocPrint(arena, "{s}.c", .{exe});
+    try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = c_path, .data = source.written() });
+    errdefer std.Io.Dir.cwd().deleteFile(init.io, c_path) catch {};
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.append(gpa, request.compiler);
+    // the default is the toolchain's own clang, which every install already has
+    if (std.mem.eql(u8, request.compiler, "zig")) try argv.append(gpa, "cc");
+    try argv.appendSlice(gpa, &.{ "-std=c99", "-pedantic", "-O2", "-o", exe, c_path });
+
+    const result = std.process.run(gpa, init.io, .{ .argv = argv.items }) catch |err| {
+        std.Io.Dir.cwd().deleteFile(init.io, c_path) catch {};
+        try log.print("nul: cannot run '{s}': {t}\n", .{ request.compiler, err });
+        return 2;
+    };
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+
+    const failed = switch (result.term) {
+        .exited => |code| code != 0,
+        else => true,
+    };
+    if (failed) {
+        try log.print("nul: the C compiler refused '{s}', which is left in place\n{s}", .{
+            c_path, result.stderr,
+        });
+        return 2;
+    }
+
+    try std.Io.Dir.cwd().deleteFile(init.io, c_path);
     return 0;
 }
 
@@ -159,6 +234,8 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
     var path: ?[]const u8 = null;
     var color: ColorChoice = .auto;
     var std_dir: ?[]const u8 = null;
+    var output: ?[]const u8 = null;
+    var compiler_name: []const u8 = "zig";
 
     var index: u32 = 1;
     while (index < args.len) : (index += 1) {
@@ -178,6 +255,20 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
             continue;
         }
 
+        if (std.mem.eql(u8, argument, "-o")) {
+            index += 1;
+            if (index == args.len) return .{ .done = try misuse(log, "-o needs a path") };
+            output = args[index];
+            continue;
+        }
+
+        if (std.mem.eql(u8, argument, "--cc")) {
+            index += 1;
+            if (index == args.len) return .{ .done = try misuse(log, "--cc needs a program") };
+            compiler_name = args[index];
+            continue;
+        }
+
         if (std.mem.eql(u8, argument, "--std")) {
             index += 1;
             if (index == args.len) return .{ .done = try misuse(log, "--std needs a directory") };
@@ -190,16 +281,18 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
                 return .{ .done = try misuse(log, "no such command") };
             };
         } else {
-            if (path != null) return .{ .done = try misuse(log, "one file at a time") };
+            if (path != null) return .{ .done = try misuse(log, "one entry at a time") };
             path = argument;
         }
     }
 
     return .{ .ready = .{
         .command = command orelse return .{ .done = try misuse(log, "no command given") },
-        .path = path orelse return .{ .done = try misuse(log, "no file given") },
+        .path = path orelse return .{ .done = try misuse(log, "no entry given") },
         .color = color,
         .std_dir = std_dir,
+        .output = output,
+        .compiler = compiler_name,
     } };
 }
 
