@@ -16,12 +16,6 @@ pub const Func = struct {
     /// Block zero is the entry. Every block here is reachable.
     blocks: []const Block,
 
-    pub const Index = enum(u32) {
-        /// A bound primitive, with no body.
-        none = std.math.maxInt(u32),
-        _,
-    };
-
     pub const InstList = std.MultiArrayList(Inst);
 
     pub fn deinit(func: *Func, gpa: Allocator) void {

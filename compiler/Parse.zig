@@ -12,7 +12,7 @@ const Node = AST.Node;
 
 const Parse = @This();
 
-const depth_max = 128;
+pub const depth_max = 128;
 const errors_max = 64;
 
 gpa: Allocator,

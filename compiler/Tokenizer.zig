@@ -256,13 +256,6 @@ fn classOf(comptime members: []const u8) [256]bool {
     return table;
 }
 
-fn complementOf(comptime members: []const u8) [256]bool {
-    comptime assert(members.len > 0);
-    var table: [256]bool = @splat(true);
-    for (members) |byte| table[byte] = false;
-    return table;
-}
-
 const testing = std.testing;
 
 fn expectTags(source: [:0]const u8, expected: []const Token.Tag) !void {

@@ -51,11 +51,10 @@ reported: std.AutoHashMapUnmanaged(ReportKey, void),
 stack: std.ArrayList(Frame),
 /// Frames on the stack that are instantiations, capped at `instantiate_max`.
 instance_depth: u32,
-/// Native stack depth across all of checking. Capped at `depth_max`, because
-/// nesting multiplies across declarations.
-depth: u32,
-/// The budget above ran out. One fact per compilation, reported once.
-depth_exhausted: bool,
+/// Where analysis started, so spending can be measured rather than guessed.
+stack_base: usize,
+/// The budget below ran out. One fact per compilation, reported once.
+stack_exhausted: bool,
 /// Backs diagnostic text, module keys, and paths until deinit.
 arena: std.heap.ArenaAllocator,
 
@@ -73,9 +72,9 @@ const Compilation = @This();
 pub const instantiate_max = 64;
 /// How deep `ensure` may recurse for any reason, instantiating or not.
 pub const analyze_max = 128;
-/// The whole recursion budget. Declarations demand others mid-expression, so
-/// depths multiply, and this is the one bound on the product.
-pub const depth_max = 3000;
+/// Native stack analysis may spend. Expressions, types, and the declarations
+/// they demand nest together, and bytes are the only bound on all three.
+pub const stack_bytes_max = 1 << 20;
 const diagnostics_max = 256;
 
 /// The whole floor of the language. Every one is an effect, so every one
@@ -100,8 +99,6 @@ pub const Instance = struct {
     /// Fields for a struct, parameters for a function.
     rows_start: u32,
     rows_len: u32,
-    /// The checked body. Stays `.none` for a bound primitive.
-    func: IR.Func.Index,
     /// Fields resolved, or signature resolved.
     rows_state: Decl.State,
     /// The size walk, or the body check.
@@ -172,8 +169,8 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .reported = .empty,
         .stack = .empty,
         .instance_depth = 0,
-        .depth = 0,
-        .depth_exhausted = false,
+        .stack_base = 0,
+        .stack_exhausted = false,
         .arena = .init(gpa),
         .root_dir = std.fs.path.dirname(options.root_path) orelse ".",
         .root_stem = std.fs.path.stem(options.root_path),
@@ -216,6 +213,9 @@ pub fn deinit(comp: *Compilation) void {
 pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     assert(comp.modules.items.len == 0);
 
+    var base: u8 = undefined;
+    comp.stack_base = @intFromPtr(&base);
+
     const in_std = comp.std_dir != null and pathInside(comp.std_dir.?, comp.root_dir);
     const space: Module.Space = if (in_std) .std else .root;
     const key = try comp.fmt("{t}:{s}", .{ space, comp.root_stem });
@@ -236,7 +236,6 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
         try comp.ensureBodies(decl_index, origin);
     }
     assert(comp.stack.items.len == 0);
-    assert(comp.depth == 0);
 }
 
 /// A plain function, and the plain methods of a plain struct.
@@ -273,13 +272,7 @@ fn ensureBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Al
 /// does, so it only means something once instantiated.
 pub fn isGeneric(comp: *const Compilation, decl_index: Decl.Index) bool {
     const decl = comp.decls.items[decl_index.int()];
-    const tree = &comp.modules.items[decl.module.int()].tree;
-    const own = switch (tree.viewOf(decl.node)) {
-        .struct_decl => |view| view.type_params.len,
-        .fn_decl => |view| view.type_params.len,
-        else => 0,
-    };
-    if (own > 0) return true;
+    if (comp.typeParamCount(decl_index) > 0) return true;
     if (decl.owner.unwrap()) |owner| return comp.isGeneric(owner);
     return false;
 }
@@ -473,7 +466,6 @@ pub fn instantiate(
         .type = .poison,
         .rows_start = 0,
         .rows_len = 0,
-        .func = .none,
         .rows_state = .unanalyzed,
         .deep_state = .unanalyzed,
     });
@@ -487,6 +479,21 @@ pub fn instantiate(
         });
     }
     return index;
+}
+
+/// The declaration an instantiation came from.
+pub fn instanceDecl(comp: *const Compilation, index: Pool.Instance) Decl.Index {
+    return comp.instances.items[index.int()].decl;
+}
+
+/// A struct's type, or a function's return type once its signature resolves.
+pub fn instanceType(comp: *const Compilation, index: Pool.Instance) Pool.Index {
+    return comp.instances.items[index.int()].type;
+}
+
+pub fn ensureRows(comp: *Compilation, index: Pool.Instance) Allocator.Error!void {
+    const decl = comp.decls.items[comp.instanceDecl(index).int()];
+    try comp.ensure(.of(.rows, index), .{ .module = decl.module, .node = decl.node });
 }
 
 /// The slice points into the one arguments table, so instantiating anything
@@ -670,6 +677,13 @@ pub fn noteAt(
     };
 }
 
+/// The stack grows down on every target the compiler runs on.
+pub fn stackSpent(comp: *const Compilation) usize {
+    assert(comp.stack_base != 0);
+    var probe: u8 = undefined;
+    return comp.stack_base -% @intFromPtr(&probe);
+}
+
 pub fn notes(comp: *Compilation, list: []const Diagnostic.Note) Allocator.Error![]Diagnostic.Note {
     return comp.arena.allocator().dupe(Diagnostic.Note, list);
 }
@@ -730,12 +744,12 @@ pub fn rowName(comp: *const Compilation, row: u32) []const u8 {
     return comp.pool.stringText(comp.rows.items[row].name);
 }
 
-pub fn typeParamCount(comp: *const Compilation, decl_index: Decl.Index) usize {
+pub fn typeParamCount(comp: *const Compilation, decl_index: Decl.Index) u32 {
     const decl = comp.decls.items[decl_index.int()];
     const tree = &comp.modules.items[decl.module.int()].tree;
     return switch (tree.viewOf(decl.node)) {
-        .struct_decl => |view| view.type_params.len,
-        .fn_decl => |view| view.type_params.len,
+        .struct_decl => |view| @intCast(view.type_params.len),
+        .fn_decl => |view| @intCast(view.type_params.len),
         else => 0,
     };
 }
@@ -786,7 +800,7 @@ test "instantiation identity is index equality" {
 
     // `Box[i64]` written twice, and once through an alias. one index
     try testing.expectEqual(rows[0].type, rows[1].type);
-    try testing.expectEqual(rows[1].type, comp.instances.items[instance.int()].type);
+    try testing.expectEqual(rows[1].type, comp.instanceType(instance));
     // `Box[u8]` is another type entirely
     try testing.expect(rows[0].type != rows[2].type);
 }

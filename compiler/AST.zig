@@ -24,6 +24,8 @@ errors: []const Diagnostic,
 /// Backs `errors` and its strings, so freeing them is one call.
 error_text: std.heap.ArenaAllocator.State,
 
+pub const nest_max = Parse.depth_max;
+
 pub const NodeList = std.MultiArrayList(Node);
 /// Where a node's payload starts in `extra`.
 pub const ExtraIndex = enum(u32) { _ };

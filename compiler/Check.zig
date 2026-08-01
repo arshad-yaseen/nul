@@ -32,7 +32,7 @@ const Check = @This();
 
 const type_params_max = 16;
 const call_args_max = 255;
-const type_depth_max = 64;
+const type_depth_max = AST.nest_max;
 
 const Binding = struct { name: Pool.String, type: Pool.Index };
 
@@ -81,7 +81,7 @@ pub fn topLevelLet(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!b
 
     var met = constant;
     if (view.type_expr.unwrap()) |type_expr| {
-        const annotation = try check.resolveType(type_expr, 0);
+        const annotation = try check.resolveType(type_expr);
         met = try check.meetConstant(constant, annotation, view.init_expr);
     }
 
@@ -91,7 +91,7 @@ pub fn topLevelLet(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!b
 
 /// Fields into rows, with the type parameters bound to this instantiation.
 pub fn structRows(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
-    const decl_index = comp.instances.items[instance.int()].decl;
+    const decl_index = comp.instanceDecl(instance);
     var buffer: [type_params_max]Binding = undefined;
     const bindings = try bindTypeParams(comp, instance, &buffer) orelse return false;
     var check = context(comp, decl_index, bindings);
@@ -108,7 +108,7 @@ pub fn structRows(comp: *Compilation, instance: Pool.Instance) Allocator.Error!b
         if (check.tree.nodeTag(member) != .field) continue;
         const field = check.tree.viewOf(member).field;
 
-        const field_type = try check.resolveType(field.type_expr, 0);
+        const field_type = try check.resolveType(field.type_expr);
         if (field_type == .poison) clean = false;
         try comp.rows_scratch.append(comp.gpa, .{
             .name = try comp.pool.string(comp.gpa, check.tree.tokenSlice(field.name_token)),
@@ -134,7 +134,7 @@ fn commitRows(comp: *Compilation, instance: Pool.Instance, mark: usize) Allocato
 /// A struct embedding itself by value has no size, which `ensure` reports at
 /// the field that closes the loop.
 pub fn structSize(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
-    const decl_index = comp.instances.items[instance.int()].decl;
+    const decl_index = comp.instanceDecl(instance);
     const decl = comp.decls.items[decl_index.int()];
     const from: Compilation.Origin = .{ .module = decl.module, .node = decl.node };
     try comp.ensure(.of(.rows, instance), from);
@@ -166,7 +166,7 @@ fn sizeWalkType(
 }
 
 pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
-    const decl_index = comp.instances.items[instance.int()].decl;
+    const decl_index = comp.instanceDecl(instance);
     var buffer: [type_params_max]Binding = undefined;
     const bindings = try bindTypeParams(comp, instance, &buffer) orelse return false;
     var check = context(comp, decl_index, bindings);
@@ -246,7 +246,7 @@ fn bindTypeParams(
     instance: Pool.Instance,
     buffer: *[type_params_max]Binding,
 ) Allocator.Error!?[]const Binding {
-    const decl_index = comp.instances.items[instance.int()].decl;
+    const decl_index = comp.instanceDecl(instance);
     const decl = comp.decls.items[decl_index.int()];
     const args = comp.instanceArgs(instance);
     const tree = &comp.modules.items[decl.module.int()].tree;
@@ -323,27 +323,16 @@ fn declNode(check: *const Check, decl_index: Decl.Index) Node.Index {
 /// A written type promises storage, so what it embeds by value must have a
 /// size, and demanding one here is what finds a bottomless one.
 fn resolveWrittenType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
-    const resolved = try check.resolveType(node, 0);
+    const resolved = try check.resolveType(node);
     if (check.demand_sizes and resolved != .poison) {
         try sizeWalkType(check.comp, resolved, check.origin(node), 0);
     }
     return resolved;
 }
 
-fn resolveType(check: *Check, node: Node.Index, depth: u32) Allocator.Error!Pool.Index {
+fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
     if (try check.enterDepth(node) == false) return .poison;
-    defer comp.depth -= 1;
-
-    if (depth >= type_depth_max) {
-        try check.fail(node, .{
-            .code = .instantiates_too_deep,
-            .message = try comp.fmt("this type nests more than {d} levels deep", .{
-                type_depth_max,
-            }),
-        });
-        return .poison;
-    }
 
     switch (check.tree.viewOf(node)) {
         .ident => return check.resolveTypeName(node),
@@ -366,21 +355,21 @@ fn resolveType(check: *Check, node: Node.Index, depth: u32) Allocator.Error!Pool
                 },
             }
         },
-        .instance => return check.resolveTypeInstance(node, depth),
+        .instance => return check.resolveTypeInstance(node),
         .pointer_type => |pointer| {
-            const child = try check.resolveType(pointer.child, depth + 1);
+            const child = try check.resolveType(pointer.child);
             if (child == .poison) return .poison;
             return comp.pool.intern(comp.gpa, .{
                 .pointer = .{ .child = child, .mutable = pointer.is_mutable },
             });
         },
         .optional_type => |child_node| {
-            const child = try check.resolveType(child_node, depth + 1);
+            const child = try check.resolveType(child_node);
             if (child == .poison) return .poison;
             return comp.pool.intern(comp.gpa, .{ .optional = child });
         },
         .error_union_type => |child_node| {
-            const child = try check.resolveType(child_node, depth + 1);
+            const child = try check.resolveType(child_node);
             if (child == .poison) return .poison;
             if (check.tree.nodeTag(child_node) == .error_union_type) {
                 try check.fail(node, .{
@@ -439,7 +428,7 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
                 return .poison;
             }
             const instance = try comp.instantiate(decl_index, &.{});
-            return comp.instances.items[instance.int()].type;
+            return comp.instanceType(instance);
         },
         .type_alias => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
@@ -478,7 +467,7 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
     }
 }
 
-fn resolveTypeInstance(check: *Check, node: Node.Index, depth: u32) Allocator.Error!Pool.Index {
+fn resolveTypeInstance(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
     const view = check.tree.viewOf(node).instance;
 
@@ -522,13 +511,13 @@ fn resolveTypeInstance(check: *Check, node: Node.Index, depth: u32) Allocator.Er
 
     var args_buffer: [type_params_max]Pool.Index = undefined;
     for (view.args, 0..) |arg, position| {
-        const resolved = try check.resolveType(arg, depth + 1);
+        const resolved = try check.resolveType(arg);
         if (resolved == .poison) return .poison;
         args_buffer[position] = resolved;
     }
 
     const instance = try comp.instantiate(decl_index, args_buffer[0..view.args.len]);
-    return comp.instances.items[instance.int()].type;
+    return comp.instanceType(instance);
 }
 
 /// A struct with a bound arena operation is the region type.
@@ -536,7 +525,7 @@ fn typeIsRegion(check: *const Check, type_index: Pool.Index) bool {
     const comp = check.comp;
     switch (comp.pool.keyOf(type_index)) {
         .struct_type => |instance| {
-            const decl_index = comp.instances.items[instance.int()].decl;
+            const decl_index = comp.instanceDecl(instance);
             return comp.decls.items[decl_index.int()].is_region;
         },
         else => return false,
@@ -556,11 +545,16 @@ const Builder = struct {
     scopes: std.ArrayList(Scope),
     defer_nodes: std.ArrayList(Node.Index),
     loops: std.ArrayList(Loop),
+    /// Staged call arguments and field values, marked and restored.
+    operands: std.ArrayList(Operand),
     in_defer: bool,
     /// Code in an unreachable block is still checked, then dropped.
     live: bool,
 
     const BlockBuild = struct { first: u32, count: u32, terminator: IR.Terminator };
+
+    /// The initializer that gave a field, `.none` for anything else.
+    const Operand = struct { value: Value, node: Node.OptionalIndex };
 
     const Local = struct {
         name: Pool.String,
@@ -598,6 +592,7 @@ const Builder = struct {
         builder.scopes.deinit(gpa);
         builder.defer_nodes.deinit(gpa);
         builder.loops.deinit(gpa);
+        builder.operands.deinit(gpa);
         builder.* = undefined;
     }
 };
@@ -605,7 +600,7 @@ const Builder = struct {
 /// One body into a `Func`. The signature is already resolved, so nothing here
 /// changes what a caller sees.
 pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
-    const decl_index = comp.instances.items[instance.int()].decl;
+    const decl_index = comp.instanceDecl(instance);
     const decl = comp.decls.items[decl_index.int()];
     if (decl.builtin() != null) return true;
     if (comp.instances.items[instance.int()].rows_state != .done) return false;
@@ -616,7 +611,7 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
 
     var builder: Builder = .{
         .instance = instance,
-        .return_type = comp.instances.items[instance.int()].type,
+        .return_type = comp.instanceType(instance),
         .insts = .empty,
         .extra = .empty,
         .blocks = .empty,
@@ -625,6 +620,7 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
         .scopes = .empty,
         .defer_nodes = .empty,
         .loops = .empty,
+        .operands = .empty,
         .in_defer = false,
         .live = true,
     };
@@ -962,7 +958,6 @@ fn checkScopedBlock(check: *Check, node: Node.Index) Allocator.Error!void {
 fn checkStatement(check: *Check, node: Node.Index) Allocator.Error!void {
     assert(check.builder != null);
     if (try check.enterDepth(node) == false) return;
-    defer check.comp.depth -= 1;
 
     switch (check.tree.viewOf(node)) {
         .var_decl => try check.checkVarDecl(node),
@@ -1159,7 +1154,6 @@ fn checkAssign(check: *Check, node: Node.Index, assign: AST.View.Pair) Allocator
 
 fn checkIf(check: *Check, node: Node.Index, view: AST.View.If) Allocator.Error!void {
     if (try check.enterDepth(node) == false) return;
-    defer check.comp.depth -= 1;
 
     const builder = check.builder.?;
     const entry_live = builder.live;
@@ -1489,7 +1483,6 @@ fn expectNothing(check: *Check, node: Node.Index, value: Value) Allocator.Error!
 fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     const comp = check.comp;
     if (try check.enterDepth(node) == false) return .poison;
-    defer comp.depth -= 1;
 
     switch (check.tree.viewOf(node)) {
         .ident => return check.checkIdent(node),
@@ -1578,7 +1571,7 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
         .struct_decl => {
             if (comp.typeParamCount(decl_index) > 0) return .{ .generic_ref = decl_index };
             const instance = try comp.instantiate(decl_index, &.{});
-            return .{ .type_ref = comp.instances.items[instance.int()].type };
+            return .{ .type_ref = comp.instanceType(instance) };
         },
         .type_alias => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
@@ -2039,71 +2032,114 @@ fn checkOrelse(check: *Check, node: Node.Index, view: AST.View.Pair) Allocator.E
         return check.checkExpr(view.rhs, null);
     }
 
-    const found = check.typeOf(lhs);
-    const payload = switch (comp.pool.keyOf(found)) {
-        .optional => |child| child,
-        else => {
-            try check.fail(view.lhs, .{
-                .code = .not_optional,
-                .message = try comp.fmt("'orelse' needs an optional, and this is {s}", .{
-                    try comp.typeName(found),
-                }),
-                .label = "never null",
-                .help = "drop the 'orelse'",
-            });
-            return .poison;
-        },
+    return check.checkRescue(node, .{
+        .kind = .optional,
+        .lhs = lhs,
+        .lhs_node = view.lhs,
+        .rhs = view.rhs,
+        .capture = .none,
+    });
+}
+
+fn checkCatch(check: *Check, node: Node.Index, view: AST.View.Catch) Allocator.Error!Value {
+    const lhs = try check.checkExpr(view.lhs, null);
+    if (lhs == .poison) return .poison;
+    if (check.builder == null) return check.needRuntime(node, "'catch'");
+    if (try check.valueOnly(view.lhs, lhs) == false) return .poison;
+
+    return check.checkRescue(node, .{
+        .kind = .error_union,
+        .lhs = lhs,
+        .lhs_node = view.lhs,
+        .rhs = view.rhs,
+        .capture = view.capture,
+    });
+}
+
+/// `a orelse b` and `a catch b`, which are one lowering over two wrappers.
+const Rescue = struct {
+    kind: Kind,
+    lhs: Value,
+    lhs_node: Node.Index,
+    rhs: Node.Index,
+    capture: Node.OptionalIndex,
+
+    const Kind = enum { optional, error_union };
+};
+
+/// A branch on the left side, a payload arm, and a fallback arm. The fallback
+/// is a value to store, or a block that hands the payload over by leaving the
+/// scope, and falls through to nothing by not.
+fn checkRescue(check: *Check, node: Node.Index, rescue: Rescue) Allocator.Error!Value {
+    const found = check.typeOf(rescue.lhs);
+    const payload = check.rescuePayload(rescue.kind, found) orelse {
+        try check.reportRescue(rescue.kind, rescue.lhs_node, found);
+        return .poison;
     };
 
-    const tested = refOf(lhs);
-    const has = try check.emitOne(.has_value, .bool_type, node, tested);
+    const unwrap: IR.Inst.Tag = switch (rescue.kind) {
+        .optional => .unwrap_value,
+        .error_union => .unwrap_ok,
+    };
+    const tested = refOf(rescue.lhs);
+    const cond = try check.emitOne(switch (rescue.kind) {
+        .optional => .has_value,
+        .error_union => .is_error,
+    }, .bool_type, node, tested);
 
-    if (check.tree.nodeTag(view.rhs) == .block) {
-        // a block that leaves the scope hands over the payload. one that falls
-        // through makes the whole expression amount to nothing
-        const ok_block = try check.newBlock();
-        const else_block = try check.newBlock();
-        check.endBlock(.{ .branch = .{
-            .cond = has,
-            .then_block = ok_block,
-            .else_block = else_block,
-        } });
+    const payload_block = try check.newBlock();
+    const fallback_block = try check.newBlock();
+    // `has_value` names the payload side, `is_error` names the fallback side
+    const branch: IR.Terminator = .{ .branch = switch (rescue.kind) {
+        .optional => .{
+            .cond = cond,
+            .then_block = payload_block,
+            .else_block = fallback_block,
+        },
+        .error_union => .{
+            .cond = cond,
+            .then_block = fallback_block,
+            .else_block = payload_block,
+        },
+    } };
 
-        check.startBlock(else_block);
-        try check.checkScopedBlock(view.rhs);
+    if (check.tree.nodeTag(rescue.rhs) == .block) {
+        check.endBlock(branch);
+
+        check.startBlock(fallback_block);
+        try check.pushBindingScope();
+        try check.bindCaught(rescue.capture, node, tested);
+        try check.checkScopedBlock(rescue.rhs);
+        check.popScope();
         if (check.blockOpen()) {
             const join = try check.newBlock();
             check.endBlock(.{ .jump = join });
-            check.startBlock(ok_block);
+            check.startBlock(payload_block);
             check.endBlock(.{ .jump = join });
             check.startBlock(join);
             return .{ .runtime = .{ .ref = tested, .type = .nothing_type } };
         }
 
-        check.startBlock(ok_block);
-        const unwrapped = try check.emitOne(.unwrap_value, payload, node, tested);
+        check.startBlock(payload_block);
+        const unwrapped = try check.emitOne(unwrap, payload, node, tested);
         return .{ .runtime = .{ .ref = unwrapped, .type = payload } };
     }
 
     const slot = try check.emitSlot(node, .empty, payload);
-
-    const ok_block = try check.newBlock();
-    const else_block = try check.newBlock();
     const join = try check.newBlock();
-    check.endBlock(.{ .branch = .{
-        .cond = has,
-        .then_block = ok_block,
-        .else_block = else_block,
-    } });
+    check.endBlock(branch);
 
-    check.startBlock(ok_block);
-    const unwrapped = try check.emitOne(.unwrap_value, payload, node, tested);
+    check.startBlock(payload_block);
+    const unwrapped = try check.emitOne(unwrap, payload, node, tested);
     try check.emitStore(node, slot, unwrapped);
     check.endBlock(.{ .jump = join });
 
-    check.startBlock(else_block);
-    const fallback = try check.checkExpr(view.rhs, payload);
-    const met = try check.coerce(fallback, payload, view.rhs);
+    check.startBlock(fallback_block);
+    try check.pushBindingScope();
+    try check.bindCaught(rescue.capture, node, tested);
+    const fallback = try check.checkExpr(rescue.rhs, payload);
+    const met = try check.coerce(fallback, payload, rescue.rhs);
+    check.popScope();
     try check.emitStore(node, slot, refOf(met));
     check.endBlock(.{ .jump = join });
 
@@ -2112,96 +2148,51 @@ fn checkOrelse(check: *Check, node: Node.Index, view: AST.View.Pair) Allocator.E
     return .{ .runtime = .{ .ref = loaded, .type = payload } };
 }
 
-fn checkCatch(check: *Check, node: Node.Index, view: AST.View.Catch) Allocator.Error!Value {
-    const comp = check.comp;
-    const lhs = try check.checkExpr(view.lhs, null);
-    if (lhs == .poison) return .poison;
-    if (check.builder == null) return check.needRuntime(node, "'catch'");
-    if (try check.valueOnly(view.lhs, lhs) == false) return .poison;
-
-    const found = check.typeOf(lhs);
-    const payload = switch (comp.pool.keyOf(found)) {
-        .error_union => |child| child,
-        else => {
-            try check.fail(view.lhs, .{
-                .code = .not_error_union,
-                .message = try comp.fmt("'catch' needs a value that can fail, and this is {s}", .{
-                    try comp.typeName(found),
-                }),
-                .label = "cannot fail",
-                .help = "drop the 'catch'",
-            });
-            return .poison;
-        },
+fn rescuePayload(check: *const Check, kind: Rescue.Kind, found: Pool.Index) ?Pool.Index {
+    return switch (check.comp.pool.keyOf(found)) {
+        .optional => |child| if (kind == .optional) child else null,
+        .error_union => |child| if (kind == .error_union) child else null,
+        else => null,
     };
+}
 
-    const tested = refOf(lhs);
-    const is_error = try check.emitOne(.is_error, .bool_type, node, tested);
+fn reportRescue(
+    check: *Check,
+    kind: Rescue.Kind,
+    node: Node.Index,
+    found: Pool.Index,
+) Allocator.Error!void {
+    const comp = check.comp;
+    try check.fail(node, switch (kind) {
+        .optional => .{
+            .code = .not_optional,
+            .message = try comp.fmt("'orelse' needs an optional, and this is {s}", .{
+                try comp.typeName(found),
+            }),
+            .label = "never null",
+            .help = "drop the 'orelse'",
+        },
+        .error_union => .{
+            .code = .not_error_union,
+            .message = try comp.fmt("'catch' needs a value that can fail, and this is {s}", .{
+                try comp.typeName(found),
+            }),
+            .label = "cannot fail",
+            .help = "drop the 'catch'",
+        },
+    });
+}
 
-    if (check.tree.nodeTag(view.rhs) == .block) {
-        // a block that leaves the scope hands over the payload. one that falls
-        // through makes the whole expression amount to nothing
-        const ok_block = try check.newBlock();
-        const err_block = try check.newBlock();
-        check.endBlock(.{ .branch = .{
-            .cond = is_error,
-            .then_block = err_block,
-            .else_block = ok_block,
-        } });
-
-        check.startBlock(err_block);
-        try check.pushBindingScope();
-        if (view.capture.unwrap()) |capture| {
-            const caught = try check.emitOne(.unwrap_err, .error_type, node, tested);
-            try check.bindCapture(capture, caught, .error_type);
-        }
-        try check.checkScopedBlock(view.rhs);
-        check.popScope();
-        if (check.blockOpen()) {
-            const join = try check.newBlock();
-            check.endBlock(.{ .jump = join });
-            check.startBlock(ok_block);
-            check.endBlock(.{ .jump = join });
-            check.startBlock(join);
-            return .{ .runtime = .{ .ref = tested, .type = .nothing_type } };
-        }
-
-        check.startBlock(ok_block);
-        const unwrapped = try check.emitOne(.unwrap_ok, payload, node, tested);
-        return .{ .runtime = .{ .ref = unwrapped, .type = payload } };
-    }
-
-    const slot = try check.emitSlot(node, .empty, payload);
-
-    const ok_block = try check.newBlock();
-    const err_block = try check.newBlock();
-    const join = try check.newBlock();
-    check.endBlock(.{ .branch = .{
-        .cond = is_error,
-        .then_block = err_block,
-        .else_block = ok_block,
-    } });
-
-    check.startBlock(err_block);
-    try check.pushBindingScope();
-    if (view.capture.unwrap()) |capture| {
-        const caught = try check.emitOne(.unwrap_err, .error_type, node, tested);
-        try check.bindCapture(capture, caught, .error_type);
-    }
-    const fallback = try check.checkExpr(view.rhs, payload);
-    const met = try check.coerce(fallback, payload, view.rhs);
-    check.popScope();
-    try check.emitStore(node, slot, refOf(met));
-    check.endBlock(.{ .jump = join });
-
-    check.startBlock(ok_block);
-    const unwrapped = try check.emitOne(.unwrap_ok, payload, node, tested);
-    try check.emitStore(node, slot, unwrapped);
-    check.endBlock(.{ .jump = join });
-
-    check.startBlock(join);
-    const loaded = try check.emitOne(.load, payload, node, slot);
-    return .{ .runtime = .{ .ref = loaded, .type = payload } };
+/// The `|err|` of a `catch`. Nothing to bind for an `orelse`.
+fn bindCaught(
+    check: *Check,
+    capture: Node.OptionalIndex,
+    node: Node.Index,
+    tested: Ref,
+) Allocator.Error!void {
+    const bound = capture.unwrap() orelse return;
+    const caught = try check.emitOne(.unwrap_err, .error_type, node, tested);
+    try check.bindCapture(bound, caught, .error_type);
 }
 
 fn checkFieldAccess(
@@ -2344,7 +2335,7 @@ fn findField(
 
     if (try check.fieldRow(instance, name_text)) |row| return row;
 
-    const decl_index = comp.instances.items[instance.int()].decl;
+    const decl_index = comp.instanceDecl(instance);
     if (findMember(comp, decl_index, name_text) != null) {
         try check.failToken(name_token, .{
             .code = .no_such_member,
@@ -2370,8 +2361,7 @@ fn findField(
 /// Absolute, which is what the IR stores.
 fn fieldRow(check: *Check, instance: Pool.Instance, name_text: []const u8) Allocator.Error!?u32 {
     const comp = check.comp;
-    const decl = comp.decls.items[comp.instances.items[instance.int()].decl.int()];
-    try comp.ensure(.of(.rows, instance), .{ .module = decl.module, .node = decl.node });
+    try comp.ensureRows(instance);
 
     const rows = comp.instances.items[instance.int()];
     for (rows.rows_start..rows.rows_start + rows.rows_len) |raw| {
@@ -2421,7 +2411,7 @@ fn checkInstanceExpr(
     const base = try check.checkExpr(view.base, null);
     switch (base) {
         .generic_ref => {
-            const resolved = try check.resolveTypeInstance(node, 0);
+            const resolved = try check.resolveTypeInstance(node);
             if (resolved == .poison) return .poison;
             return .{ .type_ref = resolved };
         },
@@ -2475,18 +2465,14 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     };
     if (check.builder == null) return check.needRuntime(node, "a struct literal");
 
-    const decl = comp.decls.items[comp.instances.items[instance.int()].decl.int()];
-    try comp.ensure(.of(.rows, instance), .{ .module = decl.module, .node = decl.node });
+    try comp.ensureRows(instance);
     const rows = comp.instances.items[instance.int()];
 
-    // one ref slot per field, in declaration order
-    var refs_buffer: [call_args_max]Ref = undefined;
-    var init_nodes: [call_args_max]Node.OptionalIndex = undefined;
-    if (rows.rows_len > call_args_max) return .poison;
-    for (0..rows.rows_len) |position| {
-        refs_buffer[position] = .none;
-        init_nodes[position] = .none;
-    }
+    // one slot per field, in declaration order
+    const builder = check.builder.?;
+    const start: u32 = @intCast(builder.operands.items.len);
+    defer builder.operands.shrinkRetainingCapacity(start);
+    try builder.operands.appendNTimes(comp.gpa, .{ .value = .poison, .node = .none }, rows.rows_len);
 
     var clean = true;
     for (inits) |init_node| {
@@ -2501,7 +2487,7 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
             continue;
         };
 
-        if (init_nodes[position].unwrap()) |first| {
+        if (builder.operands.items[start + position].node.unwrap()) |first| {
             try check.failToken(field_init.name_token, .{
                 .code = .redeclared,
                 .message = try comp.fmt("'{s}' is given twice", .{
@@ -2515,18 +2501,18 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
             clean = false;
             continue;
         }
-        init_nodes[position] = init_node.toOptional();
+        builder.operands.items[start + position].node = init_node.toOptional();
 
         const row_type = comp.rows.items[rows.rows_start + position].type;
         const value = try check.checkExpr(field_init.value, row_type);
         const met = try check.coerce(value, row_type, field_init.value);
         if (met == .poison) clean = false;
-        refs_buffer[position] = refOf(met);
+        builder.operands.items[start + position].value = met;
     }
 
     var missing: ?[]const u8 = null;
     for (0..rows.rows_len) |position| {
-        if (init_nodes[position] != .none) continue;
+        if (builder.operands.items[start + position].node != .none) continue;
         const name = comp.pool.stringText(comp.rows.items[rows.rows_start + position].name);
         missing = if (missing) |earlier|
             try comp.fmt("{s}, '{s}'", .{ earlier, name })
@@ -2544,7 +2530,7 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     }
     if (clean == false) return .poison;
 
-    const extra_start = try check.extraRefs(refs_buffer[0..rows.rows_len]);
+    const extra_start = try check.extraOperands(builder.operands.items[start..]);
     const result = try check.emit(.struct_init, wanted, node, .{ .a = extra_start, .b = 0 });
     return .{ .runtime = .{ .ref = result, .type = wanted } };
 }
@@ -2568,15 +2554,16 @@ fn reportLiteralContext(check: *Check, node: Node.Index, hint: ?Pool.Index) Allo
     });
 }
 
-/// A count, then the refs.
-fn extraRefs(check: *Check, refs: []const Ref) Allocator.Error!u32 {
+/// A count, then one ref per operand.
+fn extraOperands(check: *Check, operands: []const Builder.Operand) Allocator.Error!u32 {
     const builder = check.builder.?;
-    if (builder.extra.items.len + refs.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
+    if (builder.extra.items.len + operands.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
 
     const start: u32 = @intCast(builder.extra.items.len);
-    try builder.extra.ensureUnusedCapacity(check.comp.gpa, refs.len + 1);
-    builder.extra.appendAssumeCapacity(@intCast(refs.len));
-    for (refs) |ref| {
+    try builder.extra.ensureUnusedCapacity(check.comp.gpa, operands.len + 1);
+    builder.extra.appendAssumeCapacity(@intCast(operands.len));
+    for (operands) |operand| {
+        const ref = refOf(operand.value);
         assert(ref != .none);
         builder.extra.appendAssumeCapacity(@intFromEnum(ref));
     }
@@ -2695,7 +2682,7 @@ fn resolveCalleeMember(
             .type_ref => |type_index| {
                 switch (comp.pool.keyOf(type_index)) {
                     .struct_type => |owner| {
-                        const decl_index = comp.instances.items[owner.int()].decl;
+                        const decl_index = comp.instanceDecl(owner);
                         const member = findMember(comp, decl_index, name_text) orelse {
                             _ = try check.findField(owner, access.name_token);
                             return null;
@@ -2816,6 +2803,7 @@ fn checkCallResolved(
     args: []const Node.Index,
 ) Allocator.Error!Value {
     const comp = check.comp;
+    const builder = check.builder.?;
 
     // the receiver is written first, so it is evaluated first
     var receiver_place: ?Place = null;
@@ -2836,7 +2824,7 @@ fn checkCallResolved(
             const struct_type = peelOnePointer(comp, place.type);
             switch (comp.pool.keyOf(struct_type)) {
                 .struct_type => |owner| {
-                    const owner_decl = comp.instances.items[owner.int()].decl;
+                    const owner_decl = comp.instanceDecl(owner);
                     const name_text = check.tree.tokenSlice(method.name_token);
                     const member = findMember(comp, owner_decl, name_text) orelse {
                         _ = try check.findField(owner, method.name_token);
@@ -2861,11 +2849,12 @@ fn checkCallResolved(
     var full_args: [type_params_max * 2]Pool.Index = undefined;
     assert(owner_args.len + own_count <= full_args.len);
     @memcpy(full_args[0..owner_args.len], owner_args);
-    const owner_count = owner_args.len;
+    const owner_count: u32 = @intCast(owner_args.len);
 
-    // arguments already checked during inference are reused below
-    var checked: [call_args_max]?Value = @splat(null);
+    const mark: u32 = @intCast(builder.operands.items.len);
+    defer builder.operands.shrinkRetainingCapacity(mark);
 
+    var inferred = false;
     if (callee.explicit) |explicit| {
         if (callee.explicit_len != own_count) {
             try check.fail(node, .{
@@ -2888,20 +2877,20 @@ fn checkCallResolved(
             receiver_place != null,
             args,
             full_args[owner_count..][0..own_count],
-            &checked,
         );
         if (solved == false) return .poison;
+        inferred = true;
     }
+    const start: u32 = if (inferred) mark + @as(u32, @intCast(args.len)) else mark;
 
     const instance = try comp.instantiate(decl_index, full_args[0 .. owner_count + own_count]);
     try comp.ensure(.of(.signature, instance), check.origin(node));
     if (comp.instances.items[instance.int()].rows_state != .done) return .poison;
-    const return_type = comp.instances.items[instance.int()].type;
+    const return_type = comp.instanceType(instance);
 
     // a receiver consumes the first parameter, and arity messages exclude it
     const rows = comp.instances.items[instance.int()];
-    var refs: [call_args_max + 1]Ref = undefined;
-    var refs_len: u32 = 0;
+    var receiver_count: u32 = 0;
     if (receiver_place) |place| {
         if (rows.rows_len == 0) {
             try check.fail(node, .{
@@ -2920,11 +2909,14 @@ fn checkCallResolved(
         const self_type = comp.rows.items[rows.rows_start].type;
         const receiver = try check.adaptReceiver(receiver_node.?, place, self_type, fn_name) orelse
             return .poison;
-        refs[0] = receiver;
-        refs_len = 1;
+        try builder.operands.append(comp.gpa, .{
+            .value = .{ .runtime = .{ .ref = receiver, .type = self_type } },
+            .node = .none,
+        });
+        receiver_count = 1;
     }
 
-    const expected = rows.rows_len - refs_len;
+    const expected = rows.rows_len - receiver_count;
     if (args.len != expected) {
         try check.fail(node, .{
             .code = .wrong_arity,
@@ -2936,22 +2928,22 @@ fn checkCallResolved(
                 comp.noteAt(decl.module, decl.node, "declared here"),
             }),
         });
-        for (args, 0..) |argument, position| {
-            if (checked[position] == null) _ = try check.checkExpr(argument, null);
+        if (inferred == false) {
+            for (args) |argument| _ = try check.checkExpr(argument, null);
         }
         return .poison;
     }
 
     var clean = true;
-    const receiver_offset = refs_len;
     for (args, 0..) |argument, position| {
-        const row_type = comp.rows.items[rows.rows_start + receiver_offset + position].type;
-        const met = try check.checkArgument(argument, row_type, checked[position]);
+        const row_type = comp.rows.items[rows.rows_start + receiver_count + position].type;
+        const early: ?Value = if (inferred) builder.operands.items[mark + position].value else null;
+        const met = try check.checkArgument(argument, row_type, early);
         if (met == .poison) clean = false;
-        refs[refs_len] = refOf(met);
-        refs_len += 1;
+        try builder.operands.append(comp.gpa, .{ .value = met, .node = .none });
     }
     if (clean == false) return .poison;
+    assert(builder.operands.items.len == start + receiver_count + args.len);
 
     if (decl.builtin()) |bound| {
         // for `Type.f(x)` the first argument is the receiver, and the name rule
@@ -2960,26 +2952,26 @@ fn checkCallResolved(
         return check.emitBuiltin(node, .{
             .bound = bound,
             .receiver_node = self_node,
-        }, refs[0..refs_len], return_type);
+        }, builder.operands.items[start..], return_type);
     }
 
-    // the body is checked once per instantiation, on demand
+    // on its own `Builder`, so the operands staged here cannot move
     try comp.ensure(.of(.body, instance), check.origin(node));
 
-    var extra: [call_args_max + 3]u32 = undefined;
-    extra[0] = instance.int();
-    extra[1] = refs_len;
-    for (refs[0..refs_len], 0..) |ref, position| extra[2 + position] = @intFromEnum(ref);
-
-    const builder = check.builder.?;
+    const operands = builder.operands.items[start..];
     const extra_start: u32 = @intCast(builder.extra.items.len);
-    try builder.extra.appendSlice(comp.gpa, extra[0 .. 2 + refs_len]);
+    try builder.extra.ensureUnusedCapacity(comp.gpa, operands.len + 2);
+    builder.extra.appendAssumeCapacity(instance.int());
+    builder.extra.appendAssumeCapacity(@intCast(operands.len));
+    for (operands) |operand| {
+        builder.extra.appendAssumeCapacity(@intFromEnum(refOf(operand.value)));
+    }
 
     const result = try check.emit(.call, return_type, node, .{ .a = extra_start, .b = 0 });
     return .{ .runtime = .{ .ref = result, .type = return_type } };
 }
 
-fn plural(count: u64) []const u8 {
+fn plural(count: u32) []const u8 {
     return if (count == 1) "" else "s";
 }
 
@@ -3045,17 +3037,19 @@ fn inferTypeArguments(
     has_receiver: bool,
     args: []const Node.Index,
     out: []Pool.Index,
-    checked: *[call_args_max]?Value,
 ) Allocator.Error!bool {
     const comp = check.comp;
+    const builder = check.builder.?;
     const decl = comp.decls.items[decl_index.int()];
     const owner_tree = &comp.modules.items[decl.module.int()].tree;
     const fn_view = owner_tree.viewOf(decl.node).fn_decl;
     const fn_name = comp.pool.stringText(decl.name);
 
     // arguments are checked in source order, so evaluation order survives
-    for (args, 0..) |argument, position| {
-        checked[position] = try check.checkExpr(argument, null);
+    const early: u32 = @intCast(builder.operands.items.len);
+    for (args) |argument| {
+        const value = try check.checkExpr(argument, null);
+        try builder.operands.append(comp.gpa, .{ .value = value, .node = .none });
     }
 
     const receiver_rows: u32 = if (has_receiver) 1 else 0;
@@ -3085,7 +3079,7 @@ fn inferTypeArguments(
             return false;
         }
 
-        const pinned = checked[pin.argument].?;
+        const pinned = builder.operands.items[early + pin.argument].value;
         var found = check.typeOf(pinned);
         if (found == .poison) return false;
         if (found == .untyped_int_type or found == .untyped_float_type) {
@@ -3262,42 +3256,42 @@ fn emitBuiltin(
     check: *Check,
     node: Node.Index,
     call: BuiltinCall,
-    refs: []const Ref,
+    operands: []const Builder.Operand,
     return_type: Pool.Index,
 ) Allocator.Error!Value {
     switch (call.bound) {
         .arena_init => {
-            assert(refs.len == 0);
+            assert(operands.len == 0);
             const result = try check.emit(.arena_init, return_type, node, .{ .a = 0, .b = 0 });
             return .{ .runtime = .{ .ref = result, .type = return_type } };
         },
         .arena_child => {
-            assert(refs.len == 1);
-            const result = try check.emitOne(.arena_child, return_type, node, refs[0]);
+            assert(operands.len == 1);
+            const result = try check.emitOne(.arena_child, return_type, node, refOf(operands[0].value));
             return .{ .runtime = .{ .ref = result, .type = return_type } };
         },
         .arena_create => {
-            assert(refs.len == 1);
-            const result = try check.emitOne(.arena_create, return_type, node, refs[0]);
+            assert(operands.len == 1);
+            const result = try check.emitOne(.arena_create, return_type, node, refOf(operands[0].value));
             return .{ .runtime = .{ .ref = result, .type = return_type } };
         },
         .arena_copy => {
-            assert(refs.len == 2);
+            assert(operands.len == 2);
             const result = try check.emit(.arena_copy, return_type, node, .{
-                .a = @intFromEnum(refs[0]),
-                .b = @intFromEnum(refs[1]),
+                .a = @intFromEnum(refOf(operands[0].value)),
+                .b = @intFromEnum(refOf(operands[1].value)),
             });
             return .{ .runtime = .{ .ref = result, .type = return_type } };
         },
         .arena_reset, .arena_destroy => {
-            assert(refs.len == 1);
+            assert(operands.len == 1);
             if (try check.checkReleaseName(node, call) == false) return .poison;
             if (call.bound == .arena_destroy) try check.checkDestroyInDefer(node);
             const tag: IR.Inst.Tag = if (call.bound == .arena_reset)
                 .arena_reset
             else
                 .arena_destroy;
-            const result = try check.emitOne(tag, .nothing_type, node, refs[0]);
+            const result = try check.emitOne(tag, .nothing_type, node, refOf(operands[0].value));
             return .{ .runtime = .{ .ref = result, .type = .nothing_type } };
         },
     }
@@ -3370,7 +3364,6 @@ const Place = struct {
 /// the caller gives up quietly.
 fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
     if (try check.enterDepth(node) == false) return null;
-    defer check.comp.depth -= 1;
 
     switch (check.tree.viewOf(node)) {
         .ident => {
@@ -4024,27 +4017,21 @@ fn considerName(candidate: []const u8, text: []const u8, best: *?[]const u8, dis
     }
 }
 
-/// One level against the one budget. Every recursive walk charges the same
-/// counter, because declarations demanded mid-expression multiply.
 fn enterDepth(check: *Check, node: Node.Index) Allocator.Error!bool {
     const comp = check.comp;
-    if (comp.depth >= Compilation.depth_max) {
-        if (comp.depth_exhausted == false) {
-            comp.depth_exhausted = true;
-            try check.fail(node, .{
-                .code = .analysis_too_deep,
-                .message = try comp.fmt("checking this nests more than {d} steps deep", .{
-                    Compilation.depth_max,
-                }),
-                .label = "past the analysis budget",
-                .help = "declarations demanded mid-expression nest together, and this " ++
-                    "is deeper than the compiler follows",
-            });
-        }
-        return false;
+    if (comp.stackSpent() < Compilation.stack_bytes_max) return true;
+
+    if (comp.stack_exhausted == false) {
+        comp.stack_exhausted = true;
+        try check.fail(node, .{
+            .code = .analysis_too_deep,
+            .message = "checking this nests deeper than the compiler follows",
+            .label = "past the analysis budget",
+            .help = "expressions, types, and the declarations they demand all nest " ++
+                "together, and this is past what one compilation may spend",
+        });
     }
-    comp.depth += 1;
-    return true;
+    return false;
 }
 
 fn origin(check: *const Check, node: Node.Index) Compilation.Origin {
@@ -4133,15 +4120,12 @@ fn finishFunc(check: *Check) Allocator.Error!void {
     const blocks_owned = try blocks.toOwnedSlice(comp.gpa);
     errdefer comp.gpa.free(blocks_owned);
 
-    if (comp.funcs.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-    const func_index: IR.Func.Index = @enumFromInt(@as(u32, @intCast(comp.funcs.items.len)));
     try comp.funcs.append(comp.gpa, .{
         .instance = builder.instance,
         .insts = builder.insts.toOwnedSlice(),
         .extra = extra,
         .blocks = blocks_owned,
     });
-    comp.instances.items[builder.instance.int()].func = func_index;
 }
 
 fn finishFuncVisit(

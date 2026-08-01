@@ -45,11 +45,11 @@ b0:
   %4 = local : *var i64
   branch %3, b2, b1
 b1:
-  %6 = unwrap_ok %2 : i64
-  %7 = store %4, %6
+  %5 = unwrap_ok %2 : i64
+  %6 = store %4, %5
   jump b3
 b2:
-  %5 = store %4, 0:i64
+  %7 = store %4, 0:i64
   jump b3
 b3:
   %8 = load %4 : i64

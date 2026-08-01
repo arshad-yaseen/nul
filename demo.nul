@@ -17,7 +17,9 @@ pub fn make[T](arena: Arena, v: T) *var Box[T] {
     return b
 }
 
-fn use_them(arena: Arena) {
+fn main() {
+    var arena = Arena.init()
+
     _ = make[i64](arena, 1)
     _ = arena.create[Pair[i64, bool]]()
 }
