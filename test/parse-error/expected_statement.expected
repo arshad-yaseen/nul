@@ -1,0 +1,6 @@
+error[E0103]: expected a statement, found ':'
+ --> test/parse-error/expected_statement.nul:2:5
+  |
+2 |     :
+  |     ^ expected a statement
+

@@ -1,0 +1,181 @@
+root
+  fn_decl expression_body
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    ret: ident i64
+    body: if_expr
+      cond: binary greater_than
+        lhs: ident a
+        rhs: ident b
+      then: block
+        ident a
+      else: block
+        ident b
+  fn_decl bound
+    param strict
+      type: ident bool
+    ret: ident i64
+    body: block
+      var_decl limit let
+        type: ident i64
+        init: if_expr
+          cond: ident strict
+          then: block
+            number_literal 10
+          else: block
+            number_literal 100
+      return_expr
+        value: ident limit
+  fn_decl chained
+    param n
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl grade let
+        type: ident i64
+        init: if_expr
+          cond: binary greater_than
+            lhs: ident n
+            rhs: number_literal 90
+          then: block
+            number_literal 1
+          else: if_expr
+            cond: binary greater_than
+              lhs: ident n
+              rhs: number_literal 50
+            then: block
+              number_literal 2
+            else: block
+              number_literal 3
+      return_expr
+        value: ident grade
+  fn_decl nested_arm
+    param a
+      type: ident bool
+    param b
+      type: ident bool
+    ret: ident i64
+    body: block
+      var_decl n let
+        type: ident i64
+        init: if_expr
+          cond: ident a
+          then: block
+            if_expr
+              cond: ident b
+              then: block
+                number_literal 1
+              else: block
+                number_literal 2
+          else: block
+            number_literal 3
+      return_expr
+        value: ident n
+  fn_decl arm_with_statements
+    param c
+      type: ident bool
+    ret: ident i64
+    body: block
+      var_decl n let
+        type: ident i64
+        init: if_expr
+          cond: ident c
+          then: block
+            var_decl base let
+              init: number_literal 8000
+            binary add
+              lhs: ident base
+              rhs: number_literal 80
+          else: block
+            number_literal 0
+      return_expr
+        value: ident n
+  fn_decl ways_out
+    param opt
+      type: optional_type
+        child: ident i64
+    param may
+      type: error_union_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      var_decl a let
+        init: orelse_expr
+          lhs: ident opt
+          rhs: return_expr
+            value: number_literal 0
+      var_decl b let
+        init: catch_expr
+          lhs: ident may
+          rhs: return_expr
+            value: number_literal 1
+      return_expr
+        value: binary add
+          lhs: ident a
+          rhs: ident b
+  fn_decl in_a_loop
+    param limit
+      type: ident i64
+    param opt
+      type: optional_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      var_decl total var
+        type: ident i64
+        init: number_literal 0
+      var_decl i var
+        type: ident i64
+        init: number_literal 0
+      while_stmt
+        cond: binary less_than
+          lhs: ident i
+          rhs: ident limit
+        body: block
+          assign
+            lhs: ident i
+            rhs: binary add
+              lhs: ident i
+              rhs: number_literal 1
+          var_decl step let
+            init: orelse_expr
+              lhs: ident opt
+              rhs: break_expr
+          if_expr
+            cond: binary equal
+              lhs: ident i
+              rhs: number_literal 3
+            then: block
+              continue_expr
+          assign
+            lhs: ident total
+            rhs: binary add
+              lhs: ident total
+              rhs: binary mul
+                lhs: ident step
+                rhs: ident i
+      return_expr
+        value: ident total
+  fn_decl as_an_argument
+    param c
+      type: ident bool
+    ret: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: ident take
+          arg: if_expr
+            cond: ident c
+            then: block
+              number_literal 1
+            else: block
+              number_literal 2
+  fn_decl take
+    param n
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: ident n

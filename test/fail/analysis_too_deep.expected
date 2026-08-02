@@ -1,0 +1,8 @@
+error[E0249]: checking this follows a chain more than 128 declarations deep
+   --> test/fail/analysis_too_deep.nul:128:13
+    |
+128 | type A127 = A128
+    |             ^^^^ the chain stops here
+    |
+    = help: a definition this far down a dependency chain is past what the compiler follows
+

@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
 const compiler = @import("compiler");
+const verify = @import("verify.zig");
 
 const Kind = enum {
     /// Must parse.
@@ -175,6 +176,7 @@ fn runCompile(
     try comp.init(gpa, io, .{ .root_path = path, .std_dir = "lib/std" });
     defer comp.deinit();
     try comp.compile(source);
+    verify.all(&comp);
 
     const failed = comp.diagnostics.items.len > 0;
     switch (kind) {

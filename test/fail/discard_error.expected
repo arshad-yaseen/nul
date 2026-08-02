@@ -4,5 +4,5 @@ error[E0227]: this can fail, and '_ =' drops only the value
 6 |     _ = risky()
   |         ^^^^^^^ the failure is still unhandled
   |
-  = help: 'try' passes it up, 'catch' handles it, and 'catch {}' drops it
+  = help: 'try' passes it up, and 'catch' settles it here, as in '_ = f() catch 0'
 

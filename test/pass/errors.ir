@@ -41,18 +41,18 @@ b0:
   %0 = param seed : i64
   %1 = scope_begin
   %2 = call refuse(%0) : !i64
-  %3 = is_error %2 : bool
-  %4 = local : *var i64
-  branch %3, b2, b1
+  %3 = local : *var i64
+  %4 = is_error %2 : bool
+  branch %4, b2, b1
 b1:
   %5 = unwrap_ok %2 : i64
-  %6 = store %4, %5
+  %6 = store %3, %5
   jump b3
 b2:
-  %7 = store %4, 0:i64
+  %7 = store %3, 0:i64
   jump b3
 b3:
-  %8 = load %4 : i64
+  %8 = load %3 : i64
   %9 = scope_end %1
   return %8
 
@@ -61,28 +61,33 @@ b0:
   %0 = param seed : i64
   %1 = scope_begin
   %2 = call refuse(%0) : !i64
-  %3 = is_error %2 : bool
-  branch %3, b2, b1
+  %3 = local : *var i64
+  %4 = is_error %2 : bool
+  branch %4, b2, b1
 b1:
-  %13 = unwrap_ok %2 : i64
-  %14 = scope_end %1
-  return %13
+  %5 = unwrap_ok %2 : i64
+  %6 = store %3, %5
+  jump b3
 b2:
-  %4 = unwrap_err %2 : an error
-  %5 = scope_begin
-  %6 = cmp_eq %4, error.TooMuch : bool
-  branch %6, b3, b4
+  %7 = unwrap_err %2 : an error
+  %8 = scope_begin
+  %9 = cmp_eq %7, error.TooMuch : bool
+  branch %9, b4, b5
 b3:
-  %7 = scope_begin
-  %8 = scope_end %7
-  %9 = scope_end %5
-  %10 = scope_end %1
-  return 100:i64
+  %16 = load %3 : i64
+  %17 = scope_end %1
+  return %16
 b4:
-  jump b5
+  %10 = scope_begin
+  %11 = scope_end %10
+  %12 = scope_end %8
+  %13 = scope_end %1
+  return 100:i64
 b5:
-  %11 = scope_end %5
-  %12 = scope_end %1
+  jump b6
+b6:
+  %14 = scope_end %8
+  %15 = scope_end %1
   return -1:i64
 
 fn handled(seed: i64)
@@ -90,40 +95,48 @@ b0:
   %0 = param seed : i64
   %1 = scope_begin
   %2 = call refuse(%0) : !i64
-  %3 = is_error %2 : bool
-  branch %3, b2, b1
+  %3 = local : *var i64
+  %4 = is_error %2 : bool
+  branch %4, b2, b1
 b1:
-  %7 = unwrap_ok %2 : i64
-  %8 = scope_end %1
-  return
+  %5 = unwrap_ok %2 : i64
+  %6 = store %3, %5
+  jump b3
 b2:
-  %4 = scope_begin
-  %5 = scope_end %4
-  %6 = scope_end %1
+  %7 = scope_begin
+  %8 = scope_end %7
+  %9 = scope_end %1
+  return
+b3:
+  %10 = load %3 : i64
+  %11 = scope_end %1
   return
 
-fn report()
+fn report_and_zero() i64
 b0:
   %0 = scope_begin
   %1 = scope_end %0
-  return
+  return 0:i64
 
 fn shrugged(seed: i64)
 b0:
   %0 = param seed : i64
   %1 = scope_begin
   %2 = call refuse(%0) : !i64
-  %3 = is_error %2 : bool
-  branch %3, b2, b1
+  %3 = local : *var i64
+  %4 = is_error %2 : bool
+  branch %4, b2, b1
 b1:
+  %5 = unwrap_ok %2 : i64
+  %6 = store %3, %5
   jump b3
 b2:
-  %4 = scope_begin
-  %5 = call report()
-  %6 = scope_end %4
+  %7 = call report_and_zero() : i64
+  %8 = store %3, %7
   jump b3
 b3:
-  %7 = scope_end %1
+  %9 = load %3 : i64
+  %10 = scope_end %1
   return
 
 fn lookup(id: i64) !?i64
@@ -162,26 +175,31 @@ b0:
   %0 = param id : i64
   %1 = scope_begin
   %2 = call lookup(%0) : !?i64
-  %3 = is_error %2 : bool
-  branch %3, b2, b1
+  %3 = local : *var ?i64
+  %4 = is_error %2 : bool
+  branch %4, b2, b1
 b1:
-  %7 = unwrap_ok %2 : ?i64
-  %8 = has_value %7 : bool
-  %9 = local : *var i64
-  branch %8, b3, b4
+  %5 = unwrap_ok %2 : ?i64
+  %6 = store %3, %5
+  jump b3
 b2:
-  %4 = scope_begin
-  %5 = scope_end %4
-  %6 = scope_end %1
+  %7 = scope_begin
+  %8 = scope_end %7
+  %9 = scope_end %1
   return -1:i64
 b3:
-  %10 = unwrap_value %7 : i64
-  %11 = store %9, %10
-  jump b5
+  %10 = load %3 : ?i64
+  %11 = local : *var i64
+  %12 = has_value %10 : bool
+  branch %12, b4, b5
 b4:
-  %12 = store %9, 0:i64
-  jump b5
+  %13 = unwrap_value %10 : i64
+  %14 = store %11, %13
+  jump b6
 b5:
-  %13 = load %9 : i64
-  %14 = scope_end %1
-  return %13
+  %15 = store %11, 0:i64
+  jump b6
+b6:
+  %16 = load %11 : i64
+  %17 = scope_end %1
+  return %16

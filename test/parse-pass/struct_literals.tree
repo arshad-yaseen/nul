@@ -46,7 +46,7 @@ root
       assign
         lhs: ident _
         rhs: ident spread
-      return_stmt
+      return_expr
         value: ident p
   fn_decl places
     param p

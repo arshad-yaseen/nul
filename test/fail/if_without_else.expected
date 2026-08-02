@@ -1,0 +1,8 @@
+error[E0206]: this 'if' has no 'else', so one path through it produces nothing
+ --> test/fail/if_without_else.nul:2:18
+  |
+2 |     let n: i64 = if c { 1 }
+  |                  ^^^^^^^^ needs an 'else'
+  |
+  = help: an 'if' used as a value says what it is on every path
+

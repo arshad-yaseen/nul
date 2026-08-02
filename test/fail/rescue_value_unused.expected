@@ -1,0 +1,16 @@
+error[E0230]: this i64 goes nowhere
+ --> test/fail/rescue_value_unused.nul:9:5
+  |
+9 |     risky(seed) catch {}
+  |     ^^^^^^^^^^^^^^^^^^^^ unused value
+  |
+  = help: 'catch' settles the other path, and the value still needs a home, as in '_ = f() catch 0'
+
+error[E0230]: this i64 goes nowhere
+  --> test/fail/rescue_value_unused.nul:10:5
+   |
+10 |     opt orelse 0
+   |     ^^^^^^^^^^^^ unused value
+   |
+   = help: 'orelse' settles the other path, and the value still needs a home, as in '_ = f() orelse 0'
+

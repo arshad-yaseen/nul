@@ -25,7 +25,7 @@ root
         type: ident Point
       ret: ident i64
       body: block
-        return_stmt
+        return_expr
           value: binary add
             lhs: binary mul
               lhs: field_access x
@@ -45,7 +45,7 @@ root
       type: ident i64
     ret: ident i64
     body: block
-      return_stmt
+      return_expr
         value: binary add
           lhs: ident a
           rhs: ident b

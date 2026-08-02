@@ -351,15 +351,15 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,   .number,  .kw_true,   .kw_false,
-    .kw_null, .l_paren, .dot,       .minus,
-    .bang,    .kw_try,  .ampersand, .kw_error,
+    .ident,     .number,      .kw_true,   .kw_false,
+    .kw_null,   .l_paren,     .dot,       .minus,
+    .bang,      .kw_try,      .ampersand, .kw_error,
+    .kw_if,     .kw_return,   .kw_break,  .kw_continue,
     .invalid,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
-    .kw_let,   .kw_var,      .kw_if,     .kw_while,
-    .kw_break, .kw_continue, .kw_return, .kw_defer,
+    .kw_let, .kw_var, .kw_while, .kw_defer,
 }));
 
 const starts_type = TokenSet.initMany(&.{ .ident, .star, .question, .bang });
@@ -386,6 +386,18 @@ const List = struct {
     expected: []const u8,
 };
 
+fn skipItem(self: *Parse, closer: Token.Tag) Allocator.Error!Node.Index {
+    @branchHint(.cold);
+    const node = try self.hole();
+    while (self.eof() == false) {
+        if (self.at(.comma)) break;
+        if (self.at(closer)) break;
+        if (ends_list.contains(self.current())) break;
+        self.token_index = self.token_index.after(1);
+    }
+    return node;
+}
+
 fn parseList(self: *Parse, list: List) Allocator.Error!void {
     assert(self.depth <= depth_max);
     assert(list.expected.len > 0);
@@ -398,7 +410,7 @@ fn parseList(self: *Parse, list: List) Allocator.Error!void {
         } else {
             if (ends_list.contains(self.current())) break;
             try self.errExpected(list.code, list.expected);
-            try self.scratch.append(self.gpa, try self.skip());
+            try self.scratch.append(self.gpa, try self.skipItem(list.closer));
         }
 
         self.ensureProgress(before);
@@ -740,31 +752,7 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
     assert(starts_stmt.contains(self.current()));
     switch (self.current()) {
         .kw_let, .kw_var => return self.parseVarDecl(),
-        .kw_if => return self.parseIf(),
         .kw_while => return self.parseWhile(),
-        .kw_break, .kw_continue => {
-            const stmt_tag: Node.Tag = if (self.at(.kw_break)) .break_stmt else .continue_stmt;
-            const keyword = self.nextToken();
-            try self.expectEndOfStatement();
-            return self.addNode(.{
-                .tag = stmt_tag,
-                .main_token = keyword,
-                .data = .{ .none = {} },
-            });
-        },
-        .kw_return => {
-            const return_token = self.nextToken();
-            const operand: Node.OptionalIndex = if (starts_expr.contains(self.current()))
-                (try self.parseExpr()).toOptional()
-            else
-                .none;
-            try self.expectEndOfStatement();
-            return self.addNode(.{
-                .tag = .return_stmt,
-                .main_token = return_token,
-                .data = .{ .opt_node = operand },
-            });
-        },
         .kw_defer => {
             const defer_token = self.nextToken();
             const expr = try self.parseExpr();
@@ -812,7 +800,7 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     const capture = try self.parseCapture();
     const then_block = try self.parseBlock();
     const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
-        // `else if` nests as an `if_stmt`, so one shape covers every arm
+        // `else if` nests as an `if_expr`, so one shape covers every arm
         (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
     else
         .none;
@@ -823,12 +811,39 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     try self.extraNode(then_block);
     try self.extraOpt(else_node);
     const node = try self.addNode(.{
-        .tag = .if_stmt,
+        .tag = .if_expr,
         .main_token = if_token,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .if_stmt);
+    assert(self.nodes.items(.tag)[node.int()] == .if_expr);
     return node;
+}
+
+fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
+    const entry = self.token_index;
+    defer assert(self.token_index.int() > entry.int() or self.eof());
+    assert(self.at(.kw_return));
+
+    const return_token = self.nextToken();
+    const operand: Node.OptionalIndex = if (starts_expr.contains(self.current()))
+        (try self.parseExpr()).toOptional()
+    else
+        .none;
+    return self.addNode(.{
+        .tag = .return_expr,
+        .main_token = return_token,
+        .data = .{ .opt_node = operand },
+    });
+}
+
+fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
+    const entry = self.token_index;
+    defer assert(self.token_index.int() > entry.int() or self.eof());
+    assert(self.at(.kw_break) or self.at(.kw_continue));
+
+    const tag: Node.Tag = if (self.at(.kw_break)) .break_expr else .continue_expr;
+    const keyword = self.nextToken();
+    return self.addNode(.{ .tag = tag, .main_token = keyword, .data = .{ .none = {} } });
 }
 
 /// `|v|`, naming an optional payload or a caught error.
@@ -1014,8 +1029,11 @@ fn parseCatchTail(
 
 fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
     assert(self.depth <= depth_max);
-    assert(self.depth <= depth_max);
+    // these build their own node rather than wrapping an operand
     const node_tag: Node.Tag = switch (self.current()) {
+        .kw_if => return self.parseIf(),
+        .kw_return => return self.parseReturn(),
+        .kw_break, .kw_continue => return self.parseLoopExit(),
         .kw_try => .try_expr,
         .minus, .bang, .ampersand => .unary,
         else => return self.parseSuffixExpr(),

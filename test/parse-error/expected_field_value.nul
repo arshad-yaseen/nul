@@ -1,0 +1,8 @@
+struct Point {
+    x: i64
+}
+
+fn drive() {
+    let p: Point = .{ 1 }
+    _ = p
+}

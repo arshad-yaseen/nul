@@ -7,7 +7,7 @@ root
         type: ident Counter
       ret: ident i64
       body: block
-        return_stmt
+        return_expr
           value: field_access hits
             lhs: ident self
     fn_decl bump
@@ -27,7 +27,7 @@ root
     fn_decl zero pub
       ret: ident Counter
       body: block
-        return_stmt
+        return_expr
           value: struct_literal
             struct_field_init hits
               value: number_literal 0
@@ -46,7 +46,7 @@ root
         rhs: call
           callee: field_access zero
             lhs: ident Counter
-      return_stmt
+      return_expr
         value: call
           callee: field_access total
             lhs: ident c

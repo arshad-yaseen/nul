@@ -1,0 +1,5 @@
+fn one_bad(1: i64) {
+}
+
+fn bad_among_good(a: i64, 2, b: i64) {
+}

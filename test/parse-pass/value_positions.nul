@@ -1,0 +1,55 @@
+// 'if' and the three ways out are expressions, so they parse where a value
+// parses. A block is still only reachable as an arm, never by starting one.
+
+fn expression_body(a: i64, b: i64) i64 = if a > b { a } else { b }
+
+fn bound(strict: bool) i64 {
+    let limit: i64 = if strict { 10 } else { 100 }
+    return limit
+}
+
+fn chained(n: i64) i64 {
+    let grade: i64 = if n > 90 { 1 } else if n > 50 { 2 } else { 3 }
+    return grade
+}
+
+fn nested_arm(a: bool, b: bool) i64 {
+    let n: i64 = if a { if b { 1 } else { 2 } } else { 3 }
+    return n
+}
+
+fn arm_with_statements(c: bool) i64 {
+    let n: i64 = if c {
+        let base = 8000
+        base + 80
+    } else {
+        0
+    }
+    return n
+}
+
+fn ways_out(opt: ?i64, may: !i64) i64 {
+    let a = opt orelse return 0
+    let b = may catch return 1
+    return a + b
+}
+
+fn in_a_loop(limit: i64, opt: ?i64) i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < limit {
+        i = i + 1
+        let step = opt orelse break
+        if i == 3 { continue }
+        total = total + step * i
+    }
+    return total
+}
+
+fn as_an_argument(c: bool) i64 {
+    return take(if c { 1 } else { 2 })
+}
+
+fn take(n: i64) i64 {
+    return n
+}

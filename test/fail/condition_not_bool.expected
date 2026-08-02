@@ -1,0 +1,20 @@
+error[E0229]: this condition is i64, not a bool
+ --> test/fail/condition_not_bool.nul:2:8
+  |
+2 |     if n {
+  |        ^ not a bool
+
+error[E0229]: this condition is i64, not a bool
+ --> test/fail/condition_not_bool.nul:9:11
+  |
+9 |     while n {
+  |           ^ not a bool
+
+error[E0229]: this condition is ?i64, not a bool
+  --> test/fail/condition_not_bool.nul:16:8
+   |
+16 |     if maybe {
+   |        ^^^^^ not a bool
+   |
+   = help: capture the payload instead: 'if x |v| { }'
+

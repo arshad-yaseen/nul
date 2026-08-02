@@ -1,0 +1,11 @@
+fn risky(seed: i64) !i64 {
+    if seed > 4 {
+        return error.TooRisky
+    }
+    return seed
+}
+
+fn drive(seed: i64, opt: ?i64) {
+    risky(seed) catch {}
+    opt orelse 0
+}

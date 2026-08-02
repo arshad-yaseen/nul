@@ -4,5 +4,5 @@ error[E0227]: this can fail, and nothing here handles it
 6 |     risky()
   |     ^^^^^^^ an unhandled error
   |
-  = help: 'try' passes it up, 'catch' handles it, and 'catch {}' drops it
+  = help: 'try' passes it up, and 'catch' handles it here
 

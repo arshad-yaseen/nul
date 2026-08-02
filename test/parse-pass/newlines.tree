@@ -25,7 +25,7 @@ root
       assign
         lhs: ident _
         rhs: ident compared
-      return_stmt
+      return_expr
         value: ident sum
   fn_decl commented
     param a
@@ -38,7 +38,7 @@ root
         init: binary add
           lhs: ident a
           rhs: number_literal 1
-      return_stmt
+      return_expr
         value: binary add
           lhs: ident x
           rhs: ident y
@@ -47,7 +47,7 @@ root
       type: ident i64
     ret: ident i64
     body: block
-      return_stmt
+      return_expr
         value: ident a
   fn_decl packed_block
     param a
@@ -56,5 +56,5 @@ root
     body: block
       var_decl b let
         init: ident a
-      return_stmt
+      return_expr
         value: ident b

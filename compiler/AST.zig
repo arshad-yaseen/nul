@@ -102,11 +102,11 @@ pub const Node = struct {
         block,
         assign,
         defer_stmt,
-        if_stmt,
+        if_expr,
         while_stmt,
-        break_stmt,
-        continue_stmt,
-        return_stmt,
+        break_expr,
+        continue_expr,
+        return_expr,
         /// The `v` of `|v|`, on an `if` or a `catch`.
         capture,
 
@@ -279,11 +279,11 @@ pub const View = union(enum) {
     block: []const Node.Index,
     assign: Pair,
     defer_stmt: Node.Index,
-    if_stmt: If,
+    if_expr: If,
     while_stmt: While,
-    break_stmt: Token.Index,
-    continue_stmt: Token.Index,
-    return_stmt: Node.OptionalIndex,
+    break_expr: Token.Index,
+    continue_expr: Token.Index,
+    return_expr: Node.OptionalIndex,
     capture: Token.Index,
 
     ident: Token.Index,
@@ -340,7 +340,7 @@ pub const View = union(enum) {
     pub const TypedName = struct { name_token: Token.Index, type_expr: Node.Index };
     pub const NamedValue = struct { name_token: Token.Index, value: Node.Index };
     pub const Pair = struct { lhs: Node.Index, rhs: Node.Index };
-    /// `else_node` is a block, or another `if_stmt` for a chained `else if`.
+    /// `else_node` is a block, or another `if_expr` for `else if`.
     pub const If = struct {
         cond: Node.Index,
         capture: Node.OptionalIndex,
@@ -426,9 +426,9 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .rhs = data.node_and_node[1],
         } },
         .defer_stmt => .{ .defer_stmt = data.node },
-        .if_stmt => blk: {
+        .if_expr => blk: {
             var payload = tree.fields(data.extra);
-            break :blk .{ .if_stmt = .{
+            break :blk .{ .if_expr = .{
                 .cond = payload.node(),
                 .capture = payload.optNode(),
                 .then_block = payload.node(),
@@ -443,9 +443,9 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
                 .body = payload.node(),
             } };
         },
-        .break_stmt => .{ .break_stmt = main },
-        .continue_stmt => .{ .continue_stmt = main },
-        .return_stmt => .{ .return_stmt = data.opt_node },
+        .break_expr => .{ .break_expr = main },
+        .continue_expr => .{ .continue_expr = main },
+        .return_expr => .{ .return_expr = data.opt_node },
         .capture => .{ .capture = main },
 
         .ident => .{ .ident = main },
@@ -625,7 +625,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
         const main = tree.nodeMainToken(current);
         switch (tree.viewOf(current)) {
             .root => return if (side == .leftmost) .first else main,
-            .err, .type_param, .capture, .break_stmt, .continue_stmt => return main,
+            .err, .type_param, .capture, .break_expr, .continue_expr => return main,
             .ident, .number_literal, .null_literal => return main,
             .bool_literal => |it| return it.token,
             .error_value => |token| {
@@ -676,7 +676,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => return main,
                 .rightmost => current = child,
             },
-            .if_stmt => |it| switch (side) {
+            .if_expr => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.else_node.unwrap() orelse it.then_block,
             },
@@ -684,7 +684,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => return main,
                 .rightmost => current = it.body,
             },
-            .return_stmt => |operand| switch (side) {
+            .return_expr => |operand| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = operand.unwrap() orelse return main,
             },

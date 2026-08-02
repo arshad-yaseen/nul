@@ -1,9 +1,6 @@
-fn main() u8 {
-    let cool = 0
-
-    if !cool {
-        return 10
-    }
-
-    return 8
+fn through_a_capture() i64 {
+    let c = 10 == 10
+    let a = 10
+    let b = 10
+    let n: i64 = if c { a } else { b }
 }

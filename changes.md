@@ -209,8 +209,62 @@ let n = if c { count() } else { break }
 A rewrite of the messiest corner of `Check.zig`, not an addition to it. `checkRescue`'s two
 paths and the liveness bookkeeping that decides whether the fallback handed a value back or
 fell through collapse into one path. `checkOrelse`'s separate constant-null branch goes.
-`checkIf` becomes one function taking a type hint, and the statement form is the call that
-passes none.
+`checkScopedBlock` and `checkBlockBody` become one `checkBlockValue`. `checkIf` becomes one
+function taking a type hint, and the statement form is the call that passes none.
+
+Statement position is spelled as a hint of `nothing_type`, which is not a trick: it is
+already the type of what a statement produces. That one value is what tells an `if` to keep
+its arms and drop its value.
+
+### Handling a failure is not acknowledging a value
+
+`catch` and `orelse` settle one path. They say nothing about the value on the other one, and
+the language's rule is that **every produced value is bound, returned, or explicitly
+discarded**. So a `catch` in statement position whose payload is not nothing is refused:
+
+```nul
+risky() catch {}         // refused when 'risky' returns '!i64'
+_ = risky() catch 0      // two drops, two marks
+save() catch {}          // clean, because 'FileError!' has no payload to drop
+```
+
+Without this, `quiet()` would be refused for throwing away an `i64` while
+`risky() catch {}` threw one away silently, which is the same mistake wearing a `catch`.
+Keeping the invariant whole also keeps the one hook a must-use rule would ever need: there is
+no path by which a value reaches nobody without saying so.
+
+The friction lands where it should. A function called for its effect returns `E!`, and
+`catch {}` on that is clean. A function called for a value you then ignore is rare, and being
+made to write it down is the point.
+
+Two consequences worth writing down.
+
+**An arm has to produce something a slot can be made of.** Three values cannot back storage,
+and they are one question rather than three: a bare number, a bare null, and nothing at all.
+`typeCanHold` asks it once.
+
+```nul
+let n = if c { 10 } else { 100 }              // refused, no type
+let n = if c { null } else { null }           // refused, no type
+let n = if c { effect() } else { effect() }   // refused, no value
+let n: i64 = if c { 10 } else { 100 }         // fine
+```
+
+The first is the rule `var x = 5` already follows, and the fix is the same annotation.
+Defaulting to `i64` was considered and left alone, because it would be the one place in the
+language where something converts on its own. It stays available as a strictly more
+permissive change later.
+
+**The guard pattern costs a round trip.** `let v = opt orelse { return 0 }` used to lower
+without a slot, because the old code checked the fallback first and noticed it left. The
+uniform lowering stores and loads instead. The trade is deliberate: a C compiler removes that
+store and load in its first pass, and keeping a special case in the checker to save an
+instruction the backend deletes is the wrong direction.
+
+**A slot is typed after its arms are read.** An `if` in value position needs its slot before
+the branch, which is before either arm has said what type it is, so the slot is emitted
+untyped and named once at the join. That is the only instruction the builder rewrites, and
+it is asserted to be a `local`.
 
 ## Part three: enums
 
@@ -368,6 +422,40 @@ Rules for the cases themselves:
   same debt as compiler code for it.
 - **The whole suite passes before the next step starts.** `zig build test` green, with no
   known failures carried forward and nothing skipped.
+- **Every diagnostic the compiler can emit has a case.** The check is mechanical: the set of
+  codes reachable in `compiler/` minus the set appearing in `test/**/*.expected` is empty. A
+  code with no test is a message nobody has read.
+- **A cascade is a bug in the grammar, not a property of the test.** When one mistake
+  produces a page of errors, the production that owns the construct gave up instead of
+  recovering. Fix the production.
+- **A step that adds a new shape of value is not done until a machine has looked for the
+  consumers that do not know about it.** Hand written cases cover what the author thought of,
+  which is the one thing that cannot find what the author forgot. Adding `.never` left three
+  consumers assuming a value always arrives, and a generated corpus found seventy programs
+  that reached them in about a minute.
+
+Two things do that looking, and both are in the build.
+
+**`test/fuzz.zig`** splices fragments into random programs and asks one question:
+
+> For any input, the compiler reports diagnostics or produces working output, and never
+> panics.
+
+It knows nothing about what any construct means, which is exactly why it finds the
+interactions nobody predicted. A short run rides on every `zig build test`, and
+`zig build fuzz -- --iterations 50000 --seed 7` is the long one. A failure is a panic, so
+the run stops where it broke, and `--trace` names the program to reproduce.
+
+**`compiler/Verify.zig`** says out loud what a finished body must be true of, at the seam
+where the checker hands it over: every surviving block ends, every operand names an
+instruction that exists, every terminator names a block that exists, a `scope_end` names a
+`scope_begin`, and in a program that reported nothing, every type is a type all the way down.
+That last one is not the same as `isType`. `*var poison` passes `isType` and panics the
+backend two stages later, which is how it was found.
+
+The value of a verifier is that it fires. This one was tested by putting the bug back: with
+the guard removed, the failure lands on `Verify.zig` naming the body, instead of inside
+`EmitC` naming nothing.
 
 ## Part six: order of work
 

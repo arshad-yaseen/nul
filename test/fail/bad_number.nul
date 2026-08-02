@@ -1,1 +1,3 @@
-let stray = 12abc
+let unreadable = 12abc
+let too_wide = 170141183460469231731687303715884105728
+let too_large_a_float = 1e999

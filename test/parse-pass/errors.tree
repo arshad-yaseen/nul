@@ -14,14 +14,14 @@ root
               lhs: ident io
             arg: ident arena
             arg: ident path
-      return_stmt
+      return_expr
         value: ident value
   fn_decl fallback
     param arena
       type: ident Arena
     ret: ident i64
     body: block
-      return_stmt
+      return_expr
         value: catch_expr
           lhs: call
             callee: ident read
@@ -55,14 +55,14 @@ root
       assign
         lhs: ident _
         rhs: ident e
-      return_stmt
+      return_expr
         value: error_value OutOfRange
   fn_decl chained
     param arena
       type: ident Arena
     ret: ident i64
     body: block
-      return_stmt
+      return_expr
         value: catch_expr
           lhs: call
             callee: ident read

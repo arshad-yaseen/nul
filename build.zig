@@ -85,6 +85,27 @@ pub fn build(b: *std.Build) void {
     });
     runner.stack_size = analysis_stack_bytes;
 
+    const fuzzer = b.addExecutable(.{
+        .name = "fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "compiler", .module = compiler }},
+        }),
+    });
+    fuzzer.stack_size = analysis_stack_bytes;
+
+    const fuzz_short = b.addRunArtifact(fuzzer);
+    fuzz_short.setCwd(b.path("."));
+    fuzz_short.addArgs(&.{ "--iterations", "512" });
+    test_step.dependOn(&fuzz_short.step);
+
+    const fuzz_long = b.addRunArtifact(fuzzer);
+    fuzz_long.setCwd(b.path("."));
+    if (b.args) |args| fuzz_long.addArgs(args);
+    b.step("fuzz", "Compile random programs, looking for a panic").dependOn(&fuzz_long.step);
+
     const file_tests = b.addRunArtifact(runner);
     addTestFiles(b, file_tests);
     test_step.dependOn(&file_tests.step);

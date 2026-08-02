@@ -95,7 +95,7 @@ fn node(
             try node(ast, writer, it.lhs, below, "lhs");
             try node(ast, writer, it.rhs, below, "rhs");
         },
-        .if_stmt => |it| {
+        .if_expr => |it| {
             try writer.writeByte('\n');
             try node(ast, writer, it.cond, below, "cond");
             if (it.capture.unwrap()) |bound| try node(ast, writer, bound, below, "capture");
@@ -108,10 +108,10 @@ fn node(
             if (it.capture.unwrap()) |capture| try node(ast, writer, capture, below, "capture");
             try node(ast, writer, it.body, below, "body");
         },
-        .break_stmt, .continue_stmt, .null_literal, .err => {
+        .break_expr, .continue_expr, .null_literal, .err => {
             try writer.writeByte('\n');
         },
-        .return_stmt => |operand| {
+        .return_expr => |operand| {
             try writer.writeByte('\n');
             if (operand.unwrap()) |value| try node(ast, writer, value, below, "value");
         },

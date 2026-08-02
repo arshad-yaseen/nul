@@ -39,7 +39,7 @@ root
             arg: instance
               base: ident Box
               arg: ident T
-      return_stmt
+      return_expr
         value: ident b
   fn_decl use_them
     param arena

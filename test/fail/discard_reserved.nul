@@ -1,0 +1,13 @@
+fn bound() i64 {
+    let _ = 5
+    return 0
+}
+
+fn read(n: i64) i64 {
+    return n + _
+}
+
+fn written(n: i64) i64 {
+    _.x = n
+    return 0
+}

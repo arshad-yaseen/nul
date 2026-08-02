@@ -253,7 +253,7 @@ fn body(emit: *EmitC, func: *const IR.Func) Error!void {
         for (block.first..block.end()) |raw| {
             try emit.inst(func, @intCast(raw));
         }
-        try emit.terminator(block.terminator, @intCast(index + 1));
+        try emit.terminator(func, block.terminator, @intCast(index + 1));
     }
     try emit.out.writeAll("}\n\n");
 }
@@ -290,15 +290,13 @@ fn temporaries(emit: *EmitC, func: *const IR.Func) Error!void {
             if (produced == .poison) continue;
 
             try emit.out.writeAll("    ");
-            try emit.writeType(produced);
-            try emit.out.print(" t{d};\n", .{index});
-
-            // a slot is the storage its pointer names, declared beside it
+            // a local is declared as its storage, and addressed where asked
             if (func.insts.items(.tag)[index] == .local) {
-                try emit.out.writeAll("    ");
                 try emit.writeType(emit.comp.pool.keyOf(produced).pointer.child);
-                try emit.out.print(" t{d}_slot;\n", .{index});
+            } else {
+                try emit.writeType(produced);
             }
+            try emit.out.print(" t{d};\n", .{index});
         }
     }
 }
@@ -312,43 +310,43 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
     switch (tag) {
         // the parameter is already the C parameter, and a scope is the
         // arena checker's business rather than the backend's
-        .param, .scope_begin, .scope_end => return,
+        // a local is its own declaration, and a scope is the checker's business
+        .param, .local, .scope_begin, .scope_end => return,
 
-        .local => try emit.out.print("    t{d} = &t{d}_slot;\n", .{ index, index }),
         .load => {
-            try emit.out.print("    t{d} = *", .{index});
-            try emit.ref(data.un);
+            try emit.out.print("    t{d} = ", .{index});
+            try emit.place(func, data.un);
             try emit.out.writeAll(";\n");
         },
         .store => {
-            try emit.out.writeAll("    *");
-            try emit.ref(data.bin.lhs);
+            try emit.out.writeAll("    ");
+            try emit.place(func, data.bin.lhs);
             try emit.out.writeAll(" = ");
-            try emit.ref(data.bin.rhs);
+            try emit.ref(func, data.bin.rhs);
             try emit.out.writeAll(";\n");
         },
         .field_ptr => {
             try emit.out.print("    t{d} = &(", .{index});
-            try emit.ref(data.field.base);
-            try emit.out.print("->{s});\n", .{comp.rowName(data.field.row)});
+            try emit.place(func, data.field.base);
+            try emit.out.print(").{s};\n", .{comp.rowName(data.field.row)});
         },
         .field_val => {
             try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(data.field.base);
+            try emit.ref(func, data.field.base);
             try emit.out.print(").{s};\n", .{comp.rowName(data.field.row)});
         },
 
-        .add, .sub, .mul => try emit.arithmetic(index, tag, produced, data),
+        .add, .sub, .mul => try emit.arithmetic(func, index, tag, produced, data),
         .div, .mod => {
             try emit.out.print("    t{d} = ", .{index});
-            try emit.ref(data.bin.lhs);
+            try emit.ref(func, data.bin.lhs);
             try emit.out.writeAll(if (tag == .div) " / " else " % ");
-            try emit.ref(data.bin.rhs);
+            try emit.ref(func, data.bin.rhs);
             try emit.out.writeAll(";\n");
         },
         .cmp_eq, .cmp_ne, .cmp_lt, .cmp_le, .cmp_gt, .cmp_ge => {
             try emit.out.print("    t{d} = ", .{index});
-            try emit.ref(data.bin.lhs);
+            try emit.ref(func, data.bin.lhs);
             try emit.out.writeAll(switch (tag) {
                 .cmp_eq => " == ",
                 .cmp_ne => " != ",
@@ -358,17 +356,17 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
                 .cmp_ge => " >= ",
                 else => unreachable,
             });
-            try emit.ref(data.bin.rhs);
+            try emit.ref(func, data.bin.rhs);
             try emit.out.writeAll(";\n");
         },
         .negate => {
             try emit.out.print("    t{d} = -", .{index});
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(";\n");
         },
         .not => {
             try emit.out.print("    t{d} = !", .{index});
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(";\n");
         },
 
@@ -384,7 +382,7 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
             }
             for (call.args, 0..) |argument, position| {
                 if (position > 0) try emit.out.writeAll(", ");
-                try emit.ref(argument);
+                try emit.ref(func, argument);
             }
             try emit.out.writeAll(");\n");
         },
@@ -398,7 +396,7 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
             for (fields, 0..) |field, position| {
                 if (position > 0) try emit.out.writeAll(", ");
                 try emit.out.print(".{s} = ", .{comp.pool.stringText(rows[position].name)});
-                try emit.ref(field);
+                try emit.ref(func, field);
             }
             try emit.out.writeAll(" };\n");
         },
@@ -407,41 +405,41 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
             try emit.out.print("    t{d} = (", .{index});
             try emit.typeName(produced);
             try emit.out.writeAll("){ .has = true, .value = ");
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(" };\n");
         },
         .has_value => {
             try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(").has;\n");
         },
         .unwrap_value, .unwrap_ok => {
             try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(").value;\n");
         },
         .wrap_ok => {
             try emit.out.print("    t{d} = (", .{index});
             try emit.typeName(produced);
             try emit.out.writeAll("){ .err = 0, .value = ");
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(" };\n");
         },
         .wrap_err => {
             try emit.out.print("    t{d} = (", .{index});
             try emit.typeName(produced);
             try emit.out.writeAll("){ .err = ");
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(" };\n");
         },
         .is_error => {
             try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(").err != 0;\n");
         },
         .unwrap_err => {
             try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(data.un);
+            try emit.ref(func, data.un);
             try emit.out.writeAll(").err;\n");
         },
 
@@ -461,6 +459,7 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
 /// under any conforming compiler rather than under one flag of one of them.
 fn arithmetic(
     emit: *EmitC,
+    func: *const IR.Func,
     index: u32,
     tag: IR.Inst.Tag,
     produced: Pool.Index,
@@ -478,14 +477,14 @@ fn arithmetic(
         try emit.out.writeAll("(");
         try emit.writeType(produced);
         try emit.out.print(")(({s})", .{unsigned});
-        try emit.ref(data.bin.lhs);
+        try emit.ref(func, data.bin.lhs);
         try emit.out.print("{s}({s})", .{ operator, unsigned });
-        try emit.ref(data.bin.rhs);
+        try emit.ref(func, data.bin.rhs);
         try emit.out.writeAll(")");
     } else {
-        try emit.ref(data.bin.lhs);
+        try emit.ref(func, data.bin.lhs);
         try emit.out.writeAll(operator);
-        try emit.ref(data.bin.rhs);
+        try emit.ref(func, data.bin.rhs);
     }
     try emit.out.writeAll(";\n");
 }
@@ -502,7 +501,12 @@ fn unsignedOf(index: Pool.Index) ?[]const u8 {
     };
 }
 
-fn terminator(emit: *EmitC, term: IR.Terminator, next: u32) Error!void {
+fn terminator(
+    emit: *EmitC,
+    func: *const IR.Func,
+    term: IR.Terminator,
+    next: u32,
+) Error!void {
     switch (term) {
         .none => unreachable,
         .jump => |target| {
@@ -510,7 +514,7 @@ fn terminator(emit: *EmitC, term: IR.Terminator, next: u32) Error!void {
         },
         .branch => |branch| {
             try emit.out.writeAll("    if (");
-            try emit.ref(branch.cond);
+            try emit.ref(func, branch.cond);
             try emit.out.print(") goto b{d}; else goto b{d};\n", .{
                 branch.then_block.int(), branch.else_block.int(),
             });
@@ -520,7 +524,7 @@ fn terminator(emit: *EmitC, term: IR.Terminator, next: u32) Error!void {
                 try emit.out.writeAll("    return;\n");
             } else {
                 try emit.out.writeAll("    return ");
-                try emit.ref(value);
+                try emit.ref(func, value);
                 try emit.out.writeAll(";\n");
             }
         },
@@ -529,12 +533,36 @@ fn terminator(emit: *EmitC, term: IR.Terminator, next: u32) Error!void {
 
 // operands
 
-fn ref(emit: *EmitC, operand: IR.Ref) Error!void {
+/// An operand as a value. A local names storage, so an operand wants its
+/// address.
+fn ref(emit: *EmitC, func: *const IR.Func, operand: IR.Ref) Error!void {
     assert(operand != .none);
     switch (operand.unwrap()) {
-        .inst => |index| try emit.out.print("t{d}", .{index.int()}),
+        .inst => |index| {
+            if (func.insts.items(.tag)[index.int()] == .local) {
+                try emit.out.print("&t{d}", .{index.int()});
+            } else {
+                try emit.out.print("t{d}", .{index.int()});
+            }
+        },
         .constant => |value| try emit.constant(value),
     }
+}
+
+/// The storage a pointer names, which for a local is the local itself.
+fn place(emit: *EmitC, func: *const IR.Func, operand: IR.Ref) Error!void {
+    assert(operand != .none);
+    switch (operand.unwrap()) {
+        .inst => |index| {
+            if (func.insts.items(.tag)[index.int()] == .local) {
+                try emit.out.print("t{d}", .{index.int()});
+                return;
+            }
+        },
+        .constant => {},
+    }
+    try emit.out.writeByte('*');
+    try emit.ref(func, operand);
 }
 
 fn constant(emit: *EmitC, value: Pool.Index) Error!void {

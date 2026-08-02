@@ -6,3 +6,27 @@ error[E0224]: this is ?Point; reach inside it first
   |
   = help: 'if x |v| { }' and 'x orelse ...' unwrap an optional
 
+error[E0226]: this is !Point; it can still fail
+  --> test/fail/optional_reach.nul:11:12
+   |
+11 |     return may.x
+   |            ^^^^^ handle the error first
+   |
+   = help: 'try' passes the error up, 'catch' handles it here
+
+error[E0224]: this is ?Point; reach inside it first
+  --> test/fail/optional_reach.nul:15:5
+   |
+15 |     maybe.x = 1
+   |     ^^^^^^^ may be null
+   |
+   = help: 'if x |v| { }' and 'x orelse ...' unwrap an optional
+
+error[E0226]: this is !Point; it can still fail
+  --> test/fail/optional_reach.nul:19:5
+   |
+19 |     may.x = 1
+   |     ^^^^^ handle the error first
+   |
+   = help: 'try' passes the error up, 'catch' handles it here
+

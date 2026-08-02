@@ -30,12 +30,11 @@ fn handled(seed: i64) {
 }
 
 fn shrugged(seed: i64) {
-    refuse(seed) catch {
-        report()
-    }
+    _ = refuse(seed) catch report_and_zero()
 }
 
-fn report() {
+fn report_and_zero() i64 {
+    return 0
 }
 
 // '!?T' is the nesting that means something, so it is the one '?!T' points at.

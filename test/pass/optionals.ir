@@ -2,18 +2,18 @@ fn fallback(maybe: ?i64) i64
 b0:
   %0 = param maybe : ?i64
   %1 = scope_begin
-  %2 = has_value %0 : bool
-  %3 = local : *var i64
-  branch %2, b1, b2
+  %2 = local : *var i64
+  %3 = has_value %0 : bool
+  branch %3, b1, b2
 b1:
   %4 = unwrap_value %0 : i64
-  %5 = store %3, %4
+  %5 = store %2, %4
   jump b3
 b2:
-  %6 = store %3, 0:i64
+  %6 = store %2, 0:i64
   jump b3
 b3:
-  %7 = load %3 : i64
+  %7 = load %2 : i64
   %8 = scope_end %1
   return %7
 
@@ -21,17 +21,22 @@ fn guarded(maybe: ?i64) i64
 b0:
   %0 = param maybe : ?i64
   %1 = scope_begin
-  %2 = has_value %0 : bool
-  branch %2, b1, b2
+  %2 = local : *var i64
+  %3 = has_value %0 : bool
+  branch %3, b1, b2
 b1:
-  %6 = unwrap_value %0 : i64
-  %7 = scope_end %1
-  return %6
+  %4 = unwrap_value %0 : i64
+  %5 = store %2, %4
+  jump b3
 b2:
-  %3 = scope_begin
-  %4 = scope_end %3
-  %5 = scope_end %1
+  %6 = scope_begin
+  %7 = scope_end %6
+  %8 = scope_end %1
   return -1:i64
+b3:
+  %9 = load %2 : i64
+  %10 = scope_end %1
+  return %9
 
 fn tested(maybe: ?i64) i64
 b0:

@@ -1,0 +1,9 @@
+fn breaking() i64 {
+    break
+    return 0
+}
+
+fn continuing() i64 {
+    continue
+    return 0
+}

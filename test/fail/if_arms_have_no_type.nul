@@ -1,0 +1,18 @@
+fn bare_numbers(c: bool) i64 {
+    let n = if c { 10 } else { 100 }
+    return n
+}
+
+fn bare_nulls(c: bool) i64 {
+    let n = if c { null } else { null }
+    _ = n
+    return 0
+}
+
+fn nothing_at_all(c: bool) i64 {
+    let n = if c { effect() } else { effect() }
+    _ = n
+    return 0
+}
+
+fn effect() {}

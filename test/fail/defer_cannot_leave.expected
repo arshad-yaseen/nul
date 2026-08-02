@@ -1,0 +1,20 @@
+error[E0245]: a 'defer' runs on the way out, so it cannot leave again
+ --> test/fail/defer_cannot_leave.nul:6:11
+  |
+6 |     defer return 1
+  |           ^^^^^^^^ no 'return' here
+
+error[E0245]: a 'defer' runs on the way out, so it cannot leave again
+  --> test/fail/defer_cannot_leave.nul:12:15
+   |
+12 |         defer break
+   |               ^^^^^ not allowed here
+
+error[E0245]: a 'defer' runs on the way out, so 'try' cannot leave from inside one
+  --> test/fail/defer_cannot_leave.nul:19:11
+   |
+19 |     defer try risky()
+   |           ^^^^^^^^^^^ no 'try' here
+   |
+   = help: handle the error in the defer with 'catch'
+

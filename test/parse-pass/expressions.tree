@@ -59,7 +59,7 @@ root
                 lhs: ident a
                 rhs: ident b
           rhs: ident c
-      return_stmt
+      return_expr
         value: binary add
           lhs: ident arithmetic
           rhs: ident grouped

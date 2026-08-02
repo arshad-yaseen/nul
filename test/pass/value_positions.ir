@@ -1,0 +1,383 @@
+fn expression_body(a: i64, b: i64) i64
+b0:
+  %0 = param a : i64
+  %1 = param b : i64
+  %2 = scope_begin
+  %3 = local : *var i64
+  %4 = cmp_gt %0, %1 : bool
+  branch %4, b1, b2
+b1:
+  %5 = scope_begin
+  %6 = scope_end %5
+  %7 = store %3, %0
+  jump b3
+b2:
+  %8 = scope_begin
+  %9 = scope_end %8
+  %10 = store %3, %1
+  jump b3
+b3:
+  %11 = load %3 : i64
+  %12 = scope_end %2
+  return %11
+
+fn tail_of_a_block(c: bool) i64
+b0:
+  %0 = param c : bool
+  %1 = scope_begin
+  %2 = local : *var i64
+  branch %0, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = scope_end %3
+  %5 = store %2, 8080:i64
+  jump b3
+b2:
+  %6 = scope_begin
+  %7 = scope_end %6
+  %8 = store %2, 0:i64
+  jump b3
+b3:
+  %9 = load %2 : i64
+  %10 = scope_end %1
+  return %9
+
+fn one_arm_leaves(c: bool) i64
+b0:
+  %0 = param c : bool
+  %1 = scope_begin
+  %2 = local : *var i64
+  branch %0, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = scope_end %3
+  %5 = store %2, 1:i64
+  jump b3
+b2:
+  %6 = scope_begin
+  %7 = scope_end %6
+  %8 = scope_end %1
+  return 0:i64
+b3:
+  %9 = load %2 : i64
+  %10 = scope_end %1
+  return %9
+
+fn both_arms_leave(c: bool) i64
+b0:
+  %0 = param c : bool
+  %1 = scope_begin
+  branch %0, b1, b2
+b1:
+  %2 = scope_begin
+  %3 = scope_end %2
+  %4 = scope_end %1
+  return 1:i64
+b2:
+  %5 = scope_begin
+  %6 = scope_end %5
+  %7 = scope_end %1
+  return 2:i64
+
+fn through_a_capture(opt: ?i64) i64
+b0:
+  %0 = param opt : ?i64
+  %1 = scope_begin
+  %2 = local : *var i64
+  %3 = has_value %0 : bool
+  branch %3, b1, b2
+b1:
+  %4 = unwrap_value %0 : i64
+  %5 = scope_begin
+  %6 = mul %4, 2:i64 : i64
+  %7 = scope_end %5
+  %8 = store %2, %6
+  jump b3
+b2:
+  %9 = scope_begin
+  %10 = scope_end %9
+  %11 = store %2, 0:i64
+  jump b3
+b3:
+  %12 = load %2 : i64
+  %13 = scope_end %1
+  return %12
+
+fn guard(opt: ?i64) i64
+b0:
+  %0 = param opt : ?i64
+  %1 = scope_begin
+  %2 = local : *var i64
+  %3 = has_value %0 : bool
+  branch %3, b1, b2
+b1:
+  %4 = unwrap_value %0 : i64
+  %5 = store %2, %4
+  jump b3
+b2:
+  %6 = scope_end %1
+  return 0:i64
+b3:
+  %7 = load %2 : i64
+  %8 = scope_end %1
+  return %7
+
+fn rescue(may: !i64) i64
+b0:
+  %0 = param may : !i64
+  %1 = scope_begin
+  %2 = local : *var i64
+  %3 = is_error %0 : bool
+  branch %3, b2, b1
+b1:
+  %4 = unwrap_ok %0 : i64
+  %5 = store %2, %4
+  jump b3
+b2:
+  %6 = scope_end %1
+  return -1:i64
+b3:
+  %7 = load %2 : i64
+  %8 = scope_end %1
+  return %7
+
+fn fallback_with_a_tail(may: !i64) i64
+b0:
+  %0 = param may : !i64
+  %1 = scope_begin
+  %2 = local : *var i64
+  %3 = is_error %0 : bool
+  branch %3, b2, b1
+b1:
+  %4 = unwrap_ok %0 : i64
+  %5 = store %2, %4
+  jump b3
+b2:
+  %6 = unwrap_err %0 : an error
+  %7 = scope_begin
+  %8 = scope_end %7
+  %9 = store %2, 8080:i64
+  jump b3
+b3:
+  %10 = load %2 : i64
+  %11 = scope_end %1
+  return %10
+
+fn statement_position(c: bool, out: *var Cell)
+b0:
+  %0 = param c : bool
+  %1 = param out : *var Cell
+  %2 = scope_begin
+  branch %0, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = field_ptr %1, .value : *var i64
+  %5 = store %4, 1:i64
+  %6 = scope_end %3
+  jump b3
+b2:
+  %7 = scope_begin
+  %8 = field_ptr %1, .value : *var i64
+  %9 = store %8, 2:i64
+  %10 = scope_end %7
+  jump b3
+b3:
+  %11 = scope_end %2
+  return
+
+fn dropped(may: !i64)
+b0:
+  %0 = param may : !i64
+  %1 = scope_begin
+  %2 = local : *var i64
+  %3 = is_error %0 : bool
+  branch %3, b2, b1
+b1:
+  %4 = unwrap_ok %0 : i64
+  %5 = store %2, %4
+  jump b3
+b2:
+  %6 = store %2, 0:i64
+  jump b3
+b3:
+  %7 = load %2 : i64
+  %8 = scope_end %1
+  return
+
+fn leaves_a_loop(limit: i64, opt: ?i64) i64
+b0:
+  %0 = param limit : i64
+  %1 = param opt : ?i64
+  %2 = scope_begin
+  %3 = local total : *var i64
+  %4 = store %3, 0:i64
+  %5 = local i : *var i64
+  %6 = store %5, 0:i64
+  jump b1
+b1:
+  %7 = load %5 : i64
+  %8 = cmp_lt %7, %0 : bool
+  branch %8, b2, b3
+b2:
+  %9 = scope_begin
+  %10 = load %5 : i64
+  %11 = add %10, 1:i64 : i64
+  %12 = store %5, %11
+  %13 = local : *var i64
+  %14 = has_value %1 : bool
+  branch %14, b4, b5
+b3:
+  %30 = load %3 : i64
+  %31 = scope_end %2
+  return %30
+b4:
+  %15 = unwrap_value %1 : i64
+  %16 = store %13, %15
+  jump b6
+b5:
+  %17 = scope_end %9
+  jump b3
+b6:
+  %18 = load %13 : i64
+  %19 = load %5 : i64
+  %20 = cmp_eq %19, 3:i64 : bool
+  branch %20, b7, b8
+b7:
+  %21 = scope_begin
+  %22 = scope_end %21
+  %23 = scope_end %9
+  jump b1
+b8:
+  jump b9
+b9:
+  %24 = load %3 : i64
+  %25 = load %5 : i64
+  %26 = mul %18, %25 : i64
+  %27 = add %24, %26 : i64
+  %28 = store %3, %27
+  %29 = scope_end %9
+  jump b1
+
+fn take(n: i64) i64
+b0:
+  %0 = param n : i64
+  %1 = scope_begin
+  %2 = scope_end %1
+  return %0
+
+fn as_an_argument(c: bool) i64
+b0:
+  %0 = param c : bool
+  %1 = scope_begin
+  %2 = local : *var i64
+  branch %0, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = scope_end %3
+  %5 = store %2, 1:i64
+  jump b3
+b2:
+  %6 = scope_begin
+  %7 = scope_end %6
+  %8 = store %2, 2:i64
+  jump b3
+b3:
+  %9 = load %2 : i64
+  %10 = call take(%9) : i64
+  %11 = scope_end %1
+  return %10
+
+fn annotated_null(c: bool) ?i64
+b0:
+  %0 = param c : bool
+  %1 = scope_begin
+  %2 = local : *var ?i64
+  branch %0, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = scope_end %3
+  %5 = store %2, null
+  jump b3
+b2:
+  %6 = scope_begin
+  %7 = scope_end %6
+  %8 = wrap_optional 5:i64 : ?i64
+  %9 = store %2, %8
+  jump b3
+b3:
+  %10 = load %2 : ?i64
+  %11 = scope_end %1
+  return %10
+
+fn every_arm_leaves(a: bool, b: bool) i64
+b0:
+  %0 = param a : bool
+  %1 = param b : bool
+  %2 = scope_begin
+  %3 = local : *var i64
+  branch %0, b1, b2
+b1:
+  %4 = scope_begin
+  %5 = local : *var i64
+  branch %1, b4, b5
+b2:
+  %15 = scope_begin
+  %16 = scope_end %15
+  %17 = store %3, 3:i64
+  jump b3
+b3:
+  %18 = load %3 : i64
+  %19 = scope_end %2
+  return %18
+b4:
+  %6 = scope_begin
+  %7 = scope_end %6
+  %8 = scope_end %4
+  %9 = scope_end %2
+  return 1:i64
+b5:
+  %10 = scope_begin
+  %11 = scope_end %10
+  %12 = scope_end %4
+  %13 = scope_end %2
+  return 2:i64
+
+fn leaving_from_an_operand(a: i64, opt: ?i64) i64
+b0:
+  %0 = param a : i64
+  %1 = param opt : ?i64
+  %2 = scope_begin
+  %3 = local : *var i64
+  %4 = has_value %1 : bool
+  branch %4, b1, b2
+b1:
+  %5 = unwrap_value %1 : i64
+  %6 = store %3, %5
+  jump b3
+b2:
+  %7 = scope_end %2
+  return 0:i64
+b3:
+  %8 = load %3 : i64
+  %9 = add %8, 1:i64 : i64
+  %10 = add %9, %0 : i64
+  %11 = scope_end %2
+  return %10
+
+fn operand_that_never_arrives(a: i64, c: bool) i64
+b0:
+  %0 = param a : i64
+  %1 = param c : bool
+  %2 = scope_begin
+  %3 = local : *var bool
+  branch %1, b1, b2
+b1:
+  %4 = scope_begin
+  %5 = scope_end %4
+  %6 = scope_end %2
+  return 1:i64
+b2:
+  %7 = scope_begin
+  %8 = scope_end %7
+  %9 = scope_end %2
+  return 2:i64

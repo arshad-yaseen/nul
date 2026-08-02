@@ -15,7 +15,7 @@ root
           rhs: orelse_expr
             lhs: ident a
             rhs: number_literal 0
-      return_stmt
+      return_expr
         value: binary add
           lhs: ident a
           rhs: ident b
@@ -25,21 +25,21 @@ root
         child: ident i64
     ret: ident i64
     body: block
-      if_stmt
+      if_expr
         cond: ident opt
         capture: capture v
         then: block
-          return_stmt
+          return_expr
             value: ident v
         else: block
-          return_stmt
+          return_expr
             value: number_literal 0
   fn_decl plain
     param opt
       type: optional_type
         child: ident i64
     body: block
-      if_stmt
+      if_expr
         cond: ident opt
         capture: capture v
         then: block
@@ -78,7 +78,7 @@ root
             lhs: ident next
             rhs: field_access next
               lhs: ident cell
-      return_stmt
+      return_expr
         value: ident total
   fn_decl guard
     param opt
@@ -90,7 +90,7 @@ root
         init: orelse_expr
           lhs: ident opt
           rhs: block
-            return_stmt
+            return_expr
               value: number_literal 0
-      return_stmt
+      return_expr
         value: ident v

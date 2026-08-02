@@ -10,8 +10,8 @@ fn quiet() i64 {
 }
 
 fn drive() {
+    // 'catch' settles the failure, '_ =' settles the value. two drops, two marks
     _ = noisy() catch 0
-    noisy() catch {}
     _ = quiet()
     _ = 5 + 5
     let bound = quiet()

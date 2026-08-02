@@ -3,6 +3,18 @@ struct Point {
     y: i64
 }
 
-fn drive(maybe: ?Point) i64 {
+fn read_optional(maybe: ?Point) i64 {
     return maybe.x
+}
+
+fn read_fallible(may: !Point) i64 {
+    return may.x
+}
+
+fn write_optional(maybe: ?Point) {
+    maybe.x = 1
+}
+
+fn write_fallible(may: !Point) {
+    may.x = 1
 }

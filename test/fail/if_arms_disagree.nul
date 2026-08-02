@@ -1,0 +1,4 @@
+fn drive(c: bool) i64 {
+    let n: i64 = if c { 1 } else { true }
+    return n
+}

@@ -7,5 +7,5 @@ root
     doc /// This one documents the declaration below it.
     ret: ident i64
     body: block
-      return_stmt
+      return_expr
         value: number_literal 1

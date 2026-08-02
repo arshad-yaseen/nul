@@ -40,7 +40,7 @@ root
       child: pointer_type var
         child: ident Node
     body: block
-      return_stmt
+      return_expr
         value: ident b
   fn_decl returns_nothing
     param a

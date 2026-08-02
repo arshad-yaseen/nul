@@ -1,0 +1,18 @@
+error[E0211]: 'sub' cannot be applied to bool
+ --> test/fail/bad_operand.nul:1:19
+  |
+1 | let folded = true - false
+  |                   ^ wrong operand type
+
+error[E0211]: 'sub' cannot be applied to bool
+ --> test/fail/bad_operand.nul:4:14
+  |
+4 |     return a - b
+  |              ^ wrong operand type
+
+error[E0211]: '-' needs a signed number, and this is u8
+ --> test/fail/bad_operand.nul:8:12
+  |
+8 |     return -n
+  |            ^ cannot be negated
+

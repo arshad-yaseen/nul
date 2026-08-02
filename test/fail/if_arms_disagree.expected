@@ -1,0 +1,8 @@
+error[E0206]: expected i64, found bool
+ --> test/fail/if_arms_disagree.nul:2:34
+  |
+2 |     let n: i64 = if c { 1 } else { true }
+  |                                  ^^^^^^ the wrong type
+  |
+  = help: nothing converts on its own
+
