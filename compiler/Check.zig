@@ -364,12 +364,22 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
         .optional_type => |child_node| {
             const child = try check.resolveType(child_node);
             if (child == .poison) return .poison;
+            if (comp.pool.keyOf(child) == .error_union) {
+                try check.fail(node, .{
+                    .code = .not_error_union,
+                    .message = "an optional cannot hold an error union",
+                    .label = "the '!' belongs outside",
+                    .help = "write '!?T' for a value that may fail, and may succeed with nothing",
+                });
+                return .poison;
+            }
             return comp.pool.intern(comp.gpa, .{ .optional = child });
         },
         .error_union_type => |child_node| {
             const child = try check.resolveType(child_node);
             if (child == .poison) return .poison;
-            if (check.tree.nodeTag(child_node) == .error_union_type) {
+            // by the resolved type, so an alias cannot smuggle a second '!' in
+            if (comp.pool.keyOf(child) == .error_union) {
                 try check.fail(node, .{
                     .code = .not_error_union,
                     .message = "an error union cannot hold another error union",
@@ -1117,11 +1127,25 @@ fn checkAssign(check: *Check, node: Node.Index, assign: AST.View.Pair) Allocator
     if (check.tree.nodeTag(assign.lhs) == .ident) {
         const text = check.tree.tokenSlice(check.tree.nodeMainToken(assign.lhs));
         if (std.mem.eql(u8, text, "_")) {
-            // `_ = e` evaluates and drops on purpose, whatever the type
+            // `_ = e` drops the value on purpose. a failure is not a value, so
+            // it is not what this drops
             const value = try check.checkExpr(assign.rhs, null);
             switch (value) {
                 .constant, .runtime, .poison => {},
-                else => try check.reportNotValue(assign.rhs, value),
+                else => {
+                    try check.reportNotValue(assign.rhs, value);
+                    return;
+                },
+            }
+            const found = check.typeOf(value);
+            if (found == .poison) return;
+            if (check.comp.pool.keyOf(found) == .error_union) {
+                try check.fail(assign.rhs, .{
+                    .code = .error_ignored,
+                    .message = "this can fail, and '_ =' drops only the value",
+                    .label = "the failure is still unhandled",
+                    .help = "'try' passes it up, 'catch' handles it, and 'catch {}' drops it",
+                });
             }
             return;
         }
@@ -1205,7 +1229,20 @@ fn checkWhile(check: *Check, view: AST.View.While) Allocator.Error!void {
     const body_scope: u32 = @intCast(builder.scopes.items.len);
     const entry_live = builder.live;
 
-    if (view.cond.unwrap()) |cond_node| {
+    // a written condition that cannot vary is one of the two loops spelled the
+    // long way. it is refused, then modelled as what it means, so one mistake
+    // stays one message
+    var loop_cond = view.cond;
+    if (view.capture.unwrap() == null) {
+        if (view.cond.unwrap()) |written| {
+            if (check.constantCondition(written)) |always| {
+                try check.reportConstantLoop(written, always);
+                if (always) loop_cond = .none;
+            }
+        }
+    }
+
+    if (loop_cond.unwrap()) |cond_node| {
         const cond_block = try check.newBlock();
         const body_block = try check.newBlock();
         const exit = try check.newBlock();
@@ -1275,6 +1312,40 @@ fn checkWhile(check: *Check, view: AST.View.While) Allocator.Error!void {
         check.startBlock(exit);
         builder.live = loop.broke;
     }
+}
+
+/// A `true` or `false` written where a loop condition goes, through however
+/// many parentheses. Read off the tree, because this is about the spelling
+/// rather than about what any expression happens to fold to.
+fn constantCondition(check: *const Check, node: Node.Index) ?bool {
+    var current = node;
+    var depth: u32 = 0;
+    while (depth < type_depth_max) : (depth += 1) {
+        switch (check.tree.viewOf(current)) {
+            .bool_literal => |literal| return literal.value,
+            .grouped => |inner| current = inner,
+            else => return null,
+        }
+    }
+    return null;
+}
+
+fn reportConstantLoop(check: *Check, node: Node.Index, always: bool) Allocator.Error!void {
+    if (always) {
+        try check.fail(node, .{
+            .code = .constant_condition,
+            .message = "this condition is always true",
+            .label = "never false",
+            .help = "'while { }' is the loop that only a 'break' or a 'return' leaves",
+        });
+        return;
+    }
+    try check.fail(node, .{
+        .code = .constant_condition,
+        .message = "this condition is always false, so the body never runs",
+        .label = "never true",
+        .help = "delete the loop, or give it a condition that can be true",
+    });
 }
 
 fn checkCondition(check: *Check, node: Node.Index) Allocator.Error!Ref {
@@ -1443,7 +1514,7 @@ fn expectNothing(check: *Check, node: Node.Index, value: Value) Allocator.Error!
                     .code = .error_ignored,
                     .message = "this can fail, and nothing here handles it",
                     .label = "an unhandled error",
-                    .help = "'try' passes it up, 'catch' handles it, and '_ =' drops it on purpose",
+                    .help = "'try' passes it up, 'catch' handles it, and 'catch {}' drops it",
                 });
                 return;
             }
@@ -3693,25 +3764,7 @@ fn coerce(
                 }
             }
 
-            if (want == .optional) {
-                const inner = try check.coerceQuiet(value, want.optional) orelse {
-                    return check.reportMismatch(node, value, wanted);
-                };
-                const wrapped = try check.emitOne(.wrap_optional, wanted, node, refOf(inner));
-                return .{ .runtime = .{ .ref = wrapped, .type = wanted } };
-            }
-            if (want == .error_union) {
-                if (runtime.type == .error_type) {
-                    const wrapped = try check.emitOne(.wrap_err, wanted, node, runtime.ref);
-                    return .{ .runtime = .{ .ref = wrapped, .type = wanted } };
-                }
-                const inner = try check.coerceQuiet(value, want.error_union) orelse {
-                    return check.reportMismatch(node, value, wanted);
-                };
-                const wrapped = try check.emitOne(.wrap_ok, wanted, node, refOf(inner));
-                return .{ .runtime = .{ .ref = wrapped, .type = wanted } };
-            }
-
+            if (try check.coerceQuiet(value, wanted, node, 0)) |met| return met;
             return check.reportMismatch(node, value, wanted);
         },
         else => {
@@ -3721,15 +3774,26 @@ fn coerce(
     }
 }
 
-/// `coerce` without the report, for an inner step of a wrap.
-fn coerceQuiet(check: *Check, value: Value, wanted: Pool.Index) Allocator.Error!?Value {
+/// `coerce` without the report. One wrap per level of the wanted type, so a
+/// `T` reaches `!?T` in two, the way a constant already does through
+/// `meetOrWrap`. Recursion follows the type, which the parser bounds.
+fn coerceQuiet(
+    check: *Check,
+    value: Value,
+    wanted: Pool.Index,
+    node: Node.Index,
+    depth: u32,
+) Allocator.Error!?Value {
+    assert(depth <= type_depth_max);
+    if (depth == type_depth_max) return null;
+
     const comp = check.comp;
     switch (value) {
         .constant => |constant| {
             const met = try comp.pool.meet(comp.gpa, constant, wanted);
             switch (met) {
                 .value => |final| return .{ .constant = final },
-                .does_not_fit, .wrong_kind => return null,
+                .does_not_fit, .wrong_kind => {},
             }
         },
         .runtime => |runtime| {
@@ -3741,7 +3805,25 @@ fn coerceQuiet(check: *Check, value: Value, wanted: Pool.Index) Allocator.Error!
                     have.pointer.mutable and want.pointer.mutable == false;
                 if (compatible) return .{ .runtime = .{ .ref = runtime.ref, .type = wanted } };
             }
-            return null;
+        },
+        else => return null,
+    }
+
+    // no match at this level, so put one wrapper on and ask again inside it
+    switch (comp.pool.keyOf(wanted)) {
+        .optional => |child| {
+            const inner = try check.coerceQuiet(value, child, node, depth + 1) orelse return null;
+            const wrapped = try check.emitOne(.wrap_optional, wanted, node, refOf(inner));
+            return .{ .runtime = .{ .ref = wrapped, .type = wanted } };
+        },
+        .error_union => |child| {
+            if (check.typeOf(value) == .error_type) {
+                const wrapped = try check.emitOne(.wrap_err, wanted, node, refOf(value));
+                return .{ .runtime = .{ .ref = wrapped, .type = wanted } };
+            }
+            const inner = try check.coerceQuiet(value, child, node, depth + 1) orelse return null;
+            const wrapped = try check.emitOne(.wrap_ok, wanted, node, refOf(inner));
+            return .{ .runtime = .{ .ref = wrapped, .type = wanted } };
         },
         else => return null,
     }

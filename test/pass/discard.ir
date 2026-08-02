@@ -15,7 +15,46 @@ fn drive()
 b0:
   %0 = scope_begin
   %1 = call noisy() : !i64
-  %2 = call quiet() : i64
-  %3 = call quiet() : i64
-  %4 = scope_end %0
+  %2 = is_error %1 : bool
+  %3 = local : *var i64
+  branch %2, b2, b1
+b1:
+  %4 = unwrap_ok %1 : i64
+  %5 = store %3, %4
+  jump b3
+b2:
+  %6 = store %3, 0:i64
+  jump b3
+b3:
+  %7 = load %3 : i64
+  %8 = call noisy() : !i64
+  %9 = is_error %8 : bool
+  branch %9, b5, b4
+b4:
+  jump b6
+b5:
+  %10 = scope_begin
+  %11 = scope_end %10
+  jump b6
+b6:
+  %12 = call quiet() : i64
+  %13 = call quiet() : i64
+  %14 = scope_end %0
   return
+
+fn passing() !i64
+b0:
+  %0 = scope_begin
+  %1 = call noisy() : !i64
+  %2 = is_error %1 : bool
+  branch %2, b1, b2
+b1:
+  %3 = unwrap_err %1 : an error
+  %4 = scope_end %0
+  %5 = wrap_err %3 : !i64
+  return %5
+b2:
+  %6 = unwrap_ok %1 : i64
+  %7 = wrap_ok 0:i64 : !i64
+  %8 = scope_end %0
+  return %7

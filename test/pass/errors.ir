@@ -125,3 +125,63 @@ b2:
 b3:
   %7 = scope_end %1
   return
+
+fn lookup(id: i64) !?i64
+b0:
+  %0 = param id : i64
+  %1 = scope_begin
+  %2 = cmp_lt %0, 0:i64 : bool
+  branch %2, b1, b2
+b1:
+  %3 = scope_begin
+  %4 = wrap_err error.TooMuch : !?i64
+  %5 = scope_end %3
+  %6 = scope_end %1
+  return %4
+b2:
+  jump b3
+b3:
+  %7 = cmp_eq %0, 0:i64 : bool
+  branch %7, b4, b5
+b4:
+  %8 = scope_begin
+  %9 = wrap_ok null : !?i64
+  %10 = scope_end %8
+  %11 = scope_end %1
+  return %9
+b5:
+  jump b6
+b6:
+  %12 = wrap_optional %0 : ?i64
+  %13 = wrap_ok %12 : !?i64
+  %14 = scope_end %1
+  return %13
+
+fn resolved(id: i64) i64
+b0:
+  %0 = param id : i64
+  %1 = scope_begin
+  %2 = call lookup(%0) : !?i64
+  %3 = is_error %2 : bool
+  branch %3, b2, b1
+b1:
+  %7 = unwrap_ok %2 : ?i64
+  %8 = has_value %7 : bool
+  %9 = local : *var i64
+  branch %8, b3, b4
+b2:
+  %4 = scope_begin
+  %5 = scope_end %4
+  %6 = scope_end %1
+  return -1:i64
+b3:
+  %10 = unwrap_value %7 : i64
+  %11 = store %9, %10
+  jump b5
+b4:
+  %12 = store %9, 0:i64
+  jump b5
+b5:
+  %13 = load %9 : i64
+  %14 = scope_end %1
+  return %13

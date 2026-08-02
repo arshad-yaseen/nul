@@ -37,3 +37,22 @@ fn shrugged(seed: i64) {
 
 fn report() {
 }
+
+// '!?T' is the nesting that means something, so it is the one '?!T' points at.
+// Reaching it takes two wraps, and every arm below writes a different one.
+fn lookup(id: i64) !?i64 {
+    if id < 0 {
+        return error.TooMuch
+    }
+    if id == 0 {
+        return null
+    }
+    return id
+}
+
+fn resolved(id: i64) i64 {
+    let found = lookup(id) catch {
+        return -1
+    }
+    return found orelse 0
+}

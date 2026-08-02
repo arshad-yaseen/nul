@@ -1,0 +1,3 @@
+fn drive(count: i64) i64 {
+    return count orelse 0
+}

@@ -1,0 +1,24 @@
+error[E0217]: this condition is always true
+ --> test/fail/constant_loop.nul:2:11
+  |
+2 |     while true {
+  |           ^^^^ never false
+  |
+  = help: 'while { }' is the loop that only a 'break' or a 'return' leaves
+
+error[E0217]: this condition is always false, so the body never runs
+ --> test/fail/constant_loop.nul:8:11
+  |
+8 |     while false {
+  |           ^^^^^ never true
+  |
+  = help: delete the loop, or give it a condition that can be true
+
+error[E0217]: this condition is always true
+  --> test/fail/constant_loop.nul:15:11
+   |
+15 |     while (true) {
+   |           ^^^^^ never false
+   |
+   = help: 'while { }' is the loop that only a 'break' or a 'return' leaves
+
