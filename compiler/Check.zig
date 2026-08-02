@@ -199,9 +199,8 @@ pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!
                     .code = .two_arenas,
                     .message = "a function allocates from exactly one arena, and this is a second",
                     .label = "one too many",
-                    .help = "for scratch local to this call, make a child inside instead; " ++
-                        "for scratch shared across calls, store the arena in the collection " ++
-                        "it fills and pass that",
+                    .help = "make a child inside for scratch local to this call, or store the arena " ++
+                        "in the collection it fills for scratch shared across calls",
                     .notes = try comp.notes(&.{
                         comp.noteAt(check.module_index, arena_param.?, "the first arena is here"),
                     }),
@@ -774,7 +773,7 @@ fn emit(
     }
 
     if (builder.insts.len >= std.math.maxInt(u32) / 2) return error.OutOfMemory;
-    const index: IR.Inst.Index = @enumFromInt(@as(u32, @intCast(builder.insts.len)));
+    const index: IR.Inst.Index = .from(builder.insts.len);
     try builder.insts.append(check.comp.gpa, .{
         .tag = tag,
         .type = type_index,
@@ -815,7 +814,7 @@ fn emitStore(check: *Check, node: Node.Index, place: Ref, value: Ref) Allocator.
 fn newBlock(check: *Check) Allocator.Error!IR.Block.Index {
     const builder = check.builder.?;
     if (builder.blocks.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-    const index: IR.Block.Index = @enumFromInt(@as(u32, @intCast(builder.blocks.items.len)));
+    const index: IR.Block.Index = .from(builder.blocks.items.len);
     try builder.blocks.append(check.comp.gpa, .{
         .first = 0,
         .count = 0,
@@ -1058,7 +1057,7 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
     if (std.mem.eql(u8, name_text, "_")) {
         try check.fail(node, .{
             .code = .discard_reserved,
-            .message = "'_' cannot be bound; it is how a value is discarded",
+            .message = "'_' cannot be bound, because it is how a value is discarded",
             .label = "not a name",
             .help = "write '_ = expression' to drop the value on purpose",
         });
@@ -1649,15 +1648,8 @@ fn checkLoopExit(check: *Check, node: Node.Index, exit: LoopExit) Allocator.Erro
     return .never;
 }
 
-/// Checked once here and taken back, then emitted at every scope exit.
 fn checkDefer(check: *Check, expr: Node.Index) Allocator.Error!void {
-    const builder = check.builder.?;
-    const before = builder.mark();
-
-    try check.emitDefer(expr);
-    builder.rewind(before);
-
-    try builder.defer_nodes.append(check.comp.gpa, expr);
+    try check.builder.?.defer_nodes.append(check.comp.gpa, expr);
 }
 
 /// A statement expression must amount to nothing.
@@ -1748,7 +1740,7 @@ fn checkIdent(check: *Check, node: Node.Index) Allocator.Error!Value {
     if (std.mem.eql(u8, text, "_")) {
         try check.fail(node, .{
             .code = .discard_reserved,
-            .message = "'_' has no value; it only discards one",
+            .message = "'_' has no value, and only discards one",
             .label = "not a value",
         });
         return .poison;
@@ -1942,7 +1934,7 @@ fn foldBinary(
                     try comp.typeName(pair.right),
                 }),
                 .label = "two different types",
-                .help = "nothing converts on its own; give both sides one type",
+                .help = "nothing converts on its own, so give both sides one type",
             });
             return .poison;
         },
@@ -1980,7 +1972,7 @@ fn emitBinary(
                 try comp.typeName(right),
             }),
             .label = "two different types",
-            .help = "nothing converts on its own; give both sides one type",
+            .help = "nothing converts on its own, so give both sides one type",
         });
         return .poison;
     }
@@ -2036,9 +2028,12 @@ fn checkShortCircuit(check: *Check, node: Node.Index, view: AST.View.Binary) All
         const decided = lhs_met.constant ==
             (if (view.op == .bool_and) Pool.Index.false_value else Pool.Index.true_value);
         if (decided) {
-            // the answer is the left side. the right is still checked, into a
-            // block nothing jumps to, so it leaves no trace
-            try check.checkIntoDeadBlock(view.rhs);
+            // the answer is the left side, and the right still has to be
+            // checked. checked and taken back, the way a defer is
+            const builder = check.builder.?;
+            const before = builder.mark();
+            _ = try check.checkExpr(view.rhs, null);
+            builder.rewind(before);
             return lhs_met;
         }
         const rhs = try check.checkExpr(view.rhs, null);
@@ -2067,17 +2062,6 @@ fn checkShortCircuit(check: *Check, node: Node.Index, view: AST.View.Binary) All
     return .{ .runtime = .{ .ref = loaded, .type = .bool_type } };
 }
 
-fn checkIntoDeadBlock(check: *Check, node: Node.Index) Allocator.Error!void {
-    const resume_block = try check.newBlock();
-    check.endBlock(.{ .jump = resume_block });
-
-    const dead = try check.newBlock();
-    check.startBlock(dead);
-    _ = try check.checkExpr(node, null);
-    check.endBlock(.{ .ret = .none });
-
-    check.startBlock(resume_block);
-}
 
 fn checkUnary(check: *Check, node: Node.Index, view: AST.View.Unary) Allocator.Error!Value {
     const comp = check.comp;
@@ -2459,8 +2443,8 @@ fn checkFieldAccess(
         .type_ref, .generic_ref => {
             try check.fail(node, .{
                 .code = .not_a_function,
-                .message = try comp.fmt("'{s}' is reached through a value or called; " ++
-                    "it cannot be read", .{name_text}),
+                .message = try comp.fmt("'{s}' is reached through a value or called, " ++
+                    "and cannot be read", .{name_text}),
                 .label = "not a value",
             });
             return .poison;
@@ -2468,7 +2452,7 @@ fn checkFieldAccess(
         .fn_ref => {
             try check.fail(node, .{
                 .code = .no_such_member,
-                .message = "a function has no fields; call it first",
+                .message = "a function has no fields, so call it first",
                 .label = "'.' on a function",
             });
             return .poison;
@@ -2534,7 +2518,7 @@ fn reportUnopened(check: *Check, node: Node.Index, found: Pool.Index) Allocator.
     switch (comp.pool.keyOf(found)) {
         .optional => try check.fail(node, .{
             .code = .optional_not_unwrapped,
-            .message = try comp.fmt("this is {s}; reach inside it first", .{
+            .message = try comp.fmt("this is {s}, so reach inside it first", .{
                 try comp.typeName(found),
             }),
             .label = "may be null",
@@ -2542,7 +2526,7 @@ fn reportUnopened(check: *Check, node: Node.Index, found: Pool.Index) Allocator.
         }),
         .error_union => try check.fail(node, .{
             .code = .not_error_union,
-            .message = try comp.fmt("this is {s}; it can still fail", .{
+            .message = try comp.fmt("this is {s}, and it can still fail", .{
                 try comp.typeName(found),
             }),
             .label = "handle the error first",
@@ -2583,7 +2567,7 @@ fn findField(
     if (findMember(comp, decl_index, name_text) != null) {
         try check.failToken(name_token, .{
             .code = .no_such_member,
-            .message = try comp.fmt("'{s}' is a function; call it: '.{s}(...)'", .{
+            .message = try comp.fmt("'{s}' is a function, so call it with '.{s}(...)'", .{
                 name_text, name_text,
             }),
             .label = "a method, not a field",
@@ -2621,10 +2605,10 @@ fn findMember(comp: *const Compilation, decl_index: Decl.Index, name_text: []con
 
     const members = decl.members();
     for (members.start..members.start + members.len) |raw| {
-        const member = comp.declAt(@enumFromInt(@as(u32, @intCast(raw))));
+        const member = comp.declAt(.from(raw));
         if (member.kind != .fn_decl) continue;
         if (std.mem.eql(u8, comp.pool.stringText(member.name), name_text)) {
-            return @enumFromInt(@as(u32, @intCast(raw)));
+            return .from(raw);
         }
     }
     return null;
@@ -2662,7 +2646,7 @@ fn checkInstanceExpr(
         .fn_ref => {
             try check.fail(node, .{
                 .code = .not_a_function,
-                .message = "a function with its type arguments is still not a value; call it",
+                .message = "a function with its type arguments is still not a value, so call it",
                 .label = "missing the call",
             });
             return .poison;
@@ -2772,7 +2756,7 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
             .code = .missing_field,
             .message = try comp.fmt("this literal leaves out {s}", .{names}),
             .label = "incomplete",
-            .help = "every field of the struct must be present; there are no defaults",
+            .help = "every field of the struct must be present, and there are no defaults",
         });
         return .poison;
     }
@@ -2956,7 +2940,7 @@ fn resolveCalleeMember(
             .generic_ref => {
                 try check.fail(access.lhs, .{
                     .code = .generic_arguments,
-                    .message = "this struct is generic; write its arguments before reaching in",
+                    .message = "this struct is generic, so write its arguments before reaching in",
                     .label = "missing type arguments",
                 });
                 return null;
@@ -2964,7 +2948,7 @@ fn resolveCalleeMember(
             .fn_ref => {
                 try check.failToken(access.name_token, .{
                     .code = .no_such_member,
-                    .message = "a function has no fields; call it first",
+                    .message = "a function has no fields, so call it first",
                     .label = "'.' on a function",
                 });
                 return null;
@@ -3021,7 +3005,7 @@ fn calleeOfValue(check: *Check, node: Node.Index, value: Value) Allocator.Error!
         .type_ref, .generic_ref => {
             try check.fail(node, .{
                 .code = .not_a_function,
-                .message = "a type is not callable; there are no conversions to call",
+                .message = "a type is not callable, and there are no conversions to call",
                 .label = "a type",
             });
             return null;
@@ -3029,7 +3013,7 @@ fn calleeOfValue(check: *Check, node: Node.Index, value: Value) Allocator.Error!
         .module_ref => {
             try check.fail(node, .{
                 .code = .not_a_function,
-                .message = "a module is not callable; name a function inside it",
+                .message = "a module is not callable, so name a function inside it",
                 .label = "a module",
             });
             return null;
@@ -3565,7 +3549,7 @@ fn checkReleaseName(check: *Check, node: Node.Index, call: BuiltinCall) Allocato
         ),
         .label = "not a name",
         .help = "every value in the arena dies at this instant, and only the function " ++
-            "that created the arena can see them; release it there, by name",
+            "that created the arena can see them, so release it there, by name",
     });
     return false;
 }
@@ -3577,7 +3561,7 @@ fn checkDestroyInDefer(check: *Check, node: Node.Index) Allocator.Error!void {
         .code = .redundant_destroy,
         .message = "an arena dies at the end of its scope already",
         .label = "'defer' fires at scope exit, when this happens anyway",
-        .help = "delete this line; 'destroy' exists to end an arena earlier than its scope",
+        .help = "delete this line, because 'destroy' ends an arena earlier than its scope",
     });
 }
 
@@ -3616,7 +3600,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
             if (std.mem.eql(u8, text, "_")) {
                 try check.fail(node, .{
                     .code = .discard_reserved,
-                    .message = "'_' is not a place; it only discards a whole value",
+                    .message = "'_' is not a place, and only discards a whole value",
                     .label = "not a place",
                 });
                 return null;
@@ -3831,7 +3815,7 @@ fn reportImmutable(check: *Check, node: Node.Index, place: Place) Allocator.Erro
         },
         .capture_bound => .{
             .code = .not_assignable,
-            .message = try comp.fmt("'{s}' names what the capture held; it cannot change", .{
+            .message = try comp.fmt("'{s}' names what the capture held, and cannot change", .{
                 place.root_name,
             }),
             .label = "immutable",
@@ -3852,7 +3836,7 @@ fn reportImmutable(check: *Check, node: Node.Index, place: Place) Allocator.Erro
         },
         .temporary => .{
             .code = .not_assignable,
-            .message = "this value has no home; there is nowhere to write",
+            .message = "this value has no home, so there is nowhere to write",
             .label = "not a place",
         },
     };
@@ -4129,7 +4113,7 @@ fn reportDoesNotFit(
             try check.comp.typeName(wanted),
         }),
         .label = "past the type's edge",
-        .help = "a constant takes any type its value fits; this value does not fit this one",
+        .help = "a constant takes any type its value fits, and this value does not fit this one",
     });
 }
 
@@ -4194,7 +4178,7 @@ fn reportNotValue(check: *Check, node: Node.Index, value: Value) Allocator.Error
         },
         .fn_ref => .{
             .code = .not_a_function,
-            .message = "a function is not a value; call it",
+            .message = "a function is not a value, so call it",
             .label = "missing the call",
             .help = "there are no function values in the language",
         },

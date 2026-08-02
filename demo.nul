@@ -1,6 +1,19 @@
-fn through_a_capture() i64 {
-    let c = 10 == 10
-    let a = 10
-    let b = 10
-    let n: i64 = if c { a } else { b }
+use std.mem.Arena
+
+pub struct Box[T] {
+    item: T
+}
+
+pub type Number = i64
+pub type Boxed = Box[Number]
+pub type Same = Boxed
+
+fn fill(arena: Arena, value: Number) *var Same {
+    var box = arena.create[Boxed]()
+    box.item = value
+    return box
+}
+
+fn read(box: *Same) Number {
+    return box.item
 }

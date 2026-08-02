@@ -4,5 +4,5 @@ error[E0238]: 'reset' needs the arena's name, and this is a path to one
 9 |     list.arena.reset()
   |     ^^^^^^^^^^ not a name
   |
-  = help: every value in the arena dies at this instant, and only the function that created the arena can see them; release it there, by name
+  = help: every value in the arena dies at this instant, and only the function that created the arena can see them, so release it there, by name
 

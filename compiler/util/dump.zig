@@ -199,7 +199,7 @@ pub fn func(comp: *const Compilation, body: *const IR.Func, writer: *Writer) Wri
         try writer.print("b{d}:\n", .{block_index});
 
         for (block.first..block.end()) |raw| {
-            const index: IR.Inst.Index = @enumFromInt(@as(u32, @intCast(raw)));
+            const index: IR.Inst.Index = .from(raw);
             try inst(comp, body, index, writer);
         }
         try terminator(comp, block.terminator, writer);

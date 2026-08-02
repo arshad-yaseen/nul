@@ -48,6 +48,11 @@ pub const Index = enum(u32) {
     null_value,
     _,
 
+    pub fn from(raw: usize) Index {
+        assert(raw < std.math.maxInt(u32));
+        return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+
     pub fn int(index: Index) u32 {
         return @intFromEnum(index);
     }
@@ -58,6 +63,11 @@ pub const Index = enum(u32) {
 pub const Instance = enum(u32) {
     _,
 
+    pub fn from(raw: usize) Instance {
+        assert(raw < std.math.maxInt(u32));
+        return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+
     pub fn int(index: Instance) u32 {
         return @intFromEnum(index);
     }
@@ -67,6 +77,11 @@ pub const Instance = enum(u32) {
 pub const String = enum(u32) {
     empty = 0,
     _,
+
+    pub fn from(raw: usize) String {
+        assert(raw < std.math.maxInt(u32));
+        return @enumFromInt(@as(u32, @intCast(raw)));
+    }
 
     pub fn int(index: String) u32 {
         return @intFromEnum(index);
@@ -275,7 +290,7 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
     if (gop.found_existing) return gop.key_ptr.*;
 
     if (pool.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-    const index: Index = @enumFromInt(@as(u32, @intCast(pool.items.len)));
+    const index: Index = .from(pool.items.len);
 
     const item: Item = switch (key) {
         .simple => |simple| .{ .tag = .simple, .data = @intFromEnum(simple) },
@@ -338,7 +353,7 @@ pub fn string(pool: *Pool, gpa: Allocator, text: []const u8) Allocator.Error!Str
     if (gop.found_existing) return gop.key_ptr.*;
 
     if (pool.bytes.items.len + text.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
-    const offset: String = @enumFromInt(@as(u32, @intCast(pool.bytes.items.len)));
+    const offset: String = .from(pool.bytes.items.len);
 
     try pool.bytes.ensureUnusedCapacity(gpa, text.len + 1);
     pool.bytes.appendSliceAssumeCapacity(text);

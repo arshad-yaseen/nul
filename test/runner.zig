@@ -11,8 +11,8 @@ const Kind = enum {
     @"parse-pass",
     /// Must not parse.
     @"parse-error",
-    /// Must compile clean.
-    pass,
+    /// Must compile clean, and lower to the recorded IR.
+    ir,
     /// Must be refused.
     fail,
     /// A directory of modules entered at `main.nul`.
@@ -26,7 +26,7 @@ const Kind = enum {
         return switch (kind) {
             .@"parse-pass" => ".tree",
             .@"parse-error", .fail, .multi => ".expected",
-            .pass => ".ir",
+            .ir => ".ir",
             .emit => ".c",
             .run => ".exit",
         };
@@ -35,7 +35,7 @@ const Kind = enum {
     fn analyzes(kind: Kind) bool {
         return switch (kind) {
             .@"parse-pass", .@"parse-error" => false,
-            .pass, .fail, .multi, .emit, .run => true,
+            .ir, .fail, .multi, .emit, .run => true,
         };
     }
 };
@@ -180,7 +180,7 @@ fn runCompile(
 
     const failed = comp.diagnostics.items.len > 0;
     switch (kind) {
-        .pass => {
+        .ir => {
             if (failed) {
                 try log.print("{s}: expected to compile, but\n", .{path});
                 try comp.renderAll(log, .off);

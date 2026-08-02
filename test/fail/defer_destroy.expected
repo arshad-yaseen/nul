@@ -4,5 +4,5 @@ error[E0239]: an arena dies at the end of its scope already
 5 |     defer scratch.destroy()
   |           ^^^^^^^^^^^^^^^^^ 'defer' fires at scope exit, when this happens anyway
   |
-  = help: delete this line; 'destroy' exists to end an arena earlier than its scope
+  = help: delete this line, because 'destroy' ends an arena earlier than its scope
 

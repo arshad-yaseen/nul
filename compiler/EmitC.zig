@@ -51,7 +51,7 @@ fn errorEnum(emit: *EmitC) Error!void {
 
     var next: u32 = 1;
     for (0..pool.items.len) |raw| {
-        const index: Pool.Index = @enumFromInt(@as(u32, @intCast(raw)));
+        const index: Pool.Index = .from(raw);
         switch (pool.keyOf(index)) {
             .error_value => |name| {
                 try emit.out.print("#define nul_error_{s} ((nul_error){d})\n", .{
@@ -71,7 +71,7 @@ fn forwardStructs(emit: *EmitC) Error!void {
     const comp = emit.comp;
     var wrote = false;
     for (0..comp.pool.items.len) |raw| {
-        const index: Pool.Index = @enumFromInt(@as(u32, @intCast(raw)));
+        const index: Pool.Index = .from(raw);
         switch (comp.pool.keyOf(index)) {
             .struct_type, .optional, .error_union => {},
             else => continue,
@@ -90,7 +90,7 @@ fn forwardStructs(emit: *EmitC) Error!void {
 /// pointer imposes no order, because the tag above already names its pointee.
 fn types(emit: *EmitC, gpa: Allocator) Error!void {
     for (0..emit.comp.pool.items.len) |raw| {
-        const index: Pool.Index = @enumFromInt(@as(u32, @intCast(raw)));
+        const index: Pool.Index = .from(raw);
         switch (emit.comp.pool.keyOf(index)) {
             .struct_type, .optional, .error_union => try emit.define(gpa, index),
             else => {},

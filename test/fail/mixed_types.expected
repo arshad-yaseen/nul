@@ -4,5 +4,5 @@ error[E0207]: 'add' mixes i32 and i64
 2 |     return a + b
   |              ^ two different types
   |
-  = help: nothing converts on its own; give both sides one type
+  = help: nothing converts on its own, so give both sides one type
 

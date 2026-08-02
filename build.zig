@@ -5,7 +5,7 @@ const zon = @import("build.zig.zon");
 const test_dirs = [_][]const u8{
     "test/parse-pass",
     "test/parse-error",
-    "test/pass",
+    "test/ir",
     "test/fail",
     "test/multi",
     "test/emit",

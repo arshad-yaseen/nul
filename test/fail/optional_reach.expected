@@ -1,4 +1,4 @@
-error[E0224]: this is ?Point; reach inside it first
+error[E0224]: this is ?Point, so reach inside it first
  --> test/fail/optional_reach.nul:7:12
   |
 7 |     return maybe.x
@@ -6,7 +6,7 @@ error[E0224]: this is ?Point; reach inside it first
   |
   = help: 'if x |v| { }' and 'x orelse ...' unwrap an optional
 
-error[E0226]: this is !Point; it can still fail
+error[E0226]: this is !Point, and it can still fail
   --> test/fail/optional_reach.nul:11:12
    |
 11 |     return may.x
@@ -14,7 +14,7 @@ error[E0226]: this is !Point; it can still fail
    |
    = help: 'try' passes the error up, 'catch' handles it here
 
-error[E0224]: this is ?Point; reach inside it first
+error[E0224]: this is ?Point, so reach inside it first
   --> test/fail/optional_reach.nul:15:5
    |
 15 |     maybe.x = 1
@@ -22,7 +22,7 @@ error[E0224]: this is ?Point; reach inside it first
    |
    = help: 'if x |v| { }' and 'x orelse ...' unwrap an optional
 
-error[E0226]: this is !Point; it can still fail
+error[E0226]: this is !Point, and it can still fail
   --> test/fail/optional_reach.nul:19:5
    |
 19 |     may.x = 1

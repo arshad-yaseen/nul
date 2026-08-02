@@ -27,8 +27,16 @@ error_text: std.heap.ArenaAllocator.State,
 pub const nest_max = Parse.depth_max;
 
 pub const NodeList = std.MultiArrayList(Node);
+
 /// Where a node's payload starts in `extra`.
-pub const ExtraIndex = enum(u32) { _ };
+pub const ExtraIndex = enum(u32) {
+    _,
+
+    pub fn from(raw: usize) ExtraIndex {
+        assert(raw < std.math.maxInt(u32));
+        return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+};
 
 pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     const tree = try Parse.run(gpa, source);
@@ -61,6 +69,11 @@ pub const Node = struct {
     pub const Index = enum(u32) {
         root = 0,
         _,
+
+        pub fn from(raw: usize) Index {
+            assert(raw < std.math.maxInt(u32));
+            return @enumFromInt(@as(u32, @intCast(raw)));
+        }
 
         pub fn int(index: Index) u32 {
             return @intFromEnum(index);

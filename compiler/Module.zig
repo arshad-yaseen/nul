@@ -32,6 +32,11 @@ pub const Index = enum(u32) {
     root = 0,
     _,
 
+    pub fn from(raw: usize) Index {
+        assert(raw < std.math.maxInt(u32));
+        return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+
     pub fn int(index: Index) u32 {
         return @intFromEnum(index);
     }
@@ -66,6 +71,11 @@ pub const Decl = struct {
 
     pub const Index = enum(u32) {
         _,
+
+        pub fn from(raw: usize) Decl.Index {
+            assert(raw < std.math.maxInt(u32));
+            return @enumFromInt(@as(u32, @intCast(raw)));
+        }
 
         pub fn int(index: Decl.Index) u32 {
             return @intFromEnum(index);
@@ -135,7 +145,7 @@ pub fn register(
     const module = try gpa.create(Module);
     errdefer gpa.destroy(module);
 
-    const index: Module.Index = @enumFromInt(@as(u32, @intCast(comp.modules.items.len)));
+    const index: Module.Index = .from(comp.modules.items.len);
     module.* = .{
         .key = key,
         .source = source,
@@ -365,7 +375,7 @@ fn appendDecl(
     owner: Decl.OptionalIndex,
 ) Allocator.Error!Decl.Index {
     if (comp.decls.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-    const index: Decl.Index = @enumFromInt(@as(u32, @intCast(comp.decls.items.len)));
+    const index: Decl.Index = .from(comp.decls.items.len);
     try comp.decls.append(comp.gpa, .{
         .module = module_index,
         .node = new.node,
@@ -477,7 +487,7 @@ pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bo
             .code = .builtin_outside_std,
             .message = "only the standard library can reach 'builtin'",
             .label = "not available here",
-            .help = "the primitives are ordinary declarations in std; call those instead",
+            .help = "the primitives are ordinary declarations in std, so call those instead",
         });
         return false;
     }

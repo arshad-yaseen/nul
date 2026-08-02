@@ -1,4 +1,4 @@
-error[E0244]: '_' cannot be bound; it is how a value is discarded
+error[E0244]: '_' cannot be bound, because it is how a value is discarded
  --> test/fail/discard_reserved.nul:2:5
   |
 2 |     let _ = 5
@@ -6,13 +6,13 @@ error[E0244]: '_' cannot be bound; it is how a value is discarded
   |
   = help: write '_ = expression' to drop the value on purpose
 
-error[E0244]: '_' has no value; it only discards one
+error[E0244]: '_' has no value, and only discards one
  --> test/fail/discard_reserved.nul:7:16
   |
 7 |     return n + _
   |                ^ not a value
 
-error[E0244]: '_' is not a place; it only discards a whole value
+error[E0244]: '_' is not a place, and only discards a whole value
   --> test/fail/discard_reserved.nul:11:5
    |
 11 |     _.x = n

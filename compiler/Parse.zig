@@ -49,7 +49,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
         .source = source,
         .tokens = tokens.slice(),
         .tags = tokens.items(.tag),
-        .eof_index = @enumFromInt(@as(u32, @intCast(tokens.len - 1))),
+        .eof_index = .from(tokens.len - 1),
         .token_index = .first,
         .nodes = .empty,
         .extra = .empty,
@@ -264,7 +264,7 @@ fn addNode(self: *Parse, node: Node) Allocator.Error!Node.Index {
     assert(node.main_token.int() < self.tags.len);
     if (self.nodes.len >= std.math.maxInt(u32)) return error.OutOfMemory;
 
-    const index: Node.Index = @enumFromInt(@as(u32, @intCast(self.nodes.len)));
+    const index: Node.Index = .from(self.nodes.len);
     try self.nodes.append(self.gpa, node);
 
     assert(self.nodes.len == index.int() + 1);
@@ -315,7 +315,7 @@ fn skip(self: *Parse) Allocator.Error!Node.Index {
 /// Bounded by the appends below, which keep the length inside a `u32`.
 fn extraStart(self: *const Parse) AST.ExtraIndex {
     assert(self.extra.items.len < std.math.maxInt(u32));
-    return @enumFromInt(@as(u32, @intCast(self.extra.items.len)));
+    return .from(self.extra.items.len);
 }
 
 fn extraWord(self: *Parse, word: u32) Allocator.Error!void {

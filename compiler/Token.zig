@@ -157,6 +157,11 @@ pub const Index = enum(u32) {
         return @enumFromInt(@intFromEnum(index) - count);
     }
 
+    pub fn from(raw: usize) Index {
+        assert(raw < std.math.maxInt(u32));
+        return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+
     pub fn int(index: Index) u32 {
         return @intFromEnum(index);
     }

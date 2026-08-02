@@ -228,7 +228,7 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     if (module.failed) return;
 
     for (module.decls.start..module.decls.end()) |raw| {
-        const decl_index: Decl.Index = @enumFromInt(@as(u32, @intCast(raw)));
+        const decl_index: Decl.Index = .from(raw);
         const decl = comp.declAt(decl_index);
         if (decl.owner != .none) continue;
 
@@ -250,7 +250,7 @@ fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allo
             if (comp.isGeneric(decl_index)) return;
             const members = decl.members();
             for (members.start..members.start + members.len) |raw| {
-                const member: Decl.Index = @enumFromInt(@as(u32, @intCast(raw)));
+                const member: Decl.Index = .from(raw);
                 try comp.ensureBodiesFn(member, origin);
             }
         },
@@ -456,7 +456,7 @@ pub fn instantiate(
     if (gop.found_existing) return gop.key_ptr.*;
 
     if (comp.instances.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-    const index: Pool.Instance = @enumFromInt(@as(u32, @intCast(comp.instances.items.len)));
+    const index: Pool.Instance = .from(comp.instances.items.len);
 
     const args_start: u32 = @intCast(comp.instance_args.items.len);
     try comp.instance_args.appendSlice(comp.gpa, args);
