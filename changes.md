@@ -51,6 +51,15 @@ declares.
 
 **Deleted:** the `error.X` expression form, its node tag, and its parsing.
 
+The identity is the declaration itself. `Pool.Key.error_value` holds a `Decl.Index`, so
+nothing is keyed by spelling and two modules cannot collide. The C backend names an error
+`nul_error_<name>_<index>` for the same reason. What this buys, in one line:
+
+```
+error[E0201]: nothing named 'NotFund' is in scope here
+  = help: did you mean 'NotFound'?
+```
+
 ### Every `!` carries its set
 
 A function states what it can fail with. The compiler verifies the statement and never

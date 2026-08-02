@@ -104,6 +104,8 @@ pub const Node = struct {
         use_decl,
         struct_decl,
         type_decl,
+        /// `error Name`, whose declaration is the error's identity.
+        error_decl,
         fn_decl,
         /// Both `let` and `var`, told apart by `main_token`.
         var_decl,
@@ -135,8 +137,6 @@ pub const Node = struct {
         /// `.{ ... }`, whose type comes from context.
         struct_literal,
         struct_field_init,
-        /// `error.Name`, a member of the one universal error set.
-        error_value,
 
         try_expr,
         orelse_expr,
@@ -283,6 +283,7 @@ pub const View = union(enum) {
     use_decl: Use,
     struct_decl: StructDecl,
     type_decl: TypeDecl,
+    error_decl: ErrorDecl,
     fn_decl: FnDecl,
     var_decl: VarDecl,
     type_param: Token.Index,
@@ -309,7 +310,6 @@ pub const View = union(enum) {
     call: Call,
     struct_literal: []const Node.Index,
     struct_field_init: NamedValue,
-    error_value: Token.Index,
 
     try_expr: Node.Index,
     orelse_expr: Pair,
@@ -330,6 +330,10 @@ pub const View = union(enum) {
         is_pub: bool,
         type_params: []const Node.Index,
         members: []const Node.Index,
+    };
+    pub const ErrorDecl = struct {
+        name_token: Token.Index,
+        is_pub: bool,
     };
     pub const TypeDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
     pub const FnDecl = struct {
@@ -411,6 +415,10 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .is_pub = tree.isPub(main),
             .aliased = data.node,
         } },
+        .error_decl => .{ .error_decl = .{
+            .name_token = main.after(1),
+            .is_pub = tree.isPub(main),
+        } },
         .fn_decl => blk: {
             var payload = tree.fields(data.extra);
             break :blk .{ .fn_decl = .{
@@ -480,7 +488,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         },
         .struct_literal => .{ .struct_literal = tree.listAt(data.extra) },
         .struct_field_init => .{ .struct_field_init = .{ .name_token = main, .value = data.node } },
-        .error_value => .{ .error_value = main },
 
         .try_expr => .{ .try_expr = data.node },
         .orelse_expr => .{ .orelse_expr = .{
@@ -641,11 +648,10 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             .err, .type_param, .capture, .break_expr, .continue_expr => return main,
             .ident, .number_literal, .null_literal => return main,
             .bool_literal => |it| return it.token,
-            .error_value => |token| {
-                // the `error` keyword sits two before the name
-                return if (side == .leftmost) token.before(2) else token;
+            .error_decl => |it| switch (side) {
+                .leftmost => return if (it.is_pub) main.before(1) else main,
+                .rightmost => return it.name_token,
             },
-
             .use_decl => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.path,

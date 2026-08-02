@@ -1,0 +1,14 @@
+error[E0201]: nothing named 'NotFund' is in scope here
+ --> test/fail/error_not_declared.nul:5:16
+  |
+5 |         return NotFund
+  |                ^^^^^^^ unknown name
+  |
+  = help: did you mean 'NotFound'?
+
+error[E0202]: 'NotFound' is an error, not a type
+  --> test/fail/error_not_declared.nul:10:22
+   |
+10 | fn used_as_a_type(e: NotFound) i64 {
+   |                      ^^^^^^^^ not a type
+

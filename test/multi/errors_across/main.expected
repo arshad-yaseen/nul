@@ -1,0 +1,13 @@
+error[E0220]: 'Private' is private to its file
+  --> test/multi/errors_across/main.nul:18:19
+   |
+18 |     return helper.Private
+   |                   ^^^^^^^ not public
+   |
+   = help: mark the declaration 'pub' to reach it from another file
+note: declared here
+  --> test/multi/errors_across/helper.nul:2:1
+   |
+ 2 | error Private
+   | ^^^^^^^^^^^^^
+

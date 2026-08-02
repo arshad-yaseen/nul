@@ -53,10 +53,10 @@ fn errorEnum(emit: *EmitC) Error!void {
     for (0..pool.items.len) |raw| {
         const index: Pool.Index = .from(raw);
         switch (pool.keyOf(index)) {
-            .error_value => |name| {
-                try emit.out.print("#define nul_error_{s} ((nul_error){d})\n", .{
-                    pool.stringText(name), next,
-                });
+            .error_value => |declared| {
+                try emit.out.writeAll("#define ");
+                try emit.errorName(declared);
+                try emit.out.print(" ((nul_error){d})\n", .{next});
                 next += 1;
             },
             else => {},
@@ -180,7 +180,11 @@ fn writeType(emit: *EmitC, index: Pool.Index) Error!void {
     }
 }
 
-/// The struct tag behind a typedef, so the two can be written apart.
+fn errorName(emit: *EmitC, declared: Module.Decl.Index) Error!void {
+    const name = emit.comp.pool.stringText(emit.comp.declAt(declared).name);
+    try emit.out.print("nul_error_{s}_{d}", .{ name, declared.int() });
+}
+
 fn typeTag(emit: *EmitC, index: Pool.Index) Error!void {
     try emit.out.print("nul_tag_{d}", .{index.int()});
 }
@@ -587,9 +591,7 @@ fn constant(emit: *EmitC, value: Pool.Index) Error!void {
             }
         },
         .float => |it| try emit.out.print("{d}", .{it.value}),
-        .error_value => |name| {
-            try emit.out.print("nul_error_{s}", .{comp.pool.stringText(name)});
-        },
+        .error_value => |declared| try emit.errorName(declared),
         .null_typed => |carried| {
             try emit.out.writeByte('(');
             try emit.typeName(carried);

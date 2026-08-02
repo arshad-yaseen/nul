@@ -1,5 +1,7 @@
 use std.mem.Arena
 
+error TooRisky
+
 fn tidy(arena: Arena, early: bool) !i64 {
     var scratch = arena.child()
     defer scratch.reset()
@@ -12,7 +14,7 @@ fn tidy(arena: Arena, early: bool) !i64 {
 
 fn risky(seed: i64) !i64 {
     if seed > 4 {
-        return error.TooRisky
+        return TooRisky
     }
     return seed
 }

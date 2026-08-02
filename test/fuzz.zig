@@ -138,6 +138,7 @@ const exprs = [_][]const u8{
     "g(a)",                         "g(if c { 1 } else { 2 })",
     "Pair.make(a)",                 "p.total()",
     "arena.create[Pair]()",         "arena.copy(a)",
+    "Missing",                      "may catch |e| if e == TooRisky { 1 } else { 0 }",
     "if c { null } else { null }",  "a + (if c { return 1 } else { return 2 })",
 };
 
@@ -149,6 +150,7 @@ const stmts = [_][]const u8{
     "_ = $E",
     "$E",
     "return $E",
+    "return Missing",
     "if c { $E }",
     "if c { $E } else { $E }",
     "while c { $E }",
@@ -164,6 +166,9 @@ const stmts = [_][]const u8{
 
 const header =
     \\use std.mem.Arena
+    \\
+    \\error Missing
+    \\pub error TooRisky
     \\
 ;
 

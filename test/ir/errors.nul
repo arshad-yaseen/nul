@@ -1,6 +1,8 @@
+error TooMuch
+
 fn refuse(over: i64) !i64 {
     if over > 100 {
-        return error.TooMuch
+        return TooMuch
     }
     return over
 }
@@ -16,7 +18,7 @@ fn supplied(seed: i64) i64 {
 
 fn inspected(seed: i64) i64 {
     return refuse(seed) catch |err| {
-        if err == error.TooMuch {
+        if err == TooMuch {
             return 100
         }
         return -1
@@ -41,7 +43,7 @@ fn report_and_zero() i64 {
 // Reaching it takes two wraps, and every arm below writes a different one.
 fn lookup(id: i64) !?i64 {
     if id < 0 {
-        return error.TooMuch
+        return TooMuch
     }
     if id == 0 {
         return null

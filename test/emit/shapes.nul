@@ -1,3 +1,5 @@
+error Negative
+
 struct Pair {
     a: i64
     b: bool
@@ -12,7 +14,7 @@ fn maybe(n: i64) ?i64 {
 
 fn risky(n: i64) !i64 {
     if n < 0 {
-        return error.Negative
+        return Negative
     }
     return n
 }

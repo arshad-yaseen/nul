@@ -1,0 +1,2 @@
+pub error NotFound
+error Private

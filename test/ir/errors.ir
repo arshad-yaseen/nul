@@ -6,7 +6,7 @@ b0:
   branch %2, b1, b2
 b1:
   %3 = scope_begin
-  %4 = wrap_err error.TooMuch : !i64
+  %4 = wrap_err TooMuch : !i64
   %5 = scope_end %3
   %6 = scope_end %1
   return %4
@@ -71,7 +71,7 @@ b1:
 b2:
   %7 = unwrap_err %2 : an error
   %8 = scope_begin
-  %9 = cmp_eq %7, error.TooMuch : bool
+  %9 = cmp_eq %7, TooMuch : bool
   branch %9, b4, b5
 b3:
   %16 = load %3 : i64
@@ -147,7 +147,7 @@ b0:
   branch %2, b1, b2
 b1:
   %3 = scope_begin
-  %4 = wrap_err error.TooMuch : !?i64
+  %4 = wrap_err TooMuch : !?i64
   %5 = scope_end %3
   %6 = scope_end %1
   return %4

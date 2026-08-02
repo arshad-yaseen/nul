@@ -467,8 +467,12 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
                 },
             }
         },
-        .let, .fn_decl => {
-            const what = if (decl.kind == .let) "a value" else "a function";
+        .let, .error_decl, .fn_decl => {
+            const what = switch (decl.kind) {
+                .let => "a value",
+                .error_decl => "an error",
+                else => "a function",
+            };
             try check.fail(node, .{
                 .code = .not_a_type,
                 .message = try comp.fmt("'{s}' is {s}, not a type", .{ name, what }),
@@ -1698,8 +1702,6 @@ fn reportUnusedValue(
 // expressions
 
 fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
-    const comp = check.comp;
-
     // a top-level binding has no body to lower into
     if (check.builder == null) {
         if (runtimeOnly(check.tree.nodeTag(node))) |what| return check.needRuntime(node, what);
@@ -1712,10 +1714,6 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
             return .{ .constant = if (view.value) .true_value else .false_value };
         },
         .null_literal => return .{ .constant = .null_value },
-        .error_value => |token| {
-            const name = try comp.pool.string(comp.gpa, check.tree.tokenSlice(token));
-            return .{ .constant = try comp.pool.intern(comp.gpa, .{ .error_value = name }) };
-        },
         .grouped => |inner| return check.checkExpr(inner, hint),
         // a block reaches here as an arm, never by starting an expression
         .block => return check.checkBlockValue(node, hint),
@@ -1791,6 +1789,9 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             try comp.ensure(.forDecl(decl_index), check.origin(node));
             if (comp.declAt(decl_index).state != .done) return .poison;
             return .{ .constant = @enumFromInt(comp.declAt(decl_index).result) };
+        },
+        .error_decl => return .{
+            .constant = try comp.pool.intern(comp.gpa, .{ .error_value = decl_index }),
         },
         .fn_decl => return .{ .fn_ref = decl_index },
         .struct_decl => {

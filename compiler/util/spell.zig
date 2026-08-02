@@ -132,7 +132,9 @@ pub fn writeConstant(
                 try writeType(comp, writer, it.type);
             }
         },
-        .error_value => |name| try writer.print("error.{s}", .{comp.pool.stringText(name)}),
+        .error_value => |declared| try writer.writeAll(
+            comp.pool.stringText(comp.declAt(declared).name),
+        ),
         .null_typed => try writer.writeAll("null"),
         .pointer, .optional, .error_union, .struct_type => unreachable,
     }

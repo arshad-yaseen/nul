@@ -63,7 +63,7 @@ pub const Decl = struct {
     /// signature resolves, so the type knows itself.
     is_region: bool,
 
-    pub const Kind = enum(u8) { use, struct_decl, type_alias, let, fn_decl };
+    pub const Kind = enum(u8) { use, struct_decl, type_alias, error_decl, let, fn_decl };
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
 
     /// Stored in `aux` beside the payload.
@@ -212,6 +212,11 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
             },
             .type_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .type_alias,
+                .node = node,
+                .name_token = decl.name_token,
+            }),
+            .error_decl => |decl| _ = try addDecl(comp, module, index, .{
+                .kind = .error_decl,
                 .node = node,
                 .name_token = decl.name_token,
             }),
@@ -657,6 +662,7 @@ pub fn declIsPub(comp: *const Compilation, decl_index: Decl.Index) bool {
         .use_decl => |view| view.is_pub,
         .struct_decl => |view| view.is_pub,
         .type_decl => |view| view.is_pub,
+        .error_decl => |view| view.is_pub,
         .fn_decl => |view| view.is_pub,
         .var_decl => |view| view.is_pub,
         else => false,

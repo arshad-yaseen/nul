@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const AST = @import("AST.zig");
+const Module = @import("Module.zig");
 
 items: std.MultiArrayList(Item),
 /// Wide payloads. A 128-bit integer, or a float and its type.
@@ -160,7 +161,8 @@ pub const Key = union(enum) {
     struct_type: Instance,
     int: Fields.Int,
     float: Fields.Float,
-    error_value: String,
+    /// A declared error.
+    error_value: Module.Decl.Index,
     /// `null` after it met an optional type.
     null_typed: Index,
 

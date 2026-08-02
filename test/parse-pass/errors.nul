@@ -1,3 +1,6 @@
+error NotFound
+error OutOfRange
+
 fn read(arena: Arena, path: i64) !i64 {
     let value = try io.read_file(arena, path)
     return value
@@ -15,9 +18,9 @@ fn handled(arena: Arena) {
 }
 
 fn named() !i64 {
-    let e = error.NotFound
+    let e = NotFound
     _ = e
-    return error.OutOfRange
+    return OutOfRange
 }
 
 fn chained(arena: Arena) i64 {

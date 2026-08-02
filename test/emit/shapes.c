@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 typedef uint32_t nul_error;
-#define nul_error_Negative ((nul_error)1)
+#define nul_error_Negative_0 ((nul_error)1)
 
 typedef struct nul_tag_19 nul_type_19;
 typedef struct nul_tag_20 nul_opt_20;
@@ -41,7 +41,7 @@ static nul_err_24 nul_risky_2(int64_t t0) {
     t2 = t0 < (int64_t)0;
     if (t2) goto b1; else goto b2;
 b1:;
-    t4 = (nul_err_24){ .err = nul_error_Negative };
+    t4 = (nul_err_24){ .err = nul_error_Negative_0 };
     return t4;
 b2:;
     t7 = (nul_err_24){ .err = 0, .value = t0 };

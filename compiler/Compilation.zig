@@ -243,7 +243,7 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
-        .use, .type_alias, .let => {},
+        .use, .type_alias, .error_decl, .let => {},
         .fn_decl => try comp.ensureBodiesFn(decl_index, origin),
         .struct_decl => {
             if (decl.state != .done) return;
@@ -349,7 +349,7 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
         .use => return Module.resolveUse(comp, decl_index),
         .type_alias => return Check.typeAlias(comp, decl_index),
         .let => return Check.topLevelLet(comp, decl_index),
-        .fn_decl => return true,
+        .error_decl, .fn_decl => return true,
         .struct_decl => {
             if (comp.isGeneric(decl_index)) return true;
             const instance = try comp.instantiate(decl_index, &.{});
@@ -388,7 +388,7 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
             .let => try comp.fmt("'{s}' takes its value from itself", .{name}),
             .type_alias => try comp.fmt("type '{s}' is an alias of itself", .{name}),
             .use => "this import goes in a circle",
-            .struct_decl, .fn_decl => "this definition goes in a circle",
+            .struct_decl, .error_decl, .fn_decl => "this definition goes in a circle",
         },
         .size => try comp.fmt("'{s}' holds itself by value, so it has no size", .{name}),
         .rows, .signature, .body => "this definition goes in a circle",

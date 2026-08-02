@@ -1,4 +1,6 @@
 root
+  error_decl NotFound
+  error_decl OutOfRange
   fn_decl read
     param arena
       type: ident Arena
@@ -51,12 +53,12 @@ root
       child: ident i64
     body: block
       var_decl e let
-        init: error_value NotFound
+        init: ident NotFound
       assign
         lhs: ident _
         rhs: ident e
       return_expr
-        value: error_value OutOfRange
+        value: ident OutOfRange
   fn_decl chained
     param arena
       type: ident Arena

@@ -1,6 +1,8 @@
+error TooRisky
+
 fn risky(seed: i64) !i64 {
     if seed > 4 {
-        return error.TooRisky
+        return TooRisky
     }
     return seed
 }

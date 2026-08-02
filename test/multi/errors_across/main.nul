@@ -1,0 +1,19 @@
+use helper
+
+error NotFound
+
+fn mine() !i64 {
+    return NotFound
+}
+
+fn theirs() !i64 {
+    return helper.NotFound
+}
+
+fn distinct() bool {
+    return NotFound == helper.NotFound
+}
+
+fn hidden() !i64 {
+    return helper.Private
+}

@@ -353,9 +353,8 @@ const TokenSet = std.EnumSet(Token.Tag);
 const starts_expr = TokenSet.initMany(&.{
     .ident,     .number,      .kw_true,   .kw_false,
     .kw_null,   .l_paren,     .dot,       .minus,
-    .bang,      .kw_try,      .ampersand, .kw_error,
+    .bang,      .kw_try,      .ampersand, .invalid,
     .kw_if,     .kw_return,   .kw_break,  .kw_continue,
-    .invalid,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
@@ -367,13 +366,12 @@ const starts_type = TokenSet.initMany(&.{ .ident, .star, .question, .bang });
 const starts_name = TokenSet.initOne(.ident);
 
 const starts_decl = TokenSet.initMany(&.{
-    .kw_pub, .kw_use, .kw_struct, .kw_type, .kw_fn, .kw_let, .kw_var,
+    .kw_pub,   .kw_use, .kw_struct, .kw_type,
+    .kw_error, .kw_fn,  .kw_let,    .kw_var,
 });
 
 const ends_list = starts_decl.unionWith(TokenSet.initMany(&.{ .l_brace, .r_brace, .semi }));
 
-/// Every bracketed, comma separated list in the grammar. They are one function
-/// because they recover the same way.
 const List = struct {
     /// Each element lands in `scratch`.
     item: *const fn (*Parse) Allocator.Error!Node.Index,
@@ -456,6 +454,7 @@ fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
         .kw_use => return self.parseUseDecl(),
         .kw_struct => return self.parseStructDecl(),
         .kw_type => return self.parseTypeDecl(),
+        .kw_error => return self.parseErrorDecl(),
         .kw_fn => return self.parseFnDecl(),
         .kw_let => return self.parseVarDecl(),
         .kw_var => {
@@ -598,6 +597,22 @@ fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
     });
     assert(self.nodes.items(.tag)[node.int()] == .type_decl);
     return node;
+}
+
+/// `error Name`
+fn parseErrorDecl(self: *Parse) Allocator.Error!Node.Index {
+    const entry = self.token_index;
+    defer assert(self.token_index.int() > entry.int() or self.eof());
+    assert(self.at(.kw_error));
+
+    const error_token = self.nextToken();
+    try self.expectToken(.ident);
+    try self.expectEndOfStatement();
+    return self.addNode(.{
+        .tag = .error_decl,
+        .main_token = error_token,
+        .data = .{ .none = {} },
+    });
 }
 
 fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
@@ -1154,7 +1169,6 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .number => return self.addLeaf(.number_literal),
         .kw_true, .kw_false => return self.addLeaf(.bool_literal),
         .kw_null => return self.addLeaf(.null_literal),
-        .kw_error => return self.parseErrorValue(),
         .dot => return self.parseStructLiteral(),
         .l_paren => {
             const lparen = self.nextToken();
@@ -1182,26 +1196,6 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-fn parseErrorValue(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
-    assert(self.at(.kw_error));
-    _ = self.nextToken();
-    if (self.at(.dot) == false) {
-        try self.errExpected(.expected_token, Token.Tag.dot.symbol());
-        return self.hole();
-    }
-    _ = self.nextToken();
-    if (self.at(.ident) == false) {
-        try self.errExpected(.expected_token, Token.Tag.ident.symbol());
-        return self.hole();
-    }
-    // `main_token` is the member, so the keyword is two before it
-    const name = self.nextToken();
-    assert(self.tags[name.before(2).int()] == .kw_error);
-    return self.addNode(.{ .tag = .error_value, .main_token = name, .data = .{ .none = {} } });
-}
 
 fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
     assert(self.depth <= depth_max);

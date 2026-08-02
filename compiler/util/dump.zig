@@ -41,6 +41,12 @@ fn node(
             try writer.writeByte('\n');
             for (children) |child| try node(ast, writer, child, below, "");
         },
+        .error_decl => |it| {
+            try writer.print(" {s}", .{ast.tokenSlice(it.name_token)});
+            try flag(writer, it.is_pub, "pub");
+            try writer.writeByte('\n');
+            try docs(ast, writer, index, below);
+        },
         .use_decl => |it| {
             try flag(writer, it.is_pub, "pub");
             try writer.writeByte('\n');
@@ -81,7 +87,7 @@ fn node(
             if (it.type_expr.unwrap()) |declared| try node(ast, writer, declared, below, "type");
             try node(ast, writer, it.init_expr, below, "init");
         },
-        .type_param, .capture, .error_value => |token| {
+        .type_param, .capture => |token| {
             try writer.print(" {s}\n", .{ast.tokenSlice(token)});
         },
         .param, .field => |it| {

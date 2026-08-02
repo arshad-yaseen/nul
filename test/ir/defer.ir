@@ -6,7 +6,7 @@ b0:
   branch %2, b1, b2
 b1:
   %3 = scope_begin
-  %4 = wrap_err error.TooRisky : !i64
+  %4 = wrap_err TooRisky : !i64
   %5 = scope_end %3
   %6 = scope_end %1
   return %4
