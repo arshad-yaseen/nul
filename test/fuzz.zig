@@ -162,9 +162,12 @@ const stmts = [_][]const u8{
     "{ let y = $E  _ = y }",
 };
 
-const preamble =
+const header =
     \\use std.mem.Arena
     \\
+;
+
+const preamble =
     \\struct Pair {
     \\    v: i64
     \\
@@ -198,6 +201,16 @@ const epilogue =
 
 fn generate(gpa: Allocator, source: *std.ArrayList(u8), random: std.Random) !void {
     source.clearRetainingCapacity();
+    try source.appendSlice(gpa, header);
+
+    // a top-level binding is checked with no body to lower into, which is a
+    // second mode the same expressions have to survive
+    for (0..random.uintLessThan(u32, 3)) |at| {
+        try source.print(gpa, "let k{d} = {s}\n", .{
+            at, exprs[random.uintLessThan(usize, exprs.len)],
+        });
+    }
+
     try source.appendSlice(gpa, preamble);
 
     const count = random.intRangeAtMost(u32, 1, statements_max);

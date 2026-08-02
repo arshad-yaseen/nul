@@ -1,0 +1,64 @@
+error[E0214]: a top-level binding must be a constant, and an 'if' happens at run time
+ --> test/fail/constant_context.nul:5:16
+  |
+5 | let branched = if true { 1 } else { 2 }
+  |                ^^^^^^^^^^^^^^^^^^^^^^ not a constant
+  |
+  = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and 'return' happens at run time
+ --> test/fail/constant_context.nul:6:12
+  |
+6 | let left = return 1
+  |            ^^^^^^^^ not a constant
+  |
+  = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and 'break' happens at run time
+ --> test/fail/constant_context.nul:7:15
+  |
+7 | let escaped = break
+  |               ^^^^^ not a constant
+  |
+  = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and 'continue' happens at run time
+ --> test/fail/constant_context.nul:8:15
+  |
+8 | let carried = continue
+  |               ^^^^^^^^ not a constant
+  |
+  = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and 'catch' happens at run time
+ --> test/fail/constant_context.nul:9:15
+  |
+9 | let rescued = answer() catch 0
+  |               ^^^^^^^^^^^^^^^^ not a constant
+  |
+  = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and 'orelse' happens at run time
+  --> test/fail/constant_context.nul:10:17
+   |
+10 | let defaulted = answer() orelse 0
+   |                 ^^^^^^^^^^^^^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and 'try' happens at run time
+  --> test/fail/constant_context.nul:11:17
+   |
+11 | let attempted = try answer()
+   |                 ^^^^^^^^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
+
+error[E0214]: a top-level binding must be a constant, and a struct literal happens at run time
+  --> test/fail/constant_context.nul:12:18
+   |
+12 | let built: i64 = .{ x: 1 }
+   |                  ^^^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
+

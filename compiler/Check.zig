@@ -1700,6 +1700,11 @@ fn reportUnusedValue(
 fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     const comp = check.comp;
 
+    // a top-level binding has no body to lower into
+    if (check.builder == null) {
+        if (runtimeOnly(check.tree.nodeTag(node))) |what| return check.needRuntime(node, what);
+    }
+
     switch (check.tree.viewOf(node)) {
         .ident => return check.checkIdent(node),
         .number_literal => return check.checkNumber(node),
@@ -2029,11 +2034,15 @@ fn checkShortCircuit(check: *Check, node: Node.Index, view: AST.View.Binary) All
             (if (view.op == .bool_and) Pool.Index.false_value else Pool.Index.true_value);
         if (decided) {
             // the answer is the left side, and the right still has to be
-            // checked. checked and taken back, the way a defer is
-            const builder = check.builder.?;
-            const before = builder.mark();
-            _ = try check.checkExpr(view.rhs, null);
-            builder.rewind(before);
+            // checked. a constant context emits nothing, so only a body has
+            // anything to take back
+            if (check.builder) |builder| {
+                const before = builder.mark();
+                _ = try check.checkExpr(view.rhs, null);
+                builder.rewind(before);
+            } else {
+                _ = try check.checkExpr(view.rhs, null);
+            }
             return lhs_met;
         }
         const rhs = try check.checkExpr(view.rhs, null);
@@ -2149,7 +2158,7 @@ fn foldUnaryResult(check: *Check, op_token: Token.Index, folded: Pool.Fold) Allo
 
 fn checkTry(check: *Check, node: Node.Index, operand: Node.Index) Allocator.Error!Value {
     const comp = check.comp;
-    const builder = check.builder orelse return check.needRuntime(node, "'try'");
+    const builder = check.builder.?;
 
     if (builder.in_defer) {
         try check.fail(node, .{
@@ -2224,7 +2233,6 @@ fn checkOrelse(
     const comp = check.comp;
     const lhs = try check.checkExpr(view.lhs, null);
     if (lhs == .poison) return .poison;
-    if (check.builder == null) return check.needRuntime(node, "'orelse'");
 
     // a constant left side is always `null`, so the answer is the right side
     if (lhs == .constant) {
@@ -2258,7 +2266,6 @@ fn checkCatch(
 ) Allocator.Error!Value {
     const lhs = try check.checkExpr(view.lhs, null);
     if (lhs == .poison) return .poison;
-    if (check.builder == null) return check.needRuntime(node, "'catch'");
     if (try check.valueOnly(view.lhs, lhs) == false) return .poison;
 
     return check.checkRescue(node, .{
@@ -2695,7 +2702,6 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
             return .poison;
         },
     };
-    if (check.builder == null) return check.needRuntime(node, "a struct literal");
 
     try comp.ensureRows(instance);
     const rows = comp.instanceAt(instance).rows;
@@ -2826,9 +2832,6 @@ fn checkCall(check: *Check, node: Node.Index) Allocator.Error!Value {
         for (view.args) |argument| _ = try check.checkExpr(argument, null);
         return .poison;
     };
-    if (check.builder == null) {
-        return check.needRuntime(node, "a call");
-    }
     return check.checkCallResolved(node, callee, view.args);
 }
 
@@ -4152,6 +4155,22 @@ fn valueOnly(check: *Check, node: Node.Index, value: Value) Allocator.Error!bool
             return false;
         },
     }
+}
+
+fn runtimeOnly(tag: Node.Tag) ?[]const u8 {
+    return switch (tag) {
+        .if_expr => "an 'if'",
+        .block => "a block",
+        .return_expr => "'return'",
+        .break_expr => "'break'",
+        .continue_expr => "'continue'",
+        .orelse_expr => "'orelse'",
+        .catch_expr => "'catch'",
+        .try_expr => "'try'",
+        .call => "a call",
+        .struct_literal => "a struct literal",
+        else => null,
+    };
 }
 
 fn needRuntime(check: *Check, node: Node.Index, what: []const u8) Allocator.Error!Value {

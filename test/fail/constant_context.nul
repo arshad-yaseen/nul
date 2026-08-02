@@ -1,0 +1,15 @@
+fn answer() i64 {
+    return 42
+}
+
+let branched = if true { 1 } else { 2 }
+let left = return 1
+let escaped = break
+let carried = continue
+let rescued = answer() catch 0
+let defaulted = answer() orelse 0
+let attempted = try answer()
+let built: i64 = .{ x: 1 }
+
+let folded_and = false and true
+let folded_or = true or false
