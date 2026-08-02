@@ -597,6 +597,55 @@ const Builder = struct {
         broke: bool,
     };
 
+    fn blockAt(builder: *Builder, index: IR.Block.Index) *BlockBuild {
+        assert(index.int() < builder.blocks.items.len);
+        return &builder.blocks.items[index.int()];
+    }
+
+    fn currentBlock(builder: *Builder) *BlockBuild {
+        return builder.blockAt(builder.current);
+    }
+
+    const Mark = struct {
+        insts: usize,
+        extra: usize,
+        blocks: usize,
+        locals: usize,
+        scopes: usize,
+        loops: usize,
+        operands: usize,
+        current: IR.Block.Index,
+    };
+
+    fn mark(builder: *const Builder) Mark {
+        return .{
+            .insts = builder.insts.len,
+            .extra = builder.extra.items.len,
+            .blocks = builder.blocks.items.len,
+            .locals = builder.locals.items.len,
+            .scopes = builder.scopes.items.len,
+            .loops = builder.loops.items.len,
+            .operands = builder.operands.items.len,
+            .current = builder.current,
+        };
+    }
+
+    fn rewind(builder: *Builder, to: Mark) void {
+        assert(builder.scopes.items.len == to.scopes);
+        assert(builder.loops.items.len == to.loops);
+        assert(builder.operands.items.len == to.operands);
+
+        builder.insts.shrinkRetainingCapacity(to.insts);
+        builder.extra.shrinkRetainingCapacity(to.extra);
+        builder.blocks.shrinkRetainingCapacity(to.blocks);
+        builder.locals.shrinkRetainingCapacity(to.locals);
+        builder.current = to.current;
+
+        const open = builder.currentBlock();
+        open.terminator = .none;
+        open.count = 0;
+    }
+
     fn deinit(builder: *Builder, gpa: Allocator) void {
         builder.insts.deinit(gpa);
         builder.extra.deinit(gpa);
@@ -718,7 +767,7 @@ fn emit(
     const builder = check.builder.?;
     // control may have left inside a subexpression. what is emitted from here
     // reaches a block nothing jumps to, which `finish` drops
-    if (builder.blocks.items[builder.current.int()].terminator != .none) {
+    if (builder.currentBlock().terminator != .none) {
         const dead = try check.newBlock();
         check.startBlock(dead);
         builder.live = false;
@@ -777,15 +826,16 @@ fn newBlock(check: *Check) Allocator.Error!IR.Block.Index {
 
 fn startBlock(check: *Check, block: IR.Block.Index) void {
     const builder = check.builder.?;
-    assert(builder.blocks.items[block.int()].terminator == .none);
+    const opened = builder.blockAt(block);
+    assert(opened.terminator == .none);
 
-    builder.blocks.items[block.int()].first = @intCast(builder.insts.len);
+    opened.first = @intCast(builder.insts.len);
     builder.current = block;
 }
 
 fn endBlock(check: *Check, terminator: IR.Terminator) void {
     const builder = check.builder.?;
-    const block = &builder.blocks.items[builder.current.int()];
+    const block = builder.currentBlock();
     assert(terminator != .none);
     assert(block.terminator == .none);
 
@@ -795,7 +845,7 @@ fn endBlock(check: *Check, terminator: IR.Terminator) void {
 
 fn blockOpen(check: *const Check) bool {
     const builder = check.builder.?;
-    return builder.blocks.items[builder.current.int()].terminator == .none;
+    return builder.currentBlock().terminator == .none;
 }
 
 // scopes, locals, and every way out
@@ -1599,26 +1649,13 @@ fn checkLoopExit(check: *Check, node: Node.Index, exit: LoopExit) Allocator.Erro
     return .never;
 }
 
-/// Checked once here and rolled back, then emitted at every scope exit. The
-/// rollback still reports a scope that never exits cleanly, and one report per
-/// spot drops what the exits would duplicate.
+/// Checked once here and taken back, then emitted at every scope exit.
 fn checkDefer(check: *Check, expr: Node.Index) Allocator.Error!void {
     const builder = check.builder.?;
-    const insts_mark = builder.insts.len;
-    const extra_mark = builder.extra.items.len;
-    const blocks_mark = builder.blocks.items.len;
-    const locals_mark = builder.locals.items.len;
-    const current = builder.current;
+    const before = builder.mark();
 
     try check.emitDefer(expr);
-
-    builder.insts.shrinkRetainingCapacity(insts_mark);
-    builder.extra.shrinkRetainingCapacity(extra_mark);
-    builder.blocks.shrinkRetainingCapacity(blocks_mark);
-    builder.locals.shrinkRetainingCapacity(locals_mark);
-    builder.current = current;
-    builder.blocks.items[current.int()].terminator = .none;
-    builder.blocks.items[current.int()].count = 0;
+    builder.rewind(before);
 
     try builder.defer_nodes.append(check.comp.gpa, expr);
 }
