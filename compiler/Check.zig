@@ -1,4 +1,4 @@
-//! Lower to IR.
+//! Type check the AST, lowering function bodies to IR.
 
 const std = @import("std");
 const assert = std.debug.assert;
