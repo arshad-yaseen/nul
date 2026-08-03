@@ -606,7 +606,6 @@ fn constant(emit: *EmitC, value: Pool.Index) Error!void {
 /// `main` in the root module is where a program starts.
 fn entryPoint(emit: *EmitC) Error!bool {
     const comp = emit.comp;
-    const root = comp.moduleAt(.root);
     for (comp.funcs.items) |*func| {
         const decl_index = comp.instanceDecl(func.instance);
         const decl = comp.declAt(decl_index);
@@ -619,6 +618,5 @@ fn entryPoint(emit: *EmitC) Error!bool {
         try emit.out.writeAll("(); }\n");
         return true;
     }
-    _ = root;
     return false;
 }
