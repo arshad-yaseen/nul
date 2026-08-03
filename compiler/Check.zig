@@ -35,24 +35,28 @@ const type_depth_max = AST.nest_max;
 
 const Binding = struct { name: Pool.String, type: Pool.Index };
 
+/// What an expression turned out to be. A `_ref` is not a value, and is legal
+/// only where its comment says.
 const Value = union(enum) {
     constant: Pool.Index,
     runtime: Runtime,
-    /// Control left, so it fits wherever a value is wanted.
+    /// No value, no diagnostic owed. `poison` is the same after one.
     never,
-    /// Legal only as the base of a `.` access.
-    type_ref: Pool.Index,
-    /// A generic struct without its arguments.
-    generic_ref: Decl.Index,
-    /// Legal only as a callee or an instance base.
-    fn_ref: Decl.Index,
-    module_ref: Module.Index,
-    builtin_ref,
     poison,
+    /// `Point` in `Point.zero()`.
+    type_ref: Pool.Index,
+    /// `Box` in `Box[i64]`, awaiting arguments.
+    generic_ref: Decl.Index,
+    /// `helper` in `helper(1)`.
+    fn_ref: Decl.Index,
+    /// `std` in `std.mem`.
+    module_ref: Module.Index,
+    /// `builtin` in `= builtin.arena_init`.
+    builtin_ref,
 
     const Runtime = struct { ref: Ref, type: Pool.Index };
 
-    /// Produced nothing, but typed.
+    /// A void result. Callers read the type, never the ref.
     const nothing: Value = .{ .runtime = .{ .ref = .fromConstant(.poison), .type = .nothing_type } };
 };
 
@@ -160,9 +164,9 @@ fn sizeWalkType(
     if (depth >= type_depth_max) return;
     switch (comp.pool.keyOf(type_index)) {
         .struct_type => |embedded| try comp.ensure(.of(.size, embedded), from),
-        .optional, .error_union => |child| try sizeWalkType(comp, child, from, depth + 1),
-        .simple, .pointer => {},
-        .int, .float, .error_value, .null_typed => unreachable,
+        .optional_type, .error_union_type => |child| try sizeWalkType(comp, child, from, depth + 1),
+        .simple_type, .simple_value, .pointer_type => {},
+        .int, .float, .error_value, .optional_null => unreachable,
     }
 }
 
@@ -358,13 +362,13 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
             const child = try check.resolveType(pointer.child);
             if (child == .poison) return .poison;
             return comp.pool.intern(comp.gpa, .{
-                .pointer = .{ .child = child, .mutable = pointer.is_mutable },
+                .pointer_type = .{ .child = child, .mutable = pointer.is_mutable },
             });
         },
         .optional_type => |child_node| {
             const child = try check.resolveType(child_node);
             if (child == .poison) return .poison;
-            if (comp.pool.keyOf(child) == .error_union) {
+            if (comp.pool.keyOf(child) == .error_union_type) {
                 try check.fail(node, .{
                     .code = .not_error_union,
                     .message = "an optional cannot hold an error union",
@@ -373,13 +377,13 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
                 });
                 return .poison;
             }
-            return comp.pool.intern(comp.gpa, .{ .optional = child });
+            return comp.pool.intern(comp.gpa, .{ .optional_type = child });
         },
         .error_union_type => |child_node| {
             const child = try check.resolveType(child_node);
             if (child == .poison) return .poison;
             // by the resolved type, so an alias cannot smuggle a '!' in
-            if (comp.pool.keyOf(child) == .error_union) {
+            if (comp.pool.keyOf(child) == .error_union_type) {
                 try check.fail(node, .{
                     .code = .not_error_union,
                     .message = "an error union cannot hold another error union",
@@ -388,7 +392,7 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
                 });
                 return .poison;
             }
-            return comp.pool.intern(comp.gpa, .{ .error_union = child });
+            return comp.pool.intern(comp.gpa, .{ .error_union_type = child });
         },
         .err => return .poison,
         // the parser builds only type nodes in type positions
@@ -398,7 +402,7 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
 
 fn pointerTo(check: *Check, child: Pool.Index, mutable: bool) Allocator.Error!Pool.Index {
     const comp = check.comp;
-    return comp.pool.intern(comp.gpa, .{ .pointer = .{ .child = child, .mutable = mutable } });
+    return comp.pool.intern(comp.gpa, .{ .pointer_type = .{ .child = child, .mutable = mutable } });
 }
 
 fn resolveTypeName(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
@@ -1130,8 +1134,8 @@ fn checkVarDeclSlot(
         assert(view.is_mutable);
         const spelled = switch (comp.pool.keyOf(final.constant)) {
             .int, .float => true,
-            .null_typed => false,
-            .simple => |simple| simple == .null,
+            .optional_null => false,
+            .simple_value => |simple| simple == .null,
             else => false,
         };
         if (spelled) {
@@ -1196,7 +1200,7 @@ fn checkAssign(check: *Check, assign: AST.View.Pair) Allocator.Error!void {
             }
             const found = check.typeOf(value);
             if (found == .poison) return;
-            if (check.comp.pool.keyOf(found) == .error_union) {
+            if (check.comp.pool.keyOf(found) == .error_union_type) {
                 try check.fail(assign.rhs, .{
                     .code = .error_ignored,
                     .message = "this can fail, and '_ =' drops only the value",
@@ -1497,7 +1501,7 @@ fn checkCondition(check: *Check, node: Node.Index) Allocator.Error!Ref {
     if (found == .bool_type) return refOf(value);
     if (found == .poison) return .fromConstant(.poison);
 
-    const optional = check.comp.pool.keyOf(found) == .optional;
+    const optional = check.comp.pool.keyOf(found) == .optional_type;
     try check.fail(node, .{
         .code = .condition_not_bool,
         .message = try check.comp.fmt("this condition is {s}, not a bool", .{
@@ -1532,7 +1536,7 @@ fn optionalPayload(check: *Check, node: Node.Index, value: Value) Allocator.Erro
     const found = check.typeOf(value);
     if (found == .poison) return .poison;
     switch (check.comp.pool.keyOf(found)) {
-        .optional => |child| return child,
+        .optional_type => |child| return child,
         else => {
             try check.fail(node, .{
                 .code = .not_optional,
@@ -1645,7 +1649,7 @@ fn expectNothing(check: *Check, node: Node.Index, value: Value) Allocator.Error!
     if (found == .nothing_type) return;
     if (found == .poison) return;
 
-    if (check.comp.pool.keyOf(found) == .error_union) {
+    if (check.comp.pool.keyOf(found) == .error_union_type) {
         try check.fail(node, .{
             .code = .error_ignored,
             .message = "this can fail, and nothing here handles it",
@@ -2146,7 +2150,7 @@ fn checkTry(check: *Check, node: Node.Index, operand: Node.Index) Allocator.Erro
     if (value == .poison) return .poison;
     const found = check.typeOf(value);
     const payload = switch (comp.pool.keyOf(found)) {
-        .error_union => |child| child,
+        .error_union_type => |child| child,
         else => {
             try check.fail(operand, .{
                 .code = .not_error_union,
@@ -2161,7 +2165,7 @@ fn checkTry(check: *Check, node: Node.Index, operand: Node.Index) Allocator.Erro
     };
 
     const returns = comp.pool.keyOf(builder.return_type);
-    if (returns != .error_union) {
+    if (returns != .error_union_type) {
         try check.fail(node, .{
             .code = .try_needs_error_return,
             .message = "'try' passes the error up, but this function cannot fail",
@@ -2208,7 +2212,7 @@ fn checkOrelse(
     // a constant left side is always `null`
     if (lhs == .constant) {
         const key = comp.pool.keyOf(lhs.constant);
-        const is_null = key == .null_typed or (key == .simple and key.simple == .null);
+        const is_null = key == .optional_null or key == .simple_value;
         if (is_null == false) {
             try check.fail(view.lhs, .{
                 .code = .not_optional,
@@ -2352,8 +2356,8 @@ fn checkRescue(
 
 fn rescuePayload(check: *const Check, kind: Rescue.Kind, found: Pool.Index) ?Pool.Index {
     return switch (check.comp.pool.keyOf(found)) {
-        .optional => |child| if (kind == .optional) child else null,
-        .error_union => |child| if (kind == .error_union) child else null,
+        .optional_type => |child| if (kind == .optional) child else null,
+        .error_union_type => |child| if (kind == .error_union) child else null,
         else => null,
     };
 }
@@ -2457,7 +2461,7 @@ fn valueField(
             });
             return runtimeValue(result, row_type);
         },
-        .pointer => |pointer| {
+        .pointer_type => |pointer| {
             switch (comp.pool.keyOf(pointer.child)) {
                 .struct_type => |instance| {
                     const row = try check.findField(instance, view.name_token) orelse
@@ -2475,7 +2479,7 @@ fn valueField(
             try check.reportNoField(node, found, name_text);
             return .poison;
         },
-        .optional, .error_union => {
+        .optional_type, .error_union_type => {
             try check.reportUnopened(node, found);
             return .poison;
         },
@@ -2489,7 +2493,7 @@ fn valueField(
 fn reportUnopened(check: *Check, node: Node.Index, found: Pool.Index) Allocator.Error!void {
     const comp = check.comp;
     switch (comp.pool.keyOf(found)) {
-        .optional => try check.fail(node, .{
+        .optional_type => try check.fail(node, .{
             .code = .optional_not_unwrapped,
             .message = try comp.fmt("this is {s}, so reach inside it first", .{
                 try comp.typeName(found),
@@ -2497,7 +2501,7 @@ fn reportUnopened(check: *Check, node: Node.Index, found: Pool.Index) Allocator.
             .label = "may be null",
             .help = "'if x |v| { }' and 'x orelse ...' unwrap an optional",
         }),
-        .error_union => try check.fail(node, .{
+        .error_union_type => try check.fail(node, .{
             .code = .not_error_union,
             .message = try comp.fmt("this is {s}, and it can still fail", .{
                 try comp.typeName(found),
@@ -2653,8 +2657,8 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     var peeled: u32 = 0;
     while (peeled < type_depth_max) : (peeled += 1) {
         switch (comp.pool.keyOf(wanted)) {
-            .optional => |child| wanted = child,
-            .error_union => |child| wanted = child,
+            .optional_type => |child| wanted = child,
+            .error_union_type => |child| wanted = child,
             else => break,
         }
     }
@@ -3168,7 +3172,7 @@ fn plural(count: u32) []const u8 {
 
 fn peelOnePointer(comp: *const Compilation, type_index: Pool.Index) Pool.Index {
     return switch (comp.pool.keyOf(type_index)) {
-        .pointer => |pointer| pointer.child,
+        .pointer_type => |pointer| pointer.child,
         else => type_index,
     };
 }
@@ -3200,7 +3204,7 @@ fn checkArgument(
         if (unary.op == .address_of) {
             const place = try check.checkPlace(unary.operand) orelse return .poison;
             const wanted_mutable = switch (check.comp.pool.keyOf(row_type)) {
-                .pointer => |pointer| pointer.mutable,
+                .pointer_type => |pointer| pointer.mutable,
                 else => false,
             };
             if (wanted_mutable and place.mutable == false) {
@@ -3286,7 +3290,7 @@ fn inferTypeArguments(
         }
         if (pin.through_pointer) {
             switch (comp.pool.keyOf(found)) {
-                .pointer => |pointer| found = pointer.child,
+                .pointer_type => |pointer| found = pointer.child,
                 else => {
                     _ = try check.reportMismatch(args[pin.argument], pinned, .poison);
                     return false;
@@ -3342,14 +3346,14 @@ fn adaptReceiver(
     assert(place.type != .poison);
 
     switch (comp.pool.keyOf(self_type)) {
-        .pointer => |wanted| {
+        .pointer_type => |wanted| {
             // the receiver may already be the pointer, or need its address
             if (place.type == self_type) {
                 return try check.placeValue(place);
             }
             const place_key = comp.pool.keyOf(place.type);
-            if (place_key == .pointer and place_key.pointer.child == wanted.child) {
-                if (wanted.mutable and place_key.pointer.mutable == false) {
+            if (place_key == .pointer_type and place_key.pointer_type.child == wanted.child) {
+                if (wanted.mutable and place_key.pointer_type.mutable == false) {
                     try check.fail(receiver_node, .{
                         .code = .write_through_pointer,
                         .message = try comp.fmt(
@@ -3379,7 +3383,7 @@ fn adaptReceiver(
                 return try check.placeValue(place);
             }
             const place_key = comp.pool.keyOf(place.type);
-            if (place_key == .pointer and place_key.pointer.child == self_type) {
+            if (place_key == .pointer_type and place_key.pointer_type.child == self_type) {
                 // through one pointer, the way field access does
                 const pointer = try check.placeValue(place);
                 return try check.emitOne(.load, self_type, pointer);
@@ -3666,7 +3670,7 @@ fn placeField(
                 .root_node = addressed.root_node,
             };
         },
-        .pointer => |pointer| {
+        .pointer_type => |pointer| {
             switch (comp.pool.keyOf(pointer.child)) {
                 .struct_type => |instance| {
                     const row = try check.findField(instance, name_token) orelse return null;
@@ -3696,7 +3700,7 @@ fn placeField(
                 },
             }
         },
-        .optional, .error_union => {
+        .optional_type, .error_union_type => {
             try check.reportUnopened(node, base.type);
             return null;
         },
@@ -3770,7 +3774,7 @@ fn reportImmutable(check: *Check, node: Node.Index, place: Place) Allocator.Erro
             .help = "copy it into a 'var' to work on it",
         },
         .const_pointer => |crossed| report: {
-            const child = comp.pool.keyOf(crossed).pointer.child;
+            const child = comp.pool.keyOf(crossed).pointer_type.child;
             break :report .{
                 .code = .write_through_pointer,
                 .message = try comp.fmt("this writes through a '{s}', which is read-only", .{
@@ -3876,13 +3880,13 @@ fn coerce(
             const want = comp.pool.keyOf(wanted);
 
             // the one subtyping edge
-            if (have == .pointer and want == .pointer) {
-                const compatible = have.pointer.child == want.pointer.child and
-                    have.pointer.mutable and want.pointer.mutable == false;
+            if (have == .pointer_type and want == .pointer_type) {
+                const compatible = have.pointer_type.child == want.pointer_type.child and
+                    have.pointer_type.mutable and want.pointer_type.mutable == false;
                 if (compatible) {
                     return runtimeValue(runtime.ref, wanted);
                 }
-                if (have.pointer.child == want.pointer.child) {
+                if (have.pointer_type.child == want.pointer_type.child) {
                     try check.fail(node, .{
                         .code = .write_through_pointer,
                         .message = try comp.fmt("this is {s}, and {s} is needed to write", .{
@@ -3931,9 +3935,9 @@ fn coerceQuiet(
             if (runtime.type == wanted) return value;
             const have = comp.pool.keyOf(runtime.type);
             const want = comp.pool.keyOf(wanted);
-            if (have == .pointer and want == .pointer) {
-                const compatible = have.pointer.child == want.pointer.child and
-                    have.pointer.mutable and want.pointer.mutable == false;
+            if (have == .pointer_type and want == .pointer_type) {
+                const compatible = have.pointer_type.child == want.pointer_type.child and
+                    have.pointer_type.mutable and want.pointer_type.mutable == false;
                 if (compatible) return runtimeValue(runtime.ref, wanted);
             }
         },
@@ -3942,11 +3946,11 @@ fn coerceQuiet(
 
     // no match at this level, so wrap once and ask again inside
     switch (comp.pool.keyOf(wanted)) {
-        .optional => |child| {
+        .optional_type => |child| {
             const inner = try check.coerceQuiet(value, child, node, depth + 1) orelse return null;
             return try check.wrap(.wrap_optional, wanted, refOf(inner));
         },
-        .error_union => |child| {
+        .error_union_type => |child| {
             if (check.typeOf(value) == .error_type) {
                 return try check.wrap(.wrap_err, wanted, refOf(value));
             }
@@ -3983,13 +3987,13 @@ fn meetOrWrap(
     }
 
     switch (comp.pool.keyOf(wanted)) {
-        .optional => |child| {
+        .optional_type => |child| {
             const inner = try check.meetOrWrap(constant, child, node);
             if (inner == .poison) return .poison;
             if (check.builder == null) return check.needRuntime(node, "wrapping an optional");
             return check.wrap(.wrap_optional, wanted, refOf(inner));
         },
-        .error_union => |child| {
+        .error_union_type => |child| {
             if (check.builder == null) return check.needRuntime(node, "wrapping an error union");
             if (comp.pool.keyOf(constant) == .error_value) {
                 return check.wrap(.wrap_err, wanted, .fromConstant(constant));
@@ -4024,7 +4028,7 @@ fn meetConstant(
         },
         .wrong_kind => {
             switch (comp.pool.keyOf(wanted)) {
-                .optional, .error_union => {
+                .optional_type, .error_union_type => {
                     try check.fail(node, .{
                         .code = .not_constant,
                         .message = try comp.fmt(
@@ -4070,7 +4074,7 @@ fn reportMismatch(
     const found = check.typeOf(value);
     const found_name = switch (value) {
         .constant => |constant| switch (comp.pool.keyOf(constant)) {
-            .simple => |simple| if (simple == .null) "null" else try comp.typeName(found),
+            .simple_value => |simple| if (simple == .null) "null" else try comp.typeName(found),
             else => try comp.typeName(found),
         },
         else => try comp.typeName(found),

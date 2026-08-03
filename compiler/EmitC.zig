@@ -72,7 +72,7 @@ fn forwardStructs(emit: *EmitC) Error!void {
     for (0..comp.pool.items.len) |raw| {
         const index: Pool.Index = .from(raw);
         switch (comp.pool.keyOf(index)) {
-            .struct_type, .optional, .error_union => {},
+            .struct_type, .optional_type, .error_union_type => {},
             else => continue,
         }
         try emit.out.writeAll("typedef struct ");
@@ -90,7 +90,7 @@ fn types(emit: *EmitC, gpa: Allocator) Error!void {
     for (0..emit.comp.pool.items.len) |raw| {
         const index: Pool.Index = .from(raw);
         switch (emit.comp.pool.keyOf(index)) {
-            .struct_type, .optional, .error_union => try emit.define(gpa, index),
+            .struct_type, .optional_type, .error_union_type => try emit.define(gpa, index),
             else => {},
         }
     }
@@ -105,9 +105,9 @@ fn define(emit: *EmitC, gpa: Allocator, index: Pool.Index) Error!void {
     if (try emit.defined.fetchPut(gpa, index, {}) != null) return;
 
     switch (comp.pool.keyOf(index)) {
-        .simple => {},
-        .pointer => {},
-        .optional => |child| {
+        .simple_type, .simple_value => {},
+        .pointer_type => {},
+        .optional_type => |child| {
             try emit.define(gpa, child);
             try emit.out.writeAll("struct ");
             try emit.typeTag(index);
@@ -117,7 +117,7 @@ fn define(emit: *EmitC, gpa: Allocator, index: Pool.Index) Error!void {
             try spell.writeType(comp, emit.out, index);
             try emit.out.writeAll(" */\n");
         },
-        .error_union => |child| {
+        .error_union_type => |child| {
             try emit.define(gpa, child);
             try emit.out.writeAll("struct ");
             try emit.typeTag(index);
@@ -145,14 +145,14 @@ fn define(emit: *EmitC, gpa: Allocator, index: Pool.Index) Error!void {
             try spell.writeInstance(comp, emit.out, instance);
             try emit.out.writeAll(" */\n");
         },
-        .int, .float, .error_value, .null_typed => unreachable,
+        .int, .float, .error_value, .optional_null => unreachable,
     }
 }
 
 fn writeType(emit: *EmitC, index: Pool.Index) Error!void {
     const comp = emit.comp;
     switch (comp.pool.keyOf(index)) {
-        .simple => |simple| try emit.out.writeAll(switch (simple) {
+        .simple_type => |simple| try emit.out.writeAll(switch (simple) {
             .bool => "bool",
             .i8 => "int8_t",
             .i16 => "int16_t",
@@ -166,15 +166,15 @@ fn writeType(emit: *EmitC, index: Pool.Index) Error!void {
             .f64 => "double",
             .nothing => "void",
             .@"error" => "nul_error",
-            .poison, .untyped_int, .untyped_float, .true, .false, .null => unreachable,
+            .poison, .untyped_int, .untyped_float => unreachable,
         }),
-        .pointer => |pointer| {
+        .pointer_type => |pointer| {
             if (pointer.mutable == false) try emit.out.writeAll("const ");
             try emit.writeType(pointer.child);
             try emit.out.writeByte('*');
         },
-        .optional, .error_union, .struct_type => try emit.typeName(index),
-        .int, .float, .error_value, .null_typed => unreachable,
+        .optional_type, .error_union_type, .struct_type => try emit.typeName(index),
+        .simple_value, .int, .float, .error_value, .optional_null => unreachable,
     }
 }
 
@@ -190,8 +190,8 @@ fn typeTag(emit: *EmitC, index: Pool.Index) Error!void {
 /// A pool index is one type forever, so it is the whole name.
 fn typeName(emit: *EmitC, index: Pool.Index) Error!void {
     const prefix = switch (emit.comp.pool.keyOf(index)) {
-        .optional => "nul_opt",
-        .error_union => "nul_err",
+        .optional_type => "nul_opt",
+        .error_union_type => "nul_err",
         .struct_type => "nul_type",
         else => unreachable,
     };
@@ -288,7 +288,7 @@ fn temporaries(emit: *EmitC, func: *const IR.Func) Error!void {
             try emit.out.writeAll("    ");
             // a local is declared as its storage, and addressed where asked
             if (func.insts.items(.tag)[index] == .local) {
-                try emit.writeType(emit.comp.pool.keyOf(produced).pointer.child);
+                try emit.writeType(emit.comp.pool.keyOf(produced).pointer_type.child);
             } else {
                 try emit.writeType(produced);
             }
@@ -536,10 +536,10 @@ fn place(emit: *EmitC, func: *const IR.Func, operand: IR.Ref) Error!void {
 fn constant(emit: *EmitC, value: Pool.Index) Error!void {
     const comp = emit.comp;
     switch (comp.pool.keyOf(value)) {
-        .simple => |simple| try emit.out.writeAll(switch (simple) {
+        .simple_value => |simple| try emit.out.writeAll(switch (simple) {
             .true => "true",
             .false => "false",
-            else => unreachable,
+            .null => unreachable,
         }),
         .int => |it| {
             const target: Pool.Index = if (it.type == .untyped_int_type) .i64_type else it.type;
@@ -556,12 +556,12 @@ fn constant(emit: *EmitC, value: Pool.Index) Error!void {
         },
         .float => |it| try emit.out.print("{d}", .{it.value}),
         .error_value => |declared| try emit.errorName(declared),
-        .null_typed => |carried| {
+        .optional_null => |carried| {
             try emit.out.writeByte('(');
             try emit.typeName(carried);
             try emit.out.writeAll("){ .has = false }");
         },
-        .pointer, .optional, .error_union, .struct_type => unreachable,
+        .simple_type, .pointer_type, .optional_type, .error_union_type, .struct_type => unreachable,
     }
 }
 

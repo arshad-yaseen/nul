@@ -13,12 +13,16 @@ extra: std.ArrayList(u32),
 /// Every interned string, null terminated.
 bytes: std.ArrayList(u8),
 /// Row lookup, so one (tag, payload) is one index forever.
-map: std.HashMapUnmanaged(Index, void, IndexContext, std.hash_map.default_max_load_percentage),
+map: std.HashMapUnmanaged(Index, void, IndexContext, load_percentage),
 string_map: std.HashMapUnmanaged(String, void, StringContext, load_percentage),
 
 const load_percentage = std.hash_map.default_max_load_percentage;
 
 const Pool = @This();
+
+/// Interned before any source is read.
+const statics = @typeInfo(SimpleType).@"enum".fields.len +
+    @typeInfo(SimpleValue).@"enum".fields.len;
 
 /// A type or a constant. `init` interns the named rows in this order.
 pub const Index = enum(u32) {
@@ -87,43 +91,50 @@ pub const String = enum(u32) {
     }
 };
 
-/// The names shared by static types and static values.
-pub const Simple = enum(u32) {
-    poison,
-    bool,
-    i8,
-    i16,
-    i32,
-    i64,
-    u8,
-    u16,
-    u32,
-    u64,
-    f32,
-    f64,
-    nothing,
-    untyped_int,
-    untyped_float,
-    @"error",
-    true,
-    false,
-    null,
+/// A type with no payload, pinned to the static row it occupies.
+pub const SimpleType = enum(u32) {
+    poison = @intFromEnum(Index.poison),
+    bool = @intFromEnum(Index.bool_type),
+    i8 = @intFromEnum(Index.i8_type),
+    i16 = @intFromEnum(Index.i16_type),
+    i32 = @intFromEnum(Index.i32_type),
+    i64 = @intFromEnum(Index.i64_type),
+    u8 = @intFromEnum(Index.u8_type),
+    u16 = @intFromEnum(Index.u16_type),
+    u32 = @intFromEnum(Index.u32_type),
+    u64 = @intFromEnum(Index.u64_type),
+    f32 = @intFromEnum(Index.f32_type),
+    f64 = @intFromEnum(Index.f64_type),
+    nothing = @intFromEnum(Index.nothing_type),
+    untyped_int = @intFromEnum(Index.untyped_int_type),
+    untyped_float = @intFromEnum(Index.untyped_float_type),
+    @"error" = @intFromEnum(Index.error_type),
 
-    /// The two enums are one numbering.
-    pub fn index(simple: Simple) Index {
+    pub fn index(simple: SimpleType) Index {
         return @enumFromInt(@intFromEnum(simple));
     }
 
     /// Whether source may write this name.
-    fn isUniversal(simple: Simple) bool {
+    fn isUniversal(simple: SimpleType) bool {
         return switch (simple) {
             .bool => true,
             .i8, .i16, .i32, .i64 => true,
             .u8, .u16, .u32, .u64 => true,
             .f32, .f64 => true,
             .poison, .nothing, .untyped_int, .untyped_float, .@"error" => false,
-            .true, .false, .null => false,
         };
+    }
+};
+
+/// A value with no payload, pinned the same way.
+pub const SimpleValue = enum(u32) {
+    true = @intFromEnum(Index.true_value),
+    false = @intFromEnum(Index.false_value),
+    /// Before it meets an optional type.
+    null = @intFromEnum(Index.null_value),
+
+    pub fn index(simple: SimpleValue) Index {
+        return @enumFromInt(@intFromEnum(simple));
     }
 };
 
@@ -138,7 +149,7 @@ pub fn universalType(text: []const u8) ?Index {
 pub const universal_names = universal.keys();
 
 const universal = build: {
-    const simples = std.enums.values(Simple);
+    const simples = std.enums.values(SimpleType);
     var entries: [simples.len]struct { []const u8, Index } = undefined;
     var count: usize = 0;
     for (simples) |simple| {
@@ -149,35 +160,37 @@ const universal = build: {
     break :build std.StaticStringMap(Index).initComptime(entries[0..count].*);
 };
 
+/// What one row means. A type key ends in `_type`, a value key does not.
 pub const Key = union(enum) {
-    simple: Simple,
-    pointer: Fields.Pointer,
-    optional: Index,
-    error_union: Index,
+    simple_type: SimpleType,
+    pointer_type: Pointer,
+    optional_type: Index,
+    error_union_type: Index,
     /// A nominal struct, whose identity is the instantiation.
     struct_type: Instance,
-    int: Fields.Int,
-    float: Fields.Float,
+
+    simple_value: SimpleValue,
+    int: Int,
+    float: Float,
     /// A declared error.
     error_value: Module.Decl.Index,
-    /// `null` after it met an optional type.
-    null_typed: Index,
+    /// `null` once it met an optional type, which is the index here.
+    optional_null: Index,
 
-    pub const Fields = struct {
-        pub const Pointer = struct { child: Index, mutable: bool };
-        pub const Int = struct { type: Index, value: i128 };
-        pub const Float = struct { type: Index, value: f64 };
-    };
+    pub const Pointer = struct { child: Index, mutable: bool };
+    pub const Int = struct { type: Index, value: i128 };
+    pub const Float = struct { type: Index, value: f64 };
 
     fn hash(key: Key) u64 {
         var hasher = std.hash.Wyhash.init(@intFromEnum(std.meta.activeTag(key)));
         switch (key) {
-            .simple => |simple| hasher.update(std.mem.asBytes(&simple)),
-            .pointer => |pointer| {
+            .simple_type => |simple| hasher.update(std.mem.asBytes(&simple)),
+            .simple_value => |simple| hasher.update(std.mem.asBytes(&simple)),
+            .pointer_type => |pointer| {
                 hasher.update(std.mem.asBytes(&pointer.child));
                 hasher.update(std.mem.asBytes(&pointer.mutable));
             },
-            .optional, .error_union, .null_typed => |child| {
+            .optional_type, .error_union_type, .optional_null => |child| {
                 hasher.update(std.mem.asBytes(&child));
             },
             .struct_type => |instance| hasher.update(std.mem.asBytes(&instance)),
@@ -198,12 +211,13 @@ pub const Key = union(enum) {
     fn eql(key: Key, other: Key) bool {
         if (std.meta.activeTag(key) != std.meta.activeTag(other)) return false;
         return switch (key) {
-            .simple => |simple| simple == other.simple,
-            .pointer => |pointer| pointer.child == other.pointer.child and
-                pointer.mutable == other.pointer.mutable,
-            .optional => |child| child == other.optional,
-            .error_union => |child| child == other.error_union,
-            .null_typed => |child| child == other.null_typed,
+            .simple_type => |simple| simple == other.simple_type,
+            .simple_value => |simple| simple == other.simple_value,
+            .pointer_type => |pointer| pointer.child == other.pointer_type.child and
+                pointer.mutable == other.pointer_type.mutable,
+            .optional_type => |child| child == other.optional_type,
+            .error_union_type => |child| child == other.error_union_type,
+            .optional_null => |child| child == other.optional_null,
             .struct_type => |instance| instance == other.struct_type,
             .int => |it| it.type == other.int.type and it.value == other.int.value,
             // by bits, so float equality is never asked
@@ -219,29 +233,24 @@ const Item = struct {
     data: u32,
 
     const Tag = enum(u8) {
-        simple,
-        pointer,
-        pointer_var,
-        optional,
-        error_union,
-        struct_type,
+        type_simple,
+        type_pointer,
+        type_pointer_var,
+        type_optional,
+        type_error_union,
+        type_struct,
+        value_simple,
         /// `data` points at `extra`.
-        int,
+        value_int,
         /// `data` points at `extra`.
-        float,
-        error_value,
-        null_typed,
+        value_float,
+        value_error,
+        value_optional_null,
     };
 };
 
 comptime {
     assert(@sizeOf(Item.Tag) == 1);
-    // the statics line up name for name
-    const simples = @typeInfo(Simple).@"enum".fields;
-    for (simples, 0..) |field, row| {
-        const name = @typeInfo(Index).@"enum".fields[row].name;
-        assert(std.mem.startsWith(u8, name, field.name));
-    }
 }
 
 pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
@@ -261,11 +270,15 @@ pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
     // offset zero is the empty string, so `String.empty` needs no lookup
     pool.bytes.appendAssumeCapacity(0);
 
-    for (std.enums.values(Simple)) |simple| {
-        const index = try pool.intern(gpa, .{ .simple = simple });
+    for (std.enums.values(SimpleType)) |simple| {
+        const index = try pool.intern(gpa, .{ .simple_type = simple });
         assert(index == simple.index());
     }
-    assert(pool.items.len == @typeInfo(Simple).@"enum".fields.len);
+    for (std.enums.values(SimpleValue)) |simple| {
+        const index = try pool.intern(gpa, .{ .simple_value = simple });
+        assert(index == simple.index());
+    }
+    assert(pool.items.len == statics);
 }
 
 pub fn deinit(pool: *Pool, gpa: Allocator) void {
@@ -292,21 +305,25 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
     const index: Index = .from(pool.items.len);
 
     const item: Item = switch (key) {
-        .simple => |simple| .{ .tag = .simple, .data = @intFromEnum(simple) },
-        .pointer => |pointer| .{
-            .tag = if (pointer.mutable) .pointer_var else .pointer,
+        .simple_type => |simple| .{ .tag = .type_simple, .data = @intFromEnum(simple) },
+        .simple_value => |simple| .{ .tag = .value_simple, .data = @intFromEnum(simple) },
+        .pointer_type => |pointer| .{
+            .tag = if (pointer.mutable) .type_pointer_var else .type_pointer,
             .data = pointer.child.int(),
         },
-        .optional => |child| .{ .tag = .optional, .data = child.int() },
-        .error_union => |child| .{ .tag = .error_union, .data = child.int() },
-        .struct_type => |instance| .{ .tag = .struct_type, .data = instance.int() },
-        .int => |it| .{ .tag = .int, .data = try pool.addExtra(gpa, it.type, &wordsOf(it.value)) },
+        .optional_type => |child| .{ .tag = .type_optional, .data = child.int() },
+        .error_union_type => |child| .{ .tag = .type_error_union, .data = child.int() },
+        .struct_type => |instance| .{ .tag = .type_struct, .data = instance.int() },
+        .int => |it| .{
+            .tag = .value_int,
+            .data = try pool.addExtra(gpa, it.type, &wordsOf(it.value)),
+        },
         .float => |it| .{
-            .tag = .float,
+            .tag = .value_float,
             .data = try pool.addExtra(gpa, it.type, &wordsOf(@as(u64, @bitCast(it.value)))),
         },
-        .error_value => |text| .{ .tag = .error_value, .data = text.int() },
-        .null_typed => |child| .{ .tag = .null_typed, .data = child.int() },
+        .error_value => |declared| .{ .tag = .value_error, .data = declared.int() },
+        .optional_null => |child| .{ .tag = .value_optional_null, .data = child.int() },
     };
     try pool.items.append(gpa, item);
     gop.key_ptr.* = index;
@@ -321,22 +338,23 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
 
     const data = pool.items.items(.data)[index.int()];
     return switch (pool.items.items(.tag)[index.int()]) {
-        .simple => .{ .simple = @enumFromInt(data) },
-        .pointer => .{ .pointer = .{ .child = @enumFromInt(data), .mutable = false } },
-        .pointer_var => .{ .pointer = .{ .child = @enumFromInt(data), .mutable = true } },
-        .optional => .{ .optional = @enumFromInt(data) },
-        .error_union => .{ .error_union = @enumFromInt(data) },
-        .struct_type => .{ .struct_type = @enumFromInt(data) },
-        .int => .{ .int = .{
+        .type_simple => .{ .simple_type = @enumFromInt(data) },
+        .value_simple => .{ .simple_value = @enumFromInt(data) },
+        .type_pointer => .{ .pointer_type = .{ .child = @enumFromInt(data), .mutable = false } },
+        .type_pointer_var => .{ .pointer_type = .{ .child = @enumFromInt(data), .mutable = true } },
+        .type_optional => .{ .optional_type = @enumFromInt(data) },
+        .type_error_union => .{ .error_union_type = @enumFromInt(data) },
+        .type_struct => .{ .struct_type = @enumFromInt(data) },
+        .value_int => .{ .int = .{
             .type = @enumFromInt(pool.extra.items[data]),
             .value = @bitCast(pool.extraWords(data + 1, 4).*),
         } },
-        .float => .{ .float = .{
+        .value_float => .{ .float = .{
             .type = @enumFromInt(pool.extra.items[data]),
             .value = @bitCast(@as(u64, @bitCast(pool.extraWords(data + 1, 2).*))),
         } },
-        .error_value => .{ .error_value = @enumFromInt(data) },
-        .null_typed => .{ .null_typed = @enumFromInt(data) },
+        .value_error => .{ .error_value = @enumFromInt(data) },
+        .value_optional_null => .{ .optional_null = @enumFromInt(data) },
     };
 }
 
@@ -373,31 +391,30 @@ pub fn stringText(pool: *const Pool, index: String) [:0]const u8 {
 
 // questions every stage asks
 
+/// Only a value has one. `poison` is both, and answers with itself.
 pub fn typeOfValue(pool: *const Pool, value: Index) Index {
     return switch (pool.keyOf(value)) {
-        .simple => |simple| switch (simple) {
-            .poison => .poison,
+        .simple_value => |simple| switch (simple) {
             .true, .false => .bool_type,
+            // untyped `null` is spelled by itself, having met no optional yet
             .null => .null_value,
-            // a static type is never asked for its type
-            else => unreachable,
         },
         .int => |it| it.type,
         .float => |it| it.type,
         .error_value => .error_type,
-        .null_typed => |child| child,
-        .pointer, .optional, .error_union, .struct_type => unreachable,
+        .optional_null => |optional| optional,
+        .simple_type => |simple| simple: {
+            assert(simple == .poison);
+            break :simple .poison;
+        },
+        .pointer_type, .optional_type, .error_union_type, .struct_type => unreachable,
     };
 }
 
 pub fn isType(pool: *const Pool, index: Index) bool {
     return switch (pool.keyOf(index)) {
-        .simple => |simple| switch (simple) {
-            .true, .false, .null => false,
-            else => true,
-        },
-        .pointer, .optional, .error_union, .struct_type => true,
-        .int, .float, .error_value, .null_typed => false,
+        .simple_type, .pointer_type, .optional_type, .error_union_type, .struct_type => true,
+        .simple_value, .int, .float, .error_value, .optional_null => false,
     };
 }
 
@@ -564,29 +581,28 @@ pub fn meet(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Alloca
             }
             return .wrong_kind;
         },
-        .simple => |simple| switch (simple) {
+        .simple_value => |simple| switch (simple) {
             .true, .false => {
                 return if (type_index == .bool_type) .{ .value = value } else .wrong_kind;
             },
             .null => switch (pool.keyOf(type_index)) {
-                .optional => return .{
-                    .value = try pool.intern(gpa, .{ .null_typed = type_index }),
+                .optional_type => return .{
+                    .value = try pool.intern(gpa, .{ .optional_null = type_index }),
                 },
                 else => return .wrong_kind,
             },
-            else => unreachable,
         },
-        .null_typed => |own| {
+        .optional_null => |own| {
             if (own == type_index) return .{ .value = value };
             return switch (pool.keyOf(type_index)) {
-                .optional => .{ .value = try pool.intern(gpa, .{ .null_typed = type_index }) },
+                .optional_type => .{ .value = try pool.intern(gpa, .{ .optional_null = type_index }) },
                 else => .wrong_kind,
             };
         },
         .error_value => {
             return if (type_index == .error_type) .{ .value = value } else .wrong_kind;
         },
-        .pointer, .optional, .error_union, .struct_type => unreachable,
+        .simple_type, .pointer_type, .optional_type, .error_union_type, .struct_type => unreachable,
     }
 }
 
@@ -614,10 +630,10 @@ fn numberOf(key: Key) ?Number {
 
 fn boolOf(key: Key) ?bool {
     return switch (key) {
-        .simple => |simple| switch (simple) {
+        .simple_value => |simple| switch (simple) {
             .true => true,
             .false => false,
-            else => null,
+            .null => null,
         },
         else => null,
     };
@@ -857,10 +873,10 @@ test "one value is one row, and the statics sit where their names say" {
     try testing.expect(five != typed);
 
     try testing.expectEqual(Index.bool_type, try pool.intern(testing.allocator, .{
-        .simple = .bool,
+        .simple_type = .bool,
     }));
     try testing.expectEqual(Index.true_value, try pool.intern(testing.allocator, .{
-        .simple = .true,
+        .simple_value = .true,
     }));
 }
 
@@ -933,7 +949,7 @@ test "a constant meets a type by value, not by type" {
     const big = try pool.intern(gpa, .{ .int = .{ .type = .untyped_int_type, .value = 256 } });
     try testing.expectEqual(Meet.does_not_fit, try pool.meet(gpa, big, .u8_type));
 
-    const optional = try pool.intern(gpa, .{ .optional = .i64_type });
+    const optional = try pool.intern(gpa, .{ .optional_type = .i64_type });
     const met = try pool.meet(gpa, .null_value, optional);
-    try testing.expectEqual(optional, pool.keyOf(met.value).null_typed);
+    try testing.expectEqual(optional, pool.keyOf(met.value).optional_null);
 }
