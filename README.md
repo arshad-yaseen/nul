@@ -36,26 +36,28 @@ pub fn main() i64 {
 
 ```console
 $ zig build
-$ ./zig-out/bin/nul run counter.nul
-42
+$ ./zig-out/bin/nul check counter.nul
+$ ./zig-out/bin/nul ir counter.nul
+fn Counter.bump(self: *var Counter, by: i64)
+b0:
+  %0 = param self : *var Counter
+  ...
 ```
 
 ```
 commands:
-  run <entry>   check, compile, and run the program
-  ir  <entry>   print the typed IR
+  check <entry>   check the program and report what is wrong
+  ir    <entry>   print the typed IR
 
 options:
-  --cc <program>   the C compiler to run (default: zig cc)
-  --std <dir>      where the standard library lives
+  --std <dir>   where the standard library lives
 ```
 
 ## Status
 
 Design first, implementation second. The front end is real: parsing with recovery,
-modules, generics instantiated on demand, and a typed control flow graph. The backend
-emits C99 and compiles it.
+modules, generics instantiated on demand, and a typed control flow graph. It ends
+there: `nul` checks a program and prints its IR, and nothing runs.
 
-The region checker is not written, so the rejection above is the model rather than the
-implementation. Arenas do not reach the backend yet, and there is no IO, so a program
-speaks through its exit code. Read this as a set of ideas, not a toolchain.
+The region checker is not written either, so memory safety is the model rather than
+the implementation. Read this as a set of ideas, not a toolchain.

@@ -77,7 +77,7 @@ pub const Ref = enum(u32) {
 
 pub const Inst = struct {
     tag: Tag,
-    /// `nothing_type` for an effect.
+    /// `void_type` for an effect.
     type: Pool.Index,
     data: Data,
 

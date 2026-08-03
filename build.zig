@@ -8,8 +8,6 @@ const test_dirs = [_][]const u8{
     "test/ir",
     "test/fail",
     "test/multi",
-    "test/emit",
-    "test/run",
 };
 
 /// Analysis recurses once per nesting level, so every binary that runs it asks

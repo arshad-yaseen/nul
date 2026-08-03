@@ -14,33 +14,33 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
 
     while (depth < depth_cap) : (depth += 1) {
         switch (comp.pool.keyOf(current)) {
-            .simple_type => |simple| return switch (simple) {
+            .type_simple => |simple| return switch (simple) {
                 .poison => writer.writeAll("<broken>"),
                 .untyped_int => writer.writeAll("an untyped number"),
                 .untyped_float => writer.writeAll("an untyped float"),
                 .@"error" => writer.writeAll("an error"),
-                .nothing => writer.writeAll("nothing"),
+                .void => writer.writeAll("nothing"),
                 else => writer.writeAll(@tagName(simple)),
             },
             // untyped `null` names itself
-            .simple_value => |simple| {
+            .value_simple => |simple| {
                 assert(simple == .null);
                 return writer.writeAll("null");
             },
-            .pointer_type => |pointer| {
+            .type_pointer => |pointer| {
                 try writer.writeAll(if (pointer.mutable) "*var " else "*");
                 current = pointer.child;
             },
-            .optional_type => |child| {
+            .type_optional => |child| {
                 try writer.writeByte('?');
                 current = child;
             },
-            .error_union_type => |child| {
+            .type_error_union => |child| {
                 try writer.writeByte('!');
                 current = child;
             },
-            .struct_type => |instance| return writeInstance(comp, writer, instance),
-            .int, .float, .error_value, .optional_null => unreachable,
+            .type_struct => |instance| return writeInstance(comp, writer, instance),
+            .value_int, .value_float, .value_error, .value_typed_null => unreachable,
         }
     }
     try writer.writeAll("...");
@@ -104,7 +104,7 @@ pub fn writeSignature(
         try writeType(comp, writer, row.type);
     }
     try writer.writeByte(')');
-    if (instance.type != .nothing_type) {
+    if (instance.type != .void_type) {
         try writer.writeByte(' ');
         try writeType(comp, writer, instance.type);
     }
@@ -116,30 +116,30 @@ pub fn writeConstant(
     value: Pool.Index,
 ) Writer.Error!void {
     switch (comp.pool.keyOf(value)) {
-        .simple_type => |simple| {
+        .type_simple => |simple| {
             assert(simple == .poison);
             try writer.writeAll("<broken>");
         },
-        .simple_value => |simple| try writer.writeAll(@tagName(simple)),
-        .int => |it| {
+        .value_simple => |simple| try writer.writeAll(@tagName(simple)),
+        .value_int => |it| {
             try writer.print("{d}", .{it.value});
             if (it.type != .untyped_int_type) {
                 try writer.writeByte(':');
                 try writeType(comp, writer, it.type);
             }
         },
-        .float => |it| {
+        .value_float => |it| {
             try writer.print("{d}", .{it.value});
             if (it.type != .untyped_float_type) {
                 try writer.writeByte(':');
                 try writeType(comp, writer, it.type);
             }
         },
-        .error_value => |declared| try writer.writeAll(
+        .value_error => |declared| try writer.writeAll(
             comp.pool.stringText(comp.declAt(declared).name),
         ),
-        .optional_null => try writer.writeAll("null"),
-        .pointer_type, .optional_type, .error_union_type, .struct_type => unreachable,
+        .value_typed_null => try writer.writeAll("null"),
+        .type_pointer, .type_optional, .type_error_union, .type_struct => unreachable,
     }
 }
 
@@ -149,8 +149,8 @@ pub fn writeConstantBare(
     value: Pool.Index,
 ) Writer.Error!void {
     switch (comp.pool.keyOf(value)) {
-        .int => |it| try writer.print("{d}", .{it.value}),
-        .float => |it| try writer.print("{d}", .{it.value}),
+        .value_int => |it| try writer.print("{d}", .{it.value}),
+        .value_float => |it| try writer.print("{d}", .{it.value}),
         else => try writeConstant(comp, writer, value),
     }
 }

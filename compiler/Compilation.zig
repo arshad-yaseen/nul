@@ -466,7 +466,7 @@ pub fn instantiate(
     // a type the moment it exists, so a struct can name itself
     if (decl.kind == .struct_decl) {
         comp.instancePtr(index).type = try comp.pool.intern(comp.gpa, .{
-            .struct_type = index,
+            .type_struct = index,
         });
     }
     return index;

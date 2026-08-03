@@ -297,13 +297,13 @@ fn addDecl(
         return decl_index;
     }
 
-    if (Pool.universalType(text) != null) {
+    if (Pool.preludeType(text) != null) {
         try comp.reportToken(index, new.name_token, .{
             .code = .shadows,
             .message = try comp.fmt("'{s}' is already the name of a type every file can see", .{
                 text,
             }),
-            .label = "a universal name",
+            .label = "already taken",
             .help = "pick another name, and alias it with 'type' if you want a synonym",
         });
         comp.declPtr(decl_index).state = .poisoned;

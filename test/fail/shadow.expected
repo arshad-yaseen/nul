@@ -2,7 +2,7 @@ error[E0205]: 'bool' is already the name of a type every file can see
  --> test/fail/shadow.nul:3:8
   |
 3 | struct bool {
-  |        ^^^^ a universal name
+  |        ^^^^ already taken
   |
   = help: pick another name, and alias it with 'type' if you want a synonym
 

@@ -285,7 +285,7 @@ fn inst(
             try writer.writeByte(')');
         },
         .struct_init => {
-            const rows = comp.instanceAt(comp.pool.keyOf(type_index).struct_type).rows;
+            const rows = comp.instanceAt(comp.pool.keyOf(type_index).type_struct).rows;
             try writer.writeAll(" .{ ");
             for (body.structInitAt(data.payload), 0..) |operand, position| {
                 if (position > 0) try writer.writeAll(", ");
@@ -297,7 +297,7 @@ fn inst(
         .arena_init, .scope_begin => {},
     }
 
-    if (type_index != .nothing_type) {
+    if (type_index != .void_type) {
         try writer.writeAll(" : ");
         try spell.writeType(comp, writer, type_index);
     }
