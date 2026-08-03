@@ -11,7 +11,7 @@ No garbage collector. No hidden allocations. No lifetime annotations.
 
 ## Try it
 
-```nul
+```zig
 struct Counter {
     hits: i64
 
