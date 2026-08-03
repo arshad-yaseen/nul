@@ -1,4 +1,4 @@
-//! How a diagnostic or a dump names what the tables hold.
+//! How diagnostics and dumps spell what the tables hold.
 
 const std = @import("std");
 const assert = std.debug.assert;

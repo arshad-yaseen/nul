@@ -10,7 +10,7 @@ code: Code,
 span: Span,
 /// The header line.
 message: []const u8,
-/// Beside the carets. Empty prints nothing.
+/// Beside the carets.
 label: []const u8 = "",
 help: ?[]const u8 = null,
 /// Each renders its own snippet.
@@ -20,9 +20,9 @@ pub const Span = struct { start: u32, end: u32 };
 
 pub const Note = struct {
     message: []const u8,
-    /// Without one, the note is a bare line with no snippet.
+    /// Without one, the note is a bare line.
     span: ?Span = null,
-    /// The file the span is in, when it is not the diagnostic's own.
+    /// When the span is not in the diagnostic's own file.
     source: ?*Source = null,
 };
 

@@ -14,8 +14,7 @@ allocator you were already passing down, without a borrow checker to learn?
 
 ```console
 $ zig build
-$ ./zig-out/bin/nul build program.nul -o program
-$ ./program; echo $?
+$ ./zig-out/bin/nul run program.nul
 42
 ```
 
@@ -23,14 +22,10 @@ $ ./program; echo $?
 An entry is one file. Everything it imports is part of the program.
 
 commands:
-  check <entry>   report the type and memory mistakes in the program
-  tree  <entry>   print one file's syntax tree
-  ir    <entry>   print the typed IR
-  c     <entry>   write the program as C
-  build <entry>   compile the program to an executable
+  run <entry>   check, compile, and run the program
+  ir  <entry>   print the typed IR
 
 options:
-  -o <path>        where to write the output
   --cc <program>   the C compiler to run (default: zig cc)
   --std <dir>      where the standard library lives
 ```

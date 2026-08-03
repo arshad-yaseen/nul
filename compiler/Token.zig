@@ -12,11 +12,11 @@ pub const Tag = enum(u8) {
 
     ident,
     number,
-    /// `///` to end of line, belonging to the declaration below.
+    /// Belongs to the declaration below.
     doc_comment,
     file_doc_comment,
 
-    // `lexeme` below is the one place a keyword's spelling lives
+    // `lexeme` holds every keyword's spelling
     kw_and,
     kw_break,
     kw_catch,
@@ -50,7 +50,7 @@ pub const Tag = enum(u8) {
     comma,
     dot,
     colon,
-    /// Written, or inserted at a newline. The parser cannot tell.
+    /// Written, or inserted at a newline.
     semi,
     /// Delimits a capture, `|err|`.
     pipe,
@@ -144,8 +144,7 @@ pub const Index = enum(u32) {
     first = 0,
     _,
 
-    /// The token `count` places later. Callers stay inside the list because
-    /// every list ends with an `.eof` the cursor never passes.
+    /// The token `count` places later.
     pub fn after(index: Index, count: u32) Index {
         assert(@intFromEnum(index) <= std.math.maxInt(u32) - count);
         return @enumFromInt(@intFromEnum(index) + count);
@@ -177,8 +176,7 @@ comptime {
     assert(@sizeOf(Index) == 4);
 }
 
-/// Whether a newline after this tag ends a statement. A broken value counts,
-/// so its line still ends.
+/// Whether a newline after this tag ends a statement.
 pub fn endsStatement(tag: Tag) bool {
     return switch (tag) {
         .ident, .number, .invalid => true,

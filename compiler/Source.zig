@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 path: []const u8,
 /// The file, with `padding` zero bytes past the end.
 bytes: [:0]const u8,
-/// Built on first use. Most files never need it.
+/// Built on first use.
 line_starts: ?[]u32 = null,
 
 pub const padding = 1;
@@ -62,7 +62,7 @@ pub fn lineColumn(source: *Source, gpa: Allocator, offset: u32) Allocator.Error!
     return .{ .line = @intCast(line_index + 1), .column = offset - starts[line_index] + 1 };
 }
 
-/// One line, without its terminator. A line past the end is empty.
+/// One line, without its terminator.
 pub fn lineText(source: *Source, gpa: Allocator, line: u32) Allocator.Error![]const u8 {
     const starts = try source.lineStarts(gpa);
     if (line == 0 or line > starts.len) return "";
@@ -78,7 +78,7 @@ pub fn lineText(source: *Source, gpa: Allocator, line: u32) Allocator.Error![]co
 fn lineStarts(source: *Source, gpa: Allocator) Allocator.Error![]u32 {
     if (source.line_starts) |starts| return starts;
 
-    // one line per forty bytes, measured against real source
+    // one line per forty bytes
     var starts: std.ArrayList(u32) = .empty;
     errdefer starts.deinit(gpa);
     try starts.ensureTotalCapacity(gpa, @divFloor(source.bytes.len, 40) + 2);

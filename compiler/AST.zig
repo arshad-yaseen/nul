@@ -17,11 +17,11 @@ source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
 /// Node 0 is the root.
 nodes: NodeList.Slice,
-/// Every variable-length payload, read back through `Fields`.
+/// Read back through `Fields`.
 extra: []const u32,
-/// Empty when the file parsed. Anything here stops analysis.
+/// Empty when the file parsed.
 errors: []const Diagnostic,
-/// Backs `errors` and its strings, so freeing them is one call.
+/// Backs `errors` and its strings.
 error_text: std.heap.ArenaAllocator.State,
 
 pub const nest_max = Parse.depth_max;
@@ -62,7 +62,7 @@ pub fn deinit(tree: *AST, gpa: Allocator) void {
 pub const Node = struct {
     tag: Tag,
     /// The keyword or operator the node is named by. Every other token is
-    /// derived from it or stored in `extra`.
+    /// derived from it.
     main_token: Token.Index,
     data: Data,
 
@@ -86,8 +86,7 @@ pub const Node = struct {
         }
     };
 
-    /// `?Index` would be eight bytes and blow the payload budget. One stolen
-    /// value keeps it at four and still forces an `unwrap()`.
+    /// Four bytes, unlike `?Index`, and still forces an `unwrap()`.
     pub const OptionalIndex = enum(u32) {
         none = std.math.maxInt(u32),
         _,
@@ -104,7 +103,7 @@ pub const Node = struct {
         use_decl,
         struct_decl,
         type_decl,
-        /// `error Name`, whose declaration is the error's identity.
+        /// The declaration is the error's identity.
         error_decl,
         fn_decl,
         /// Both `let` and `var`, told apart by `main_token`.
@@ -131,7 +130,7 @@ pub const Node = struct {
         null_literal,
 
         field_access,
-        /// `Name[A, B]` in a type, `f[T]` in a call. One concept, one node.
+        /// `Name[A, B]` in a type, `f[T]` in a call.
         instance,
         call,
         /// `.{ ... }`, whose type comes from context.
@@ -147,14 +146,14 @@ pub const Node = struct {
 
         pointer_type,
         optional_type,
-        /// `!T`, over the one universal error set, so it names nothing.
+        /// `!T`, over the one universal error set.
         error_union_type,
 
-        /// A hole where parsing failed, keeping the shape a walk needs.
+        /// A hole where parsing failed.
         err,
     };
 
-    /// Eight bytes reinterpreted by `tag`. Only `viewOf` reads it.
+    /// Reinterpreted by `tag`. Only `viewOf` reads it.
     pub const Data = union {
         none: void,
         node: Index,
@@ -167,8 +166,7 @@ pub const Node = struct {
 };
 
 comptime {
-    // one view per tag, matched by name, so a tag `viewOf` has not been taught
-    // about is a compile error rather than a wrong read
+    // one view per tag, matched by name, so a missing view is a compile error
     const tags = @typeInfo(Node.Tag).@"enum".fields;
     const views = @typeInfo(View).@"union".fields;
     assert(tags.len == views.len);
@@ -180,8 +178,7 @@ comptime {
     if (std.debug.runtime_safety == false) assert(@sizeOf(Node.Data) == 8);
 }
 
-/// Reads a payload back in the order `Parse` wrote it. A list is a count
-/// then that many indexes.
+/// Reads a payload back in the order `Parse` wrote it.
 const Fields = struct {
     extra: []const u32,
     cursor: u32,
@@ -261,8 +258,7 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
         .assoc = entry[2],
         .op = entry[3],
     };
-    // looser than arithmetic, tighter than comparison, and right nesting, so
-    // `a orelse b orelse c` tries each in turn
+    // right nesting, so `a orelse b orelse c` tries each in turn
     for (.{ Token.Tag.kw_orelse, Token.Tag.kw_catch }) |tag| {
         table[@intFromEnum(tag)] = .{ .prec = 4, .assoc = .right };
     }
@@ -364,7 +360,7 @@ pub const View = union(enum) {
         then_block: Node.Index,
         else_node: Node.OptionalIndex,
     };
-    /// No condition is `while { }`, which only a `break` or `return` leaves.
+    /// No condition is `while { }`.
     pub const While = struct {
         cond: Node.OptionalIndex,
         capture: Node.OptionalIndex,
@@ -582,8 +578,8 @@ fn declStart(tree: AST, node: Node.Index) Token.Index {
 
 // tokens
 
-/// Past the last token reads as `.eof`, because a derived position can run off
-/// a tree that failed to parse, and a wrong answer beats a crash there.
+/// Past the last token reads as `.eof`, because a derived position can run
+/// off a tree that failed to parse.
 pub fn tokenTag(tree: AST, index: Token.Index) Token.Tag {
     const tags = tree.tokens.items(.tag);
     assert(tags.len > 0);
@@ -603,7 +599,7 @@ pub fn tokenEnd(tree: AST, index: Token.Index) u32 {
     assert(start <= tree.source.len);
 
     const end = Tokenizer.tokenEnd(tree.source, tree.tokenTag(index), start);
-    // clamped, since a `.semi` inserted at end of file occupies no `;`
+    // a `.semi` inserted at end of file occupies no `;`
     return @min(end, @as(u32, @intCast(tree.source.len)));
 }
 
@@ -618,15 +614,14 @@ pub fn tokenSlice(tree: AST, index: Token.Index) []const u8 {
 
 // spans
 
-/// From the leftmost token start to the rightmost child end. Closing brackets
-/// are not counted, which a caret can bear.
+/// From the leftmost token start to the rightmost child end.
 pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
     const first = edgeToken(tree, node, .leftmost);
     const last = edgeToken(tree, node, .rightmost);
     const start = tree.tokenStart(first);
     const end = tree.tokenEnd(last);
     if (start > end) {
-        // a hole node can straddle repaired positions, so point at its start
+        // a hole can straddle repaired positions
         return .{ .start = start, .end = start };
     }
     return .{ .start = start, .end = end };
@@ -634,8 +629,7 @@ pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
 
 const Edgewise = enum { leftmost, rightmost };
 
-/// Down one side of a node to the token that bounds it. Bounded, because every
-/// step descends into a child.
+/// Down one side of a node to the token that bounds it.
 fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
     var current = node;
     var depth: u32 = 0;

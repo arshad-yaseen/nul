@@ -19,11 +19,11 @@ key: []const u8,
 source: Source,
 tree: AST,
 space: Space,
-/// Rows in the one declaration table, members included.
+/// Rows in the declaration table, members included.
 decls: Range,
-/// Top-level names. Members are found through their struct instead.
+/// Top-level names. Members are found through their struct.
 names: std.AutoHashMapUnmanaged(Pool.String, Decl.Index),
-/// A module that failed to parse reported its errors and is never analyzed.
+/// A module that failed to parse is never analyzed.
 failed: bool,
 
 const Module = @This();
@@ -42,25 +42,22 @@ pub const Index = enum(u32) {
     }
 };
 
-/// Which directory a module resolves against. Only `std` may bind primitives.
+/// Which directory a module resolves against.
 pub const Space = enum { root, std };
 
-/// The row is the identity everything else refers to. Method resolution,
-/// instantiation, and re-export all compare these indexes.
+/// The row is the identity everything else refers to.
 pub const Decl = struct {
     module: Module.Index,
     node: AST.Node.Index,
     name: Pool.String,
     /// For a member function, the struct declaration it belongs to.
     owner: OptionalIndex,
-    /// What resolution left behind. A pool row for `type_alias` and `let`, a
-    /// target for `use`, and a member range for a struct, all read with `aux`.
+    /// What resolution left behind, read with `aux`.
     result: u32,
     aux: u32,
     kind: Kind,
     state: State,
-    /// A struct with a bound arena operation. Set at registration, before any
-    /// signature resolves, so the type knows itself.
+    /// A struct with a bound arena operation, set at registration.
     is_region: bool,
 
     pub const Kind = enum(u8) { use, struct_decl, type_alias, error_decl, let, fn_decl };
@@ -130,8 +127,8 @@ pub fn displayName(module: *const Module) []const u8 {
     return module.key[colon + 1 ..];
 }
 
-/// Parse one source and register its declarations. Parse errors are copied out
-/// and the module marked failed, so nothing analyzes it.
+/// Parse one source and register its declarations. A parse error marks the
+/// module failed.
 pub fn register(
     comp: *Compilation,
     key: []const u8,
@@ -156,8 +153,7 @@ pub fn register(
         .failed = false,
     };
 
-    // the ownership boundary. past here the module is in the table and the
-    // root object frees it, so no error path does
+    // the ownership boundary. past here the root object frees the module
     try comp.modules.append(gpa, module);
     try comp.module_map.put(gpa, key, index);
 
@@ -180,8 +176,8 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
     const tree = &module.tree;
     const root = tree.viewOf(.root).root;
 
-    // only std may name the primitives, and a binding is found before anything
-    // resolves, so the region type knows itself
+    // only std may name the primitives, and a binding is found before
+    // anything resolves
     var binds_builtin = false;
     if (module.space == .std) {
         for (root) |node| {
@@ -230,7 +226,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
                 .node = node,
                 .name_token = decl.name_token,
             }),
-            // the parser only puts declarations and holes at the root
+            // the parser puts only declarations and holes at the root
             .err => {},
             else => unreachable,
         }
@@ -342,7 +338,7 @@ fn addMember(
     const text = tree.tokenSlice(new.name_token);
     const name = try comp.pool.string(comp.gpa, text);
 
-    // a member clashes with a field or an earlier member of the same struct
+    // a member clashes with a field or an earlier member
     const clash: ?AST.Node.Index = clash: {
         const owner_row = comp.declAt(owner);
         const struct_view = tree.viewOf(owner_row.node).struct_decl;
@@ -402,8 +398,8 @@ fn usePathIsBuiltin(tree: *const AST, node: AST.Node.Index) bool {
     return std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(use.path)), "builtin");
 }
 
-/// The primitive a `builtin.name` body binds. A misspelled name is no binding,
-/// so the body stays ordinary and the name is reported where it is read.
+/// The primitive a `builtin.name` body binds. A misspelled name is no
+/// binding, so the body stays ordinary.
 fn boundBuiltin(tree: *const AST, body: AST.Node.Index) ?Compilation.Builtin {
     if (tree.nodeTag(body) != .field_access) return null;
     const access = tree.viewOf(body).field_access;
@@ -432,8 +428,7 @@ const path_components_max = 32;
 
 const Loaded = union(enum) { module: Module.Index, not_found, no_std };
 
-/// Once per path. `sub` is joined from identifiers, so it cannot climb out of
-/// its space.
+/// Once per path. `sub` is joined from identifiers, so it stays in its space.
 fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error!Loaded {
     assert(sub.len > 0);
 
@@ -462,8 +457,7 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
     return .{ .module = index };
 }
 
-/// A module, a module plus one public declaration, or the builtin floor. The
-/// result lands in the declaration row.
+/// A module, a module plus one public declaration, or the builtin floor.
 pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     const decl = comp.declAt(decl_index);
     const module = comp.moduleAt(decl.module);
@@ -589,8 +583,7 @@ pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
     };
 }
 
-/// Following re-exports to the end. Reports at `at` and returns null when the
-/// name is missing or private.
+/// Following re-exports to the end. Null once reported.
 pub fn findExported(
     comp: *Compilation,
     in: Module.Index,
@@ -642,7 +635,7 @@ pub fn findExported(
                 target = next_decl.module;
                 continue;
             },
-            // a re-exported module name, where a declaration was asked for
+            // a module name, where a declaration was asked for
             .module, .builtin => return found,
         }
     }
@@ -692,7 +685,7 @@ fn pathComponents(
     var count: u32 = 0;
     var node = path;
     var depth: u32 = 0;
-    // walk to the leftmost ident, collecting names right to left
+    // to the leftmost ident, collecting names right to left
     while (depth < path_components_max) : (depth += 1) {
         switch (tree.nodeTag(node)) {
             .ident => {
@@ -712,7 +705,7 @@ fn pathComponents(
                 count += 1;
                 node = view.lhs;
             },
-            // a hole from a parse error never reaches analysis
+            // a parse hole never reaches analysis
             else => unreachable,
         }
     }

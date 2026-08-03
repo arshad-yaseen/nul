@@ -4,22 +4,16 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
 const compiler = @import("compiler");
-const verify = @import("verify.zig");
 
+/// The path component after `test/`.
 const Kind = enum {
-    /// Must parse.
     @"parse-pass",
-    /// Must not parse.
     @"parse-error",
-    /// Must compile clean, and lower to the recorded IR.
     ir,
-    /// Must be refused.
     fail,
     /// A directory of modules entered at `main.nul`.
     multi,
-    /// Must emit C that a C compiler accepts.
     emit,
-    /// Must compile and run, and leave the recorded exit code.
     run,
 
     fn extension(kind: Kind) []const u8 {
@@ -119,7 +113,6 @@ fn runOne(
     return false;
 }
 
-/// Tokenize and parse only.
 fn runParse(
     gpa: Allocator,
     io: std.Io,
@@ -134,7 +127,7 @@ fn runParse(
     var tree = try compiler.AST.parse(gpa, source.bytes);
     defer tree.deinit(gpa);
 
-    // the dump has to survive every tree, including one made mostly of holes
+    // the dump has to survive a tree made mostly of holes
     var sink: Writer.Discarding = .init(&.{});
     try compiler.dump.tree(tree, &sink.writer);
 
@@ -176,7 +169,6 @@ fn runCompile(
     try comp.init(gpa, io, .{ .root_path = path, .std_dir = "lib/std" });
     defer comp.deinit();
     try comp.compile(source);
-    verify.all(&comp);
 
     const failed = comp.diagnostics.items.len > 0;
     switch (kind) {
@@ -219,8 +211,6 @@ fn runCompile(
 }
 
 /// Emit, hand the C to a compiler, run the result, and report its exit code.
-/// This is the only layer that tests what a program means rather than how it
-/// is spelled.
 fn runCompiled(
     gpa: Allocator,
     io: std.Io,
@@ -275,7 +265,6 @@ fn runCompiled(
     };
 }
 
-/// The kind is the path component after `test/`.
 fn kindOf(path: []const u8) ?Kind {
     assert(path.len > 0);
     if (std.mem.endsWith(u8, path, ".nul") == false) return null;

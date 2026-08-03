@@ -16,7 +16,7 @@ pub const depth_max = 128;
 const errors_max = 64;
 
 gpa: Allocator,
-/// Backs `errors` and its strings, so freeing them is one call.
+/// Backs `errors` and its strings.
 arena: std.heap.ArenaAllocator,
 source: [:0]const u8,
 tokens: Tokenizer.TokenList.Slice,
@@ -31,7 +31,7 @@ extra: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Diagnostic),
 depth: u32,
-/// Set when the parser gave up. Everything after is a consequence.
+/// Set when the parser gave up.
 bailed: bool,
 
 pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
@@ -230,7 +230,7 @@ fn expectEndOfStatement(self: *Parse) Allocator.Error!void {
     const found = self.current().symbol();
     switch (self.current()) {
         .semi => self.token_index = self.token_index.after(1),
-        // a block or the file itself ends a statement too
+        // a block or the file itself also ends a statement
         .r_brace, .eof => {},
         else => {
             try self.err(.{
@@ -247,7 +247,6 @@ fn expectEndOfStatement(self: *Parse) Allocator.Error!void {
 
 fn tooDeep(self: *Parse) Allocator.Error!Node.Index {
     @branchHint(.cold);
-    assert(self.depth <= depth_max);
     try self.err(.{
         .code = .nesting_too_deep,
         .span = self.here(),
@@ -299,8 +298,7 @@ fn hole(self: *Parse) Allocator.Error!Node.Index {
     return self.addNode(.{ .tag = .err, .main_token = self.token_index, .data = .{ .none = {} } });
 }
 
-/// A hole over a token nothing can use, stepping past it so the caller loop
-/// is guaranteed to move.
+/// A hole over a token nothing can use, stepping past it so the caller moves.
 fn skip(self: *Parse) Allocator.Error!Node.Index {
     @branchHint(.cold);
 
@@ -339,7 +337,7 @@ fn extraOpt(self: *Parse, node: Node.OptionalIndex) Allocator.Error!void {
 }
 
 fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
-    // one item per node at most, which `addNode` bounds
+    // one item per node at most
     assert(items.len <= self.nodes.len);
     try self.extraWord(@intCast(items.len));
 
@@ -351,10 +349,10 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,     .number,      .kw_true,   .kw_false,
-    .kw_null,   .l_paren,     .dot,       .minus,
-    .bang,      .kw_try,      .ampersand, .invalid,
-    .kw_if,     .kw_return,   .kw_break,  .kw_continue,
+    .ident,   .number,    .kw_true,   .kw_false,
+    .kw_null, .l_paren,   .dot,       .minus,
+    .bang,    .kw_try,    .ampersand, .invalid,
+    .kw_if,   .kw_return, .kw_break,  .kw_continue,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
@@ -397,7 +395,6 @@ fn skipItem(self: *Parse, closer: Token.Tag) Allocator.Error!Node.Index {
 }
 
 fn parseList(self: *Parse, list: List) Allocator.Error!void {
-    assert(self.depth <= depth_max);
     assert(list.expected.len > 0);
 
     while (self.at(list.closer) == false and self.eof() == false) {
@@ -420,16 +417,12 @@ fn parseList(self: *Parse, list: List) Allocator.Error!void {
 // declarations
 
 fn parseRoot(self: *Parse) Allocator.Error!void {
-    assert(self.depth <= depth_max);
     assert(self.nodes.len == 0);
     const root = try self.addNode(.{ .tag = .root, .main_token = .first, .data = .{ .none = {} } });
     assert(root == .root);
 
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     while (self.eof() == false) {
         const before = self.token_index;
@@ -447,7 +440,6 @@ fn parseRoot(self: *Parse) Allocator.Error!void {
 }
 
 fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     assert(self.eof() == false);
     _ = self.eatToken(.kw_pub);
     switch (self.current()) {
@@ -482,25 +474,19 @@ fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseUseDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_use));
     const use_token = self.nextToken();
     const path = try self.parsePath();
     try self.expectEndOfStatement();
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .use_decl,
         .main_token = use_token,
         .data = .{ .node = path },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .use_decl);
-    return node;
 }
 
 /// An import path, or the head of a type.
 fn parsePath(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     assert(self.eof() == false or self.current() == .eof);
     if (self.at(.ident) == false) {
         try self.errExpected(.expected_token, Token.Tag.ident.symbol());
@@ -524,17 +510,12 @@ fn parsePath(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_struct));
     const struct_token = self.nextToken();
     try self.expectToken(.ident);
 
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     try self.parseTypeParams();
     const members_start = self.scratch.items.len;
@@ -571,38 +552,29 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
     const start = self.extraStart();
     try self.extraList(self.scratch.items[top..members_start]);
     try self.extraList(self.scratch.items[members_start..]);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .struct_decl,
         .main_token = struct_token,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .struct_decl);
-    return node;
 }
 
 fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_type));
     const type_token = self.nextToken();
     try self.expectToken(.ident);
     try self.expectToken(.eq);
     const aliased = try self.parseType();
     try self.expectEndOfStatement();
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .type_decl,
         .main_token = type_token,
         .data = .{ .node = aliased },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .type_decl);
-    return node;
 }
 
 /// `error Name`
 fn parseErrorDecl(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_error));
 
     const error_token = self.nextToken();
@@ -616,17 +588,12 @@ fn parseErrorDecl(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_fn));
     const fn_token = self.nextToken();
     try self.expectToken(.ident);
 
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     try self.parseTypeParams();
     const params_start = self.scratch.items.len;
@@ -659,17 +626,14 @@ fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
     try self.extraList(self.scratch.items[params_start..]);
     try self.extraOpt(return_type);
     try self.extraNode(body);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .fn_decl,
         .main_token = fn_token,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .fn_decl);
-    return node;
 }
 
 fn parseTypeParams(self: *Parse) Allocator.Error!void {
-    assert(self.depth <= depth_max);
     assert(self.scratch.items.len < self.nodes.len + 1);
     const lbracket = self.eatToken(.l_bracket) orelse return;
     try self.parseList(.{
@@ -683,18 +647,12 @@ fn parseTypeParams(self: *Parse) Allocator.Error!void {
 }
 
 fn parseTypeParam(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.ident));
     const name = self.nextToken();
     return self.addNode(.{ .tag = .type_param, .main_token = name, .data = .{ .none = {} } });
 }
 
 fn parseParam(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.ident));
     const name = self.nextToken();
     try self.expectToken(.colon);
@@ -703,9 +661,6 @@ fn parseParam(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseField(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.ident));
     const name = self.nextToken();
     try self.expectToken(.colon);
@@ -724,14 +679,10 @@ fn parseBlock(self: *Parse) Allocator.Error!Node.Index {
     if (self.depth >= depth_max) return self.tooDeep();
     self.depth += 1;
     defer self.depth -= 1;
-    assert(self.depth <= depth_max);
 
     const lbrace = self.nextToken();
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     while (self.at(.r_brace) == false and self.eof() == false) {
         const before = self.token_index;
@@ -753,17 +704,14 @@ fn parseBlock(self: *Parse) Allocator.Error!Node.Index {
 
     const start = self.extraStart();
     try self.extraList(self.scratch.items[top..]);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .block,
         .main_token = lbrace,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .block);
-    return node;
 }
 
 fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     assert(starts_stmt.contains(self.current()));
     switch (self.current()) {
         .kw_let, .kw_var => return self.parseVarDecl(),
@@ -783,10 +731,8 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
 }
 
 /// The likeliest cause is the newline that ended the `if`. The arm is read
-/// anyway, so the mistake reports once, not once per token inside it.
+/// anyway, so the mistake reports once.
 fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_else));
     try self.err(.{
         .code = .stray_else,
@@ -801,21 +747,18 @@ fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
 
 /// No parentheses, and mandatory braces, so no arm can dangle.
 fn parseIf(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_if));
-    // an `else if` chain recurses with no block between, so it guards itself
+    // an `else if` chain recurses with no block between
     if (self.depth >= depth_max) return self.tooDeep();
     self.depth += 1;
     defer self.depth -= 1;
-    assert(self.depth <= depth_max);
 
     const if_token = self.nextToken();
     const cond = try self.parseExpr();
     const capture = try self.parseCapture();
     const then_block = try self.parseBlock();
     const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
-        // `else if` nests as an `if_expr`, so one shape covers every arm
+        // `else if` nests as an `if_expr`
         (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
     else
         .none;
@@ -825,18 +768,14 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     try self.extraOpt(capture);
     try self.extraNode(then_block);
     try self.extraOpt(else_node);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .if_expr,
         .main_token = if_token,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .if_expr);
-    return node;
 }
 
 fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_return));
 
     const return_token = self.nextToken();
@@ -852,8 +791,6 @@ fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_break) or self.at(.kw_continue));
 
     const tag: Node.Tag = if (self.at(.kw_break)) .break_expr else .continue_expr;
@@ -863,7 +800,6 @@ fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
 
 /// `|v|`, naming an optional payload or a caught error.
 fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
-    assert(self.depth <= depth_max);
     assert(self.token_index.int() <= self.eof_index.int());
     if (self.eatToken(.pipe) == null) return .none;
     assert(self.tags[self.token_index.before(1).int()] == .pipe);
@@ -882,9 +818,6 @@ fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
 }
 
 fn parseWhile(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.kw_while));
     const while_token = self.nextToken();
     const cond: Node.OptionalIndex = if (self.at(.l_brace))
@@ -898,18 +831,14 @@ fn parseWhile(self: *Parse) Allocator.Error!Node.Index {
     try self.extraOpt(cond);
     try self.extraOpt(capture);
     try self.extraNode(body);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .while_stmt,
         .main_token = while_token,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .while_stmt);
-    return node;
 }
 
 fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     const keyword = self.nextToken();
     // a report can reach `errors_max` and jump the cursor to end of file
     if (self.bailed == false) {
@@ -934,7 +863,6 @@ fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     const from = self.token_index;
 
     const lhs = try self.parseExpr();
@@ -965,18 +893,14 @@ fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
 // expressions
 
 fn parseExpr(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    assert(self.depth <= depth_max);
     return self.parseExprPrec(1);
 }
 
 fn parseExprPrec(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     assert(min_prec > 0);
     if (self.depth >= depth_max) return self.tooDeep();
     self.depth += 1;
     defer self.depth -= 1;
-    assert(self.depth <= depth_max);
 
     var node = try self.parsePrefixExpr();
     var banned_prec: u8 = 0;
@@ -1023,7 +947,6 @@ fn parseCatchTail(
     catch_token: Token.Index,
     min_prec: u8,
 ) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     assert(lhs.int() < self.nodes.len);
     assert(self.tags[catch_token.int()] == .kw_catch);
     const capture = try self.parseCapture();
@@ -1033,17 +956,14 @@ fn parseCatchTail(
     try self.extraNode(lhs);
     try self.extraOpt(capture);
     try self.extraNode(rhs);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .catch_expr,
         .main_token = catch_token,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .catch_expr);
-    return node;
 }
 
 fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     // these build their own node rather than wrapping an operand
     const node_tag: Node.Tag = switch (self.current()) {
         .kw_if => return self.parseIf(),
@@ -1056,7 +976,6 @@ fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
     if (self.depth >= depth_max) return self.tooDeep();
     self.depth += 1;
     defer self.depth -= 1;
-    assert(self.depth <= depth_max);
 
     const op_token = self.nextToken();
     const operand = try self.parsePrefixExpr();
@@ -1064,11 +983,9 @@ fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseSuffixExpr(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     var node = try self.parsePrimaryExpr();
     assert(node.int() < self.nodes.len);
-    // each suffix wraps the one before, so a chain written as a loop is still
-    // tree depth for every later walk
+    // each suffix wraps the one before, so a chain is still tree depth
     var suffixes: u32 = 0;
 
     while (true) {
@@ -1096,16 +1013,11 @@ fn parseSuffixExpr(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseCall(self: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.l_paren));
     assert(callee.int() < self.nodes.len);
     const lparen = self.nextToken();
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     try self.parseList(.{
         .item = parseExpr,
@@ -1119,27 +1031,20 @@ fn parseCall(self: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
     const start = self.extraStart();
     try self.extraNode(callee);
     try self.extraList(self.scratch.items[top..]);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .call,
         .main_token = lparen,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .call);
-    return node;
 }
 
 /// `Box[i64]` in a type and `create[Node]` in a call are one node.
 fn parseInstance(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.l_bracket));
     assert(base.int() < self.nodes.len);
     const lbracket = self.nextToken();
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     try self.parseList(.{
         .item = parseType,
@@ -1153,17 +1058,14 @@ fn parseInstance(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     const start = self.extraStart();
     try self.extraNode(base);
     try self.extraList(self.scratch.items[top..]);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .instance,
         .main_token = lbracket,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .instance);
-    return node;
 }
 
 fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
     switch (self.current()) {
         .ident => return self.addLeaf(.ident),
         .number => return self.addLeaf(.number_literal),
@@ -1196,11 +1098,7 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-
 fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.dot));
 
     if (self.peek(1) != .l_brace) {
@@ -1217,10 +1115,7 @@ fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
     const dot = self.nextToken();
     const lbrace = self.nextToken();
     const top = self.scratch.items.len;
-    defer {
-        assert(self.scratch.items.len >= top);
-        self.scratch.shrinkRetainingCapacity(top);
-    }
+    defer self.scratch.shrinkRetainingCapacity(top);
 
     try self.parseList(.{
         .item = parseFieldInit,
@@ -1233,19 +1128,14 @@ fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
 
     const start = self.extraStart();
     try self.extraList(self.scratch.items[top..]);
-    const node = try self.addNode(.{
+    return self.addNode(.{
         .tag = .struct_literal,
         .main_token = dot,
         .data = .{ .extra = start },
     });
-    assert(self.nodes.items(.tag)[node.int()] == .struct_literal);
-    return node;
 }
 
 fn parseFieldInit(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    const entry = self.token_index;
-    defer assert(self.token_index.int() > entry.int() or self.eof());
     assert(self.at(.ident));
     const name = self.nextToken();
     try self.expectToken(.colon);
@@ -1260,13 +1150,9 @@ fn parseFieldInit(self: *Parse) Allocator.Error!Node.Index {
 // types
 
 fn parseType(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    assert(self.depth <= depth_max);
-
     if (self.depth >= depth_max) return self.tooDeep();
     self.depth += 1;
     defer self.depth -= 1;
-    assert(self.depth <= depth_max);
 
     const node_tag: Node.Tag = switch (self.current()) {
         .star => .pointer_type,
@@ -1282,8 +1168,6 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseTypePath(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.depth <= depth_max);
-    assert(self.depth <= depth_max);
     if (self.at(.ident) == false) {
         try self.errExpected(.expected_type, "a type");
         return self.hole();

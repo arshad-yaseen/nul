@@ -1,8 +1,8 @@
-//! How far apart two names are, for a "did you mean" suggestion.
+//! Levenshtein distance, for a "did you mean" suggestion.
 
 const std = @import("std");
 
-/// Levenshtein distance, with both names cut to forty bytes.
+/// Both names are cut to forty bytes.
 pub fn between(a: []const u8, b: []const u8) u32 {
     const cap = 40;
     const from = a[0..@min(a.len, cap)];

@@ -35,10 +35,10 @@ instance_map: std.HashMapUnmanaged(
     InstanceIndexContext,
     std.hash_map.default_max_load_percentage,
 ),
-/// Signature parameters and struct fields share one shape, so one table. An
-/// instance holds a contiguous range, staged below and committed at once.
+/// Parameters and fields share one shape, so one table. An instance holds a
+/// contiguous range.
 rows: std.ArrayList(Row),
-/// Marked and restored, because resolving one signature can demand another.
+/// Marked and restored, because one signature can demand another.
 rows_scratch: std.ArrayList(Row),
 funcs: std.ArrayList(IR.Func),
 diagnostics: std.ArrayList(Entry),
@@ -47,7 +47,7 @@ reported: std.AutoHashMapUnmanaged(ReportKey, void),
 
 // transient analysis state
 
-/// What is being analyzed, the cycle chain and the trail.
+/// What is being analyzed, the cycle chain, and the trail.
 stack: std.ArrayList(Frame),
 /// Frames on the stack that are instantiations, capped at `instantiate_max`.
 instance_depth: u32,
@@ -69,8 +69,7 @@ pub const instantiate_max = 64;
 pub const analyze_max = 128;
 const diagnostics_max = 256;
 
-/// The whole floor of the language. Every one is an effect, so every one
-/// exists at run time and becomes an IR instruction.
+/// The whole floor of the language. Every one becomes an IR instruction.
 pub const Builtin = enum(u8) {
     arena_init,
     arena_child,
@@ -81,7 +80,6 @@ pub const Builtin = enum(u8) {
 };
 
 /// A declaration plus its bracket arguments, memoized so identity is the row.
-/// A member function starts with its owner's arguments.
 pub const Instance = struct {
     decl: Decl.Index,
     args: Range,
@@ -95,7 +93,7 @@ pub const Instance = struct {
     deep_state: Decl.State,
 };
 
-/// A contiguous run in one of the tables.
+/// A contiguous run in a table.
 pub const Range = struct {
     start: u32,
     len: u32,
@@ -141,8 +139,7 @@ pub const Unit = struct {
     }
 };
 
-/// Where a demand came from. Named if it closes a cycle, and the trail entry
-/// if a diagnostic fires deeper in.
+/// Where a demand came from, named by a cycle report or the trail.
 pub const Origin = struct { module: Module.Index, node: AST.Node.Index };
 
 const Frame = struct { unit: Unit, origin: Origin };
@@ -213,8 +210,7 @@ pub fn deinit(comp: *Compilation) void {
 
 // the driver
 
-/// Check one program from its root file, whose source this takes over. Every
-/// top-level declaration, and every body that needs no instantiation.
+/// Check one program from its root file, whose source this takes over.
 pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     assert(comp.modules.items.len == 0);
 
@@ -269,8 +265,7 @@ fn ensureBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Al
     try comp.ensure(.of(.body, instance), origin);
 }
 
-/// Whether a declaration takes type parameters, or belongs to a struct that
-/// does, so it only means something once instantiated.
+/// Whether a declaration only means something once instantiated.
 pub fn isGeneric(comp: *const Compilation, decl_index: Decl.Index) bool {
     const decl = comp.declAt(decl_index);
     if (comp.typeParamCount(decl_index) > 0) return true;
@@ -291,8 +286,7 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
         .unanalyzed => {},
     }
 
-    // analysis recurses through whatever it demands, so plain declarations
-    // need a bound too
+    // analysis recurses through whatever it demands
     if (comp.stack.items.len >= analyze_max) {
         try comp.reportNode(origin.module, origin.node, .{
             .code = .analysis_too_deep,
@@ -377,8 +371,7 @@ fn setUnitState(comp: *Compilation, unit: Unit, state: Decl.State) void {
     }
 }
 
-/// A re-entry is a cycle. The report lands where it closed, and the chain back
-/// becomes the notes.
+/// A re-entry is a cycle. The chain back becomes the notes.
 fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!void {
     @branchHint(.cold);
 
@@ -470,7 +463,7 @@ pub fn instantiate(
     });
     gop.key_ptr.* = index;
 
-    // a type the moment it exists, fields or not, so a struct can name itself
+    // a type the moment it exists, so a struct can name itself
     if (decl.kind == .struct_decl) {
         comp.instancePtr(index).type = try comp.pool.intern(comp.gpa, .{
             .struct_type = index,
@@ -519,7 +512,7 @@ pub fn instanceDecl(comp: *const Compilation, index: Pool.Instance) Decl.Index {
     return comp.instanceAt(index).decl;
 }
 
-/// A struct's type, or a function's return type once its signature resolves.
+/// A struct's type, or a resolved return type.
 pub fn instanceType(comp: *const Compilation, index: Pool.Instance) Pool.Index {
     return comp.instanceAt(index).type;
 }
@@ -529,15 +522,13 @@ pub fn ensureRows(comp: *Compilation, index: Pool.Instance) Allocator.Error!void
     try comp.ensure(.of(.rows, index), .{ .module = decl.module, .node = decl.node });
 }
 
-/// The slice points into the one arguments table, so instantiating anything
-/// else invalidates it.
+/// Invalidated by any other instantiation.
 pub fn instanceArgs(comp: *const Compilation, index: Pool.Instance) []const Pool.Index {
     const instance = comp.instanceAt(index);
     return comp.instance_args.items[instance.args.start..][0..instance.args.len];
 }
 
-/// Fields, or signature parameters. The slice points into the one rows table,
-/// so committing any other rows invalidates it.
+/// Fields, or signature parameters. Invalidated by any other commit.
 pub fn instanceRows(comp: *const Compilation, index: Pool.Instance) []const Row {
     const instance = comp.instanceAt(index);
     return comp.rows.items[instance.rows.start..][0..instance.rows.len];
@@ -621,8 +612,7 @@ pub fn report(
     assert(report_value.message.len > 0);
     assert(span.start <= span.end);
 
-    // one mistake, one report. re-emitted defers and repeated instantiations
-    // land on the same spot
+    // one mistake, one report, however often the spot is re-walked
     const key: ReportKey = .{ .module = module, .code = report_value.code, .offset = span.start };
     const seen = try comp.reported.getOrPut(comp.gpa, key);
     if (seen.found_existing) return;
@@ -686,7 +676,7 @@ fn withTrail(
     return out;
 }
 
-/// Whether a unit carries bracket arguments. The limit and the trail key on it.
+/// Whether a unit carries bracket arguments.
 fn unitIsInstantiation(comp: *const Compilation, unit: Unit) bool {
     switch (unit.kind) {
         .decl => return false,
@@ -738,31 +728,26 @@ pub fn dumpIR(comp: *const Compilation, writer: *Writer) Writer.Error!void {
     }
 }
 
-/// In the diagnostic arena.
-pub fn typeName(comp: *Compilation, index: Pool.Index) Allocator.Error![]const u8 {
+/// One of the `spell` writers into the diagnostic arena.
+fn spelled(comp: *Compilation, writer: anytype, subject: anytype) Allocator.Error![]const u8 {
     var out: Writer.Allocating = .init(comp.arena.allocator());
-    spell.writeType(comp, &out.writer, index) catch |err| switch (err) {
+    writer(comp, &out.writer, subject) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
     };
     return out.written();
 }
 
-/// In the diagnostic arena.
+pub fn typeName(comp: *Compilation, index: Pool.Index) Allocator.Error![]const u8 {
+    return comp.spelled(spell.writeType, index);
+}
+
 pub fn instanceName(comp: *Compilation, index: Pool.Instance) Allocator.Error![]const u8 {
-    var out: Writer.Allocating = .init(comp.arena.allocator());
-    spell.writeInstance(comp, &out.writer, index) catch |err| switch (err) {
-        error.WriteFailed => return error.OutOfMemory,
-    };
-    return out.written();
+    return comp.spelled(spell.writeInstance, index);
 }
 
 /// The value alone, for a message naming what did not fit.
 pub fn spellValue(comp: *Compilation, value: Pool.Index) Allocator.Error![]const u8 {
-    var out: Writer.Allocating = .init(comp.arena.allocator());
-    spell.writeConstantBare(comp, &out.writer, value) catch |err| switch (err) {
-        error.WriteFailed => return error.OutOfMemory,
-    };
-    return out.written();
+    return comp.spelled(spell.writeConstantBare, value);
 }
 
 pub fn rowName(comp: *const Compilation, row: u32) []const u8 {
@@ -780,8 +765,7 @@ pub fn typeParamCount(comp: *const Compilation, decl_index: Decl.Index) u32 {
     };
 }
 
-/// Textual, which is enough to notice the root file inside the standard
-/// library itself.
+/// Textual, which is enough to notice a root file inside the standard library.
 fn pathInside(outer: []const u8, inner: []const u8) bool {
     const trimmed = std.mem.trimEnd(u8, outer, "/");
     if (std.mem.startsWith(u8, inner, trimmed) == false) return false;
@@ -824,7 +808,7 @@ test "instantiation identity is index equality" {
     const rows = comp.instanceRows(instance);
     try testing.expectEqual(3, rows.len);
 
-    // `Box[i64]` written twice, and once through an alias. one index
+    // `Box[i64]` twice, and once through an alias, is one index
     try testing.expectEqual(rows[0].type, rows[1].type);
     try testing.expectEqual(rows[1].type, comp.instanceType(instance));
     // `Box[u8]` is another type entirely

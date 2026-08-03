@@ -54,7 +54,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
             },
             0 => {
                 if (cursor != source.len) continue :state .invalid;
-                // a file ending without a newline still ends its last statement
+                // a file with no trailing newline still ends its last statement
                 if (Token.endsStatement(tokenizer.previous)) break :state .semi;
                 break :state .eof;
             },
@@ -133,7 +133,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
         .comment_start => {
             assert(source[cursor] == '/');
             cursor += 1;
-            // `//!` is the file, `///` the declaration below, `////` just a comment
+            // `//!` the file, `///` the declaration below, `////` neither
             if (source[cursor] == '!') continue :state .file_doc_comment;
             if (source[cursor] == '/') {
                 if (source[cursor + 1] == '/') continue :state .line_comment;
@@ -142,7 +142,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
             continue :state .line_comment;
         },
 
-        // restart so the newline and eof rules see the pre-comment `previous`
+        // restart so the newline rules see the pre-comment `previous`
         .line_comment => {
             cursor = endOfLine(source, cursor);
             start = cursor;
@@ -173,7 +173,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
     assert(cursor <= source.len);
     assert(start <= cursor);
 
-    // every token consumes input, except the `.semi` inserted at the end of file
+    // every token consumes input, except a `.semi` inserted at end of file
     if (cursor == tokenizer.cursor) {
         assert(tag == .semi or tag == .eof);
         assert(cursor == source.len);
@@ -184,7 +184,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
     return .{ .tag = tag, .start = start };
 }
 
-/// The byte just past a token, rescanned, which is why none stores a length.
+/// The byte just past a token, rescanned, so none stores a length.
 pub fn tokenEnd(source: [:0]const u8, tag: Token.Tag, start: u32) u32 {
     assert(start <= source.len);
 
@@ -236,7 +236,7 @@ fn pair(
     return if_paired;
 }
 
-/// Bounded by `Source.bytes_max`, which is what keeps every offset a `u32`.
+/// Bounded by `Source.bytes_max`, which keeps every offset a `u32`.
 fn endOfLine(source: [:0]const u8, from: u32) u32 {
     assert(from <= source.len);
     const newline = std.mem.indexOfScalarPos(u8, source, from, '\n') orelse source.len;
@@ -295,7 +295,7 @@ test "a file doc comment is a tag of its own" {
     try expectTags("//! about this file\nfn f() {}", &.{
         .file_doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
     });
-    // three kinds of comment, told apart by the character after the slashes
+    // three kinds, told apart by the character after the slashes
     try expectTags("//! a\n/// b\n// c\nfn", &.{ .file_doc_comment, .doc_comment, .kw_fn });
 }
 
@@ -319,15 +319,15 @@ test "a byte order mark is skipped" {
     try expectTags("\xEF\xBB\xBFx", &.{ .ident, .semi });
 }
 
-// a rescan from a token start must land where the first scan did, which is
-// what lets a token store no length
+// a rescan must land where the first scan did, which is what lets a token
+// store no length
 test "tokenEnd agrees with the scan that produced the token" {
     const source: [:0]const u8 = "hello 12.5 \"a\\nb\" /// doc\n<= orelse";
     var tokenizer: Tokenizer = .init(source);
     while (true) {
         const token = tokenizer.next();
         if (token.tag == .eof) break;
-        // an inserted `.semi` stands on a newline, so its text is not its lexeme
+        // an inserted `.semi` stands on a newline, not on a `;`
         if (token.tag == .semi) continue;
         try testing.expectEqual(tokenizer.cursor, tokenEnd(source, token.tag, token.start));
     }

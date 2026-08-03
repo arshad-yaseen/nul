@@ -31,14 +31,10 @@ const usage =
     \\An entry is one file. Everything it imports is part of the program.
     \\
     \\commands:
-    \\  check <entry>   report the type and memory mistakes in the program
-    \\  tree  <entry>   print one file's syntax tree
-    \\  ir    <entry>   print the typed IR
-    \\  c     <entry>   write the program as C
-    \\  build <entry>   compile the program to an executable
+    \\  run <entry>   check, compile, and run the program
+    \\  ir  <entry>   print the typed IR
     \\
     \\options:
-    \\  -o <path>             where to write the output
     \\  --cc <program>        the C compiler to run (default: zig cc)
     \\  --std <dir>           where the standard library lives
     \\  --color auto|on|off   colour the output (default: auto)
@@ -46,7 +42,7 @@ const usage =
     \\
 ;
 
-const Command = enum { tree, check, ir, c, build };
+const Command = enum { run, ir };
 
 const ColorChoice = enum { auto, on, off };
 
@@ -55,14 +51,10 @@ const Request = struct {
     path: []const u8,
     color: ColorChoice,
     std_dir: ?[]const u8,
-    /// Standard output when the command writes C and nothing was asked for.
-    output: ?[]const u8,
     compiler: []const u8,
 };
 
 fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *Writer) !u8 {
-    assert(args.len > 0);
-
     const request = switch (try readArgs(args, out, log)) {
         .ready => |request| request,
         .done => |status| return status,
@@ -71,7 +63,7 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
     // monotonic, so a clock the operator resets cannot make a phase negative
     const started = std.Io.Clock.awake.now(init.io);
 
-    var source: compiler.Source = compiler.Source.load(
+    const source: compiler.Source = compiler.Source.load(
         init.gpa,
         init.io,
         .cwd(),
@@ -88,11 +80,6 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
         error.OutOfMemory => return err,
     };
 
-    if (request.command == .tree) {
-        defer source.deinit(init.gpa);
-        return runTree(init, &source, out, log, request.color);
-    }
-
     var comp: compiler.Compilation = undefined;
     try comp.init(init.gpa, init.io, .{
         .root_path = request.path,
@@ -104,21 +91,24 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
     try comp.compile(source);
 
     if (comp.diagnostics.items.len > 0) {
-        const color = try resolve(request.color, init.io, std.Io.File.stderr());
+        const color: compiler.Diagnostic.Color = switch (request.color) {
+            .on => .on,
+            .off => .off,
+            .auto => if (try std.Io.File.stderr().isTty(init.io)) .on else .off,
+        };
         try comp.renderAll(log, color);
         return 1;
     }
 
-    switch (request.command) {
-        .check => {},
-        .ir => try comp.dumpIR(out),
-        .c, .build => return runBackend(init, &comp, request, out, log, started),
-        .tree => unreachable,
+    if (request.command == .ir) {
+        try comp.dumpIR(out);
+        return 0;
     }
-    return 0;
+    return runProgram(init, &comp, request, out, log, started);
 }
 
-fn runBackend(
+/// Emit C, hand it to a C compiler, run the result, and report its exit code.
+fn runProgram(
     init: std.process.Init,
     comp: *const compiler.Compilation,
     request: Request,
@@ -128,109 +118,83 @@ fn runBackend(
 ) !u8 {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
+    const cwd: std.Io.Dir = .cwd();
 
-    var source: Writer.Allocating = .init(gpa);
-    defer source.deinit();
+    var emitted: Writer.Allocating = .init(gpa);
+    defer emitted.deinit();
 
-    const has_entry = compiler.EmitC.run(comp, gpa, &source.writer) catch |err| switch (err) {
+    const has_entry = compiler.EmitC.run(comp, gpa, &emitted.writer) catch |err| switch (err) {
         error.ArenaUnsupported => {
             try log.print("nul: the C backend does not support arenas yet\n", .{});
             return 2;
         },
         else => return err,
     };
-
-    const emitted = std.Io.Clock.awake.now(init.io);
-
-    const front = started.durationTo(emitted);
-
-    if (request.command == .c) {
-        if (request.output) |path| {
-            try std.Io.Dir.cwd().writeFile(init.io, .{
-                .sub_path = path,
-                .data = source.written(),
-            });
-        } else {
-            try out.writeAll(source.written());
-        }
-        try log.print("nul: checked and emitted in {f}\n", .{front});
-        return 0;
-    }
-
     if (has_entry == false) {
         try log.print("nul: '{s}' has no 'main', so there is nothing to run\n", .{request.path});
         return 2;
     }
+    const checked = started.durationTo(std.Io.Clock.awake.now(init.io));
 
-    const exe = request.output orelse "a.out";
-    const c_path = try std.fmt.allocPrint(arena, "{s}.c", .{exe});
-    try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = c_path, .data = source.written() });
-    errdefer std.Io.Dir.cwd().deleteFile(init.io, c_path) catch {};
+    const stem = std.fs.path.stem(request.path);
+    const c_path = try std.fmt.allocPrint(arena, "./.nul-{s}.c", .{stem});
+    const exe_path = try std.fmt.allocPrint(arena, "./.nul-{s}", .{stem});
+    try cwd.writeFile(init.io, .{ .sub_path = c_path, .data = emitted.written() });
+    defer cwd.deleteFile(init.io, c_path) catch {};
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
     try argv.append(gpa, request.compiler);
-
     // the default is the toolchain's own clang, which every install already has
     if (std.mem.eql(u8, request.compiler, "zig")) try argv.append(gpa, "cc");
-    try argv.appendSlice(gpa, &.{ "-std=c99", "-pedantic", "-O2", "-o", exe, c_path });
+    try argv.appendSlice(gpa, &.{ "-std=c99", "-pedantic", "-O2", "-o", exe_path, c_path });
 
     const compiling = std.Io.Clock.awake.now(init.io);
-
-    const result = std.process.run(gpa, init.io, .{ .argv = argv.items }) catch |err| {
-        std.Io.Dir.cwd().deleteFile(init.io, c_path) catch {};
+    const built = std.process.run(gpa, init.io, .{ .argv = argv.items }) catch |err| {
         try log.print("nul: cannot run '{s}': {t}\n", .{ request.compiler, err });
         return 2;
     };
-    defer gpa.free(result.stdout);
-    defer gpa.free(result.stderr);
+    defer gpa.free(built.stdout);
+    defer gpa.free(built.stderr);
 
-    const failed = switch (result.term) {
+    const refused = switch (built.term) {
         .exited => |code| code != 0,
         else => true,
     };
-    if (failed) {
-        try log.print("nul: the C compiler refused '{s}', which is left in place\n{s}", .{
-            c_path, result.stderr,
-        });
+    if (refused) {
+        try log.print("nul: the C compiler refused the emitted C\n{s}", .{built.stderr});
         return 2;
     }
+    const compiled = compiling.durationTo(std.Io.Clock.awake.now(init.io));
+    defer cwd.deleteFile(init.io, exe_path) catch {};
 
-    try std.Io.Dir.cwd().deleteFile(init.io, c_path);
+    const running = std.Io.Clock.awake.now(init.io);
+    const ran = try std.process.run(gpa, init.io, .{ .argv = &.{exe_path} });
+    defer gpa.free(ran.stdout);
+    defer gpa.free(ran.stderr);
+    const elapsed = running.durationTo(std.Io.Clock.awake.now(init.io));
 
-    // the two are named apart, because the second is not nul's time
-    const backend = compiling.durationTo(std.Io.Clock.awake.now(init.io));
-    try log.print("nul: checked and emitted in {f}, {s} in {f}\n", .{
-        front, label(request.compiler), backend,
+    try log.print("nul: checked in {f}, {s} in {f}, ran in {f}\n", .{
+        checked, label(request.compiler), compiled, elapsed,
     });
-    return 0;
+    try out.writeAll(ran.stdout);
+
+    // a program speaks through its exit code, which is what a shell would show
+    return switch (ran.term) {
+        .exited => |code| {
+            try out.print("{d}\n", .{code});
+            return 0;
+        },
+        else => {
+            try log.print("nul: the program did not exit normally\n", .{});
+            return 2;
+        },
+    };
 }
 
 fn label(compiler_name: []const u8) []const u8 {
     if (std.mem.eql(u8, compiler_name, "zig")) return "zig cc";
     return compiler_name;
-}
-
-fn runTree(
-    init: std.process.Init,
-    source: *compiler.Source,
-    out: *Writer,
-    log: *Writer,
-    color_choice: ColorChoice,
-) !u8 {
-    var tree = try compiler.AST.parse(init.gpa, source.bytes);
-    defer tree.deinit(init.gpa);
-    assert(tree.nodes.len > 0);
-
-    if (tree.errors.len > 0) {
-        const color = try resolve(color_choice, init.io, std.Io.File.stderr());
-        for (tree.errors) |diagnostic| {
-            try diagnostic.render(init.gpa, source, log, color);
-        }
-        return 1;
-    }
-    try compiler.dump.tree(tree, out);
-    return 0;
 }
 
 /// Beside the binary as `../lib/std`, or `lib/std` under the working directory.
@@ -265,7 +229,6 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
     var path: ?[]const u8 = null;
     var color: ColorChoice = .auto;
     var std_dir: ?[]const u8 = null;
-    var output: ?[]const u8 = null;
     var compiler_name: []const u8 = "zig";
 
     var index: u32 = 1;
@@ -283,13 +246,6 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
             color = std.meta.stringToEnum(ColorChoice, args[index]) orelse {
                 return .{ .done = try misuse(log, "--color takes auto, on, or off") };
             };
-            continue;
-        }
-
-        if (std.mem.eql(u8, argument, "-o")) {
-            index += 1;
-            if (index == args.len) return .{ .done = try misuse(log, "-o needs a path") };
-            output = args[index];
             continue;
         }
 
@@ -322,7 +278,6 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
         .path = path orelse return .{ .done = try misuse(log, "no entry given") },
         .color = color,
         .std_dir = std_dir,
-        .output = output,
         .compiler = compiler_name,
     } };
 }
@@ -331,13 +286,4 @@ fn misuse(log: *Writer, problem: []const u8) Writer.Error!u8 {
     assert(problem.len > 0);
     try log.print("nul: {s}\n\n{s}", .{ problem, usage });
     return 2;
-}
-
-fn resolve(choice: ColorChoice, io: std.Io, file: std.Io.File) !compiler.Diagnostic.Color {
-    assert(choice == .auto or choice == .on or choice == .off);
-    return switch (choice) {
-        .on => .on,
-        .off => .off,
-        .auto => if (try file.isTty(io)) .on else .off,
-    };
 }

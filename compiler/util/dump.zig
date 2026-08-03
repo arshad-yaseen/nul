@@ -10,7 +10,7 @@ const spell = @import("spell.zig");
 
 const Node = AST.Node;
 
-/// Far above anything `Parse` can build, so the dump is total.
+/// Far above anything `Parse` can build.
 const depth_max = 1024;
 
 pub fn tree(t: AST, writer: *Writer) Writer.Error!void {
@@ -226,12 +226,7 @@ fn inst(
 
     try writer.print("  %{d} = {t}", .{ index.int(), tag });
     switch (tag) {
-        .param => {
-            if (data.param.name != .empty) {
-                try writer.print(" {s}", .{comp.pool.stringText(data.param.name)});
-            }
-        },
-        .local => {
+        .param, .local => {
             if (data.name != .empty) try writer.print(" {s}", .{comp.pool.stringText(data.name)});
         },
         .load,
@@ -281,9 +276,7 @@ fn inst(
         .call => {
             const call = body.callAt(data.payload);
             try writer.writeByte(' ');
-            switch (call.callee.unwrap()) {
-                .instance => |callee| try spell.writeInstance(comp, writer, callee),
-            }
+            try spell.writeInstance(comp, writer, call.callee);
             try writer.writeByte('(');
             for (call.args, 0..) |operand, position| {
                 if (position > 0) try writer.writeAll(", ");
@@ -325,7 +318,7 @@ fn terminator(
     writer: *Writer,
 ) Writer.Error!void {
     switch (term) {
-        // `finish` proves every surviving block ends in a real terminator
+        // `finish` leaves every surviving block a terminator
         .none => unreachable,
         .jump => |target| try writer.print("  jump b{d}\n", .{target.int()}),
         .branch => |branch| {

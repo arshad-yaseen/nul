@@ -13,7 +13,7 @@ const spell = @import("util/spell.zig");
 
 comp: *const Compilation,
 out: *Writer,
-/// Types whose definition is already written, so the walk emits each once.
+/// Definitions already written, so the walk emits each once.
 defined: std.AutoHashMapUnmanaged(Pool.Index, void),
 
 const EmitC = @This();
@@ -44,7 +44,7 @@ fn section(emit: *EmitC, wrote: bool) Error!void {
     if (wrote) try emit.out.writeByte('\n');
 }
 
-/// Every error name in the pool, numbered so zero can mean "no error".
+/// Every error name, numbered so zero can mean "no error".
 fn errorEnum(emit: *EmitC) Error!void {
     const pool = &emit.comp.pool;
     try emit.out.writeAll("typedef uint32_t nul_error;\n");
@@ -65,8 +65,7 @@ fn errorEnum(emit: *EmitC) Error!void {
     try emit.section(true);
 }
 
-/// A tag for every aggregate, so one can be named before it is defined. A
-/// struct reaching itself through a pointer needs this.
+/// A tag for every aggregate, so one can be named before it is defined.
 fn forwardStructs(emit: *EmitC) Error!void {
     const comp = emit.comp;
     var wrote = false;
@@ -86,8 +85,7 @@ fn forwardStructs(emit: *EmitC) Error!void {
     try emit.section(wrote);
 }
 
-/// Every aggregate in the pool, each after whatever it embeds by value. A
-/// pointer imposes no order, because the tag above already names its pointee.
+/// Every aggregate, each after whatever it embeds by value.
 fn types(emit: *EmitC, gpa: Allocator) Error!void {
     for (0..emit.comp.pool.items.len) |raw| {
         const index: Pool.Index = .from(raw);
@@ -99,8 +97,8 @@ fn types(emit: *EmitC, gpa: Allocator) Error!void {
     try emit.section(emit.defined.count() > 0);
 }
 
-/// One type definition, preceded by whatever it embeds by value. A pointer
-/// breaks the chain, which is what keeps this walk finite.
+/// One definition, preceded by whatever it embeds by value. A pointer breaks
+/// the chain, which keeps the walk finite.
 fn define(emit: *EmitC, gpa: Allocator, index: Pool.Index) Error!void {
     const comp = emit.comp;
     if (index == .poison) return;
@@ -141,7 +139,7 @@ fn define(emit: *EmitC, gpa: Allocator, index: Pool.Index) Error!void {
                 try emit.writeType(row.type);
                 try emit.out.print(" {s};\n", .{comp.pool.stringText(row.name)});
             }
-            // an empty struct is not C99, so a placeholder keeps it legal
+            // an empty struct is not C99
             if (rows.len == 0) try emit.out.writeAll("    char nul_empty;\n");
             try emit.out.writeAll("};  /* ");
             try spell.writeInstance(comp, emit.out, instance);
@@ -189,8 +187,7 @@ fn typeTag(emit: *EmitC, index: Pool.Index) Error!void {
     try emit.out.print("nul_tag_{d}", .{index.int()});
 }
 
-/// A pool index is one type forever, so it is the whole name a C aggregate
-/// needs. The spelled form rides along in a comment at the definition.
+/// A pool index is one type forever, so it is the whole name.
 fn typeName(emit: *EmitC, index: Pool.Index) Error!void {
     const prefix = switch (emit.comp.pool.keyOf(index)) {
         .optional => "nul_opt",
@@ -226,15 +223,14 @@ fn signature(emit: *EmitC, func: *const IR.Func) Error!void {
         for (rows, 0..) |row, position| {
             if (position > 0) try emit.out.writeAll(", ");
             try emit.writeType(row.type);
-            // a parameter is the first instructions of the entry block, in order
+            // the parameters lead the entry block, in order
             try emit.out.print(" t{d}", .{position});
         }
     }
     try emit.out.writeByte(')');
 }
 
-/// The instantiation index makes the name injective across modules and
-/// arguments alike.
+/// The instantiation index makes the name injective.
 fn funcName(emit: *EmitC, instance: Pool.Instance) Error!void {
     const decl = emit.comp.declAt(emit.comp.instanceDecl(instance));
     try emit.out.print("nul_{s}_{d}", .{
@@ -252,7 +248,7 @@ fn body(emit: *EmitC, func: *const IR.Func) Error!void {
 
     try emit.temporaries(func);
     for (func.blocks, 0..) |block, index| {
-        // a label nothing jumps to is a warning, and the entry falls through
+        // a label nothing jumps to is a warning
         if (isTarget(func, @intCast(index))) try emit.out.print("b{d}:;\n", .{index});
         for (block.first..block.end()) |raw| {
             try emit.inst(func, @intCast(raw));
@@ -262,13 +258,12 @@ fn body(emit: *EmitC, func: *const IR.Func) Error!void {
     try emit.out.writeAll("}\n\n");
 }
 
-/// Whether any terminator names this block, so an unreachable label is never
-/// written.
+/// Whether any terminator names this block.
 fn isTarget(func: *const IR.Func, index: u32) bool {
     for (func.blocks, 0..) |block, from| {
         switch (block.terminator) {
             .none => unreachable,
-            // a jump to the block below is a fall through, which names nothing
+            // a jump to the block below is a fall through
             .jump => |target| if (target.int() == index and from + 1 != index) return true,
             .branch => |branch| {
                 if (branch.then_block.int() == index) return true;
@@ -280,14 +275,11 @@ fn isTarget(func: *const IR.Func, index: u32) bool {
     return false;
 }
 
-/// One local per instruction a live block defines. Dropped blocks leave gaps
-/// in the numbering, and a temporary for one would never be assigned.
+/// One local per instruction a live block defines.
 fn temporaries(emit: *EmitC, func: *const IR.Func) Error!void {
     const params: u32 = @intCast(emit.comp.instanceRows(func.instance).len);
-    var walk = func.instructions();
-    while (walk.next()) |instruction| {
-        {
-            const index = instruction.int();
+    for (func.blocks) |block| {
+        for (block.first..block.end()) |index| {
             if (index < params) continue;
             const produced = func.insts.items(.type)[index];
             if (produced == .nothing_type) continue;
@@ -312,9 +304,8 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
     const produced = func.insts.items(.type)[index];
 
     switch (tag) {
-        // the parameter is already the C parameter, and a scope is the
-        // arena checker's business rather than the backend's
-        // a local is its own declaration, and a scope is the checker's business
+        // a parameter is already the C parameter, a local is its own
+        // declaration, and a scope is the checker's business
         .param, .local, .scope_begin, .scope_end => return,
 
         .load => {
@@ -378,12 +369,8 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
             const call = func.callAt(data.payload);
             try emit.out.writeAll("    ");
             if (produced != .nothing_type) try emit.out.print("t{d} = ", .{index});
-            switch (call.callee.unwrap()) {
-                .instance => |callee| {
-                    try emit.funcName(callee);
-                    try emit.out.writeByte('(');
-                },
-            }
+            try emit.funcName(call.callee);
+            try emit.out.writeByte('(');
             for (call.args, 0..) |argument, position| {
                 if (position > 0) try emit.out.writeAll(", ");
                 try emit.ref(func, argument);
@@ -405,50 +392,29 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
             try emit.out.writeAll(" };\n");
         },
 
-        .wrap_optional => {
+        .wrap_optional, .wrap_ok, .wrap_err => {
             try emit.out.print("    t{d} = (", .{index});
             try emit.typeName(produced);
-            try emit.out.writeAll("){ .has = true, .value = ");
+            try emit.out.writeAll(switch (tag) {
+                .wrap_optional => "){ .has = true, .value = ",
+                .wrap_ok => "){ .err = 0, .value = ",
+                else => "){ .err = ",
+            });
             try emit.ref(func, data.un);
             try emit.out.writeAll(" };\n");
         },
-        .has_value => {
+        .has_value, .unwrap_value, .unwrap_ok, .is_error, .unwrap_err => {
             try emit.out.print("    t{d} = (", .{index});
             try emit.ref(func, data.un);
-            try emit.out.writeAll(").has;\n");
-        },
-        .unwrap_value, .unwrap_ok => {
-            try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(func, data.un);
-            try emit.out.writeAll(").value;\n");
-        },
-        .wrap_ok => {
-            try emit.out.print("    t{d} = (", .{index});
-            try emit.typeName(produced);
-            try emit.out.writeAll("){ .err = 0, .value = ");
-            try emit.ref(func, data.un);
-            try emit.out.writeAll(" };\n");
-        },
-        .wrap_err => {
-            try emit.out.print("    t{d} = (", .{index});
-            try emit.typeName(produced);
-            try emit.out.writeAll("){ .err = ");
-            try emit.ref(func, data.un);
-            try emit.out.writeAll(" };\n");
-        },
-        .is_error => {
-            try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(func, data.un);
-            try emit.out.writeAll(").err != 0;\n");
-        },
-        .unwrap_err => {
-            try emit.out.print("    t{d} = (", .{index});
-            try emit.ref(func, data.un);
-            try emit.out.writeAll(").err;\n");
+            try emit.out.writeAll(switch (tag) {
+                .has_value => ").has;\n",
+                .is_error => ").err != 0;\n",
+                .unwrap_err => ").err;\n",
+                else => ").value;\n",
+            });
         },
 
-        // the backend has no arena runtime yet, so a program that allocates
-        // is refused rather than half emitted
+        // no arena runtime yet, so a program that allocates is refused
         .arena_init,
         .arena_child,
         .arena_create,
@@ -459,8 +425,8 @@ fn inst(emit: *EmitC, func: *const IR.Func, index: u32) Error!void {
     }
 }
 
-/// Wrapping is spelled through unsigned arithmetic, so the result is defined
-/// under any conforming compiler rather than under one flag of one of them.
+/// Through unsigned arithmetic, so wrapping is defined under any conforming
+/// compiler.
 fn arithmetic(
     emit: *EmitC,
     func: *const IR.Func,
@@ -493,8 +459,7 @@ fn arithmetic(
     try emit.out.writeAll(";\n");
 }
 
-/// The unsigned type of the same width, or null for a float, which already
-/// wraps to infinity rather than overflowing.
+/// The unsigned type of the same width, or null for a float.
 fn unsignedOf(index: Pool.Index) ?[]const u8 {
     return switch (index) {
         .i8_type, .u8_type => "uint8_t",
@@ -537,8 +502,7 @@ fn terminator(
 
 // operands
 
-/// An operand as a value. A local names storage, so an operand wants its
-/// address.
+/// An operand as a value. A local names storage, so it wants its address.
 fn ref(emit: *EmitC, func: *const IR.Func, operand: IR.Ref) Error!void {
     assert(operand != .none);
     switch (operand.unwrap()) {
