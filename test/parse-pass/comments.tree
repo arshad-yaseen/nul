@@ -1,0 +1,55 @@
+root
+  use_decl
+    path: field_access mem
+      lhs: ident std
+  struct_decl Pair pub
+    doc /// A documented struct.
+    type_param A
+    type_param B
+    field first
+      type: ident A
+    field second
+      type: ident B
+    fn_decl sum pub
+      doc /// A documented method.
+      param self
+        type: pointer_type
+          child: instance
+            base: ident Pair
+            arg: ident A
+            arg: ident B
+      param by
+        type: ident A
+      ret: ident A
+      body: block
+        return_expr
+          value: binary add
+            lhs: field_access first
+              lhs: ident self
+            rhs: ident by
+  fn_decl build pub
+    param a
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl p let
+        type: instance
+          base: ident Pair
+          arg: ident i64
+          arg: ident i64
+        init: struct_literal
+          struct_field_init first
+            value: ident a
+          struct_field_init second
+            value: number_literal 2
+      var_decl doubled let
+        init: call
+          callee: field_access sum
+            lhs: ident p
+          arg: ident a
+      assign
+        lhs: ident _
+        rhs: ident doubled
+      return_expr
+        value: field_access first
+          lhs: ident p

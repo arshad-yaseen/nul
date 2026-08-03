@@ -9,7 +9,7 @@ note: to close the '(' opened here
 2 |     let value = try io.read_file(arena, pa
   |                                 ^
 
-error[E0101]: expected '}', found end of file
+error[E0101]: expected '}', found the end of the line
  --> test/parse-error/truncated.nul:2:43
   |
 2 |     let value = try io.read_file(arena, pa

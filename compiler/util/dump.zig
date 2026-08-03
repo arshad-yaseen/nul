@@ -165,7 +165,7 @@ fn node(
             try writer.writeByte('\n');
             try node(ast, writer, it.child, below, "child");
         },
-        .defer_stmt, .try_expr, .grouped, .optional_type, .error_union_type => |child| {
+        .defer_stmt, .try_expr, .optional_type, .error_union_type => |child| {
             try writer.writeByte('\n');
             try node(ast, writer, child, below, "child");
         },
@@ -175,12 +175,9 @@ fn node(
 fn docs(ast: AST, writer: *Writer, index: Node.Index, depth: u32) Writer.Error!void {
     assert(index.int() < ast.nodes.len);
 
-    var token = ast.docComment(index) orelse return;
-    assert(ast.tokenTag(token) == .doc_comment);
-
-    while (ast.tokenTag(token) == .doc_comment) : (token = token.after(1)) {
+    for (ast.docsAbove(index)) |comment| {
         try writer.splatByteAll(' ', depth * 2);
-        try writer.print("doc {s}\n", .{ast.tokenSlice(token)});
+        try writer.print("doc {s}\n", .{ast.commentText(comment)});
     }
 }
 

@@ -1465,16 +1465,10 @@ fn checkWhile(check: *Check, view: AST.View.While) Allocator.Error!void {
 /// A `true` or `false` written where a loop condition goes. Read off the
 /// tree, because this is about the spelling.
 fn constantCondition(check: *const Check, node: Node.Index) ?bool {
-    var current = node;
-    var depth: u32 = 0;
-    while (depth < type_depth_max) : (depth += 1) {
-        switch (check.tree.viewOf(current)) {
-            .bool_literal => |literal| return literal.value,
-            .grouped => |inner| current = inner,
-            else => return null,
-        }
-    }
-    return null;
+    return switch (check.tree.viewOf(node)) {
+        .bool_literal => |literal| literal.value,
+        else => null,
+    };
 }
 
 fn reportConstantLoop(check: *Check, node: Node.Index, always: bool) Allocator.Error!void {
@@ -1695,7 +1689,6 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
             return .{ .constant = if (view.value) .true_value else .false_value };
         },
         .null_literal => return .{ .constant = .untyped_null_value },
-        .grouped => |inner| return check.checkExpr(inner, hint),
         // a block reaches here as an arm
         .block => return check.checkBlockValue(node, hint),
         .if_expr => |view| return check.checkIf(node, view, hint),
@@ -2944,7 +2937,6 @@ fn baseIsNamespace(check: *const Check, node: Node.Index) bool {
                 return true;
             },
             .field_access => current = check.tree.viewOf(current).field_access.lhs,
-            .grouped => current = check.tree.viewOf(current).grouped,
             .instance => current = check.tree.viewOf(current).instance.base,
             else => return false,
         }
@@ -3603,7 +3595,6 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
             const base = try check.checkPlace(access.lhs) orelse return null;
             return check.placeField(node, base, access.name_token);
         },
-        .grouped => |inner| return check.checkPlace(inner),
         .err => return null,
         else => {
             const value = try check.checkExpr(node, null);

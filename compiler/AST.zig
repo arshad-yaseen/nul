@@ -13,8 +13,10 @@ const AST = @This();
 
 /// Borrowed, so the caller's `Source` must outlive the tree.
 source: [:0]const u8,
-/// In source order, ending in one `.eof`.
+/// In source order, ending in one `.eof`. No comment is among them.
 tokens: Tokenizer.TokenList.Slice,
+/// In source order. Analysis never looks.
+comments: []const Comment,
 /// Node 0 is the root.
 nodes: NodeList.Slice,
 /// Read back through `Fields`.
@@ -26,9 +28,11 @@ error_text: std.heap.ArenaAllocator.State,
 
 pub const nest_max = Parse.depth_max;
 
-pub const NodeList = std.MultiArrayList(Node);
+pub const Comment = Tokenizer.Comment;
 
-/// Where a node's payload starts in `extra`.
+const NodeList = std.MultiArrayList(Node);
+
+/// Where a node's payload starts in `extra`. Internal to the parser.
 pub const ExtraIndex = enum(u32) {
     _,
 
@@ -52,6 +56,7 @@ pub fn deinit(tree: *AST, gpa: Allocator) void {
 
     tree.tokens.deinit(gpa);
     tree.nodes.deinit(gpa);
+    gpa.free(tree.comments);
     gpa.free(tree.extra);
     tree.error_text.promote(gpa).deinit();
     tree.* = undefined;
@@ -142,7 +147,6 @@ pub const Node = struct {
         catch_expr,
         binary,
         unary,
-        grouped,
 
         pointer_type,
         optional_type,
@@ -154,7 +158,7 @@ pub const Node = struct {
     };
 
     /// Reinterpreted by `tag`. Only `viewOf` reads it.
-    pub const Data = union {
+    const Data = union {
         none: void,
         node: Index,
         opt_node: OptionalIndex,
@@ -312,7 +316,6 @@ pub const View = union(enum) {
     catch_expr: Catch,
     binary: Binary,
     unary: Unary,
-    grouped: Node.Index,
 
     pointer_type: Pointer,
     optional_type: Node.Index,
@@ -512,7 +515,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .op_token = main,
             .operand = data.node,
         } },
-        .grouped => .{ .grouped = data.node },
 
         .pointer_type => .{ .pointer_type = .{
             .is_mutable = tree.tokenTag(main.after(1)) == .kw_var,
@@ -555,23 +557,33 @@ pub fn nodeMainToken(tree: AST, node: Node.Index) Token.Index {
     return tree.nodes.items(.main_token)[node.int()];
 }
 
-/// The first of the run of doc comments above a declaration.
-pub fn docComment(tree: AST, decl: Node.Index) ?Token.Index {
-    var first = tree.declStart(decl);
-    if (first == .first) return null;
-    if (tree.tokenTag(first.before(1)) != .doc_comment) return null;
+// comments
 
-    while (first != .first and tree.tokenTag(first.before(1)) == .doc_comment) {
-        first = first.before(1);
+pub fn commentText(tree: AST, at: Comment) []const u8 {
+    assert(at.start < tree.source.len);
+    return tree.source[at.start..Tokenizer.endOfLine(tree.source, at.start)];
+}
+
+/// The `///` run directly above a declaration, with only space between.
+pub fn docsAbove(tree: AST, node: Node.Index) []const Comment {
+    var next = tree.tokenStart(tree.declStart(node));
+    var end = tree.comments.len;
+    while (end > 0 and tree.comments[end - 1].start >= next) end -= 1;
+
+    var first = end;
+    while (first > 0) {
+        const at = tree.comments[first - 1];
+        if (at.kind != .doc) break;
+        const gap = tree.source[Tokenizer.endOfLine(tree.source, at.start)..next];
+        if (std.mem.indexOfNone(u8, gap, " \t\r\n") != null) break;
+
+        next = at.start;
+        first -= 1;
     }
-
-    assert(tree.tokenTag(first) == .doc_comment);
-    return first;
+    return tree.comments[first..end];
 }
 
 fn declStart(tree: AST, node: Node.Index) Token.Index {
-    assert(node.int() < tree.nodes.len);
-
     const main = tree.nodeMainToken(node);
     return if (tree.isPub(main)) main.before(1) else main;
 }
@@ -625,6 +637,15 @@ pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
         return .{ .start = start, .end = start };
     }
     return .{ .start = start, .end = end };
+}
+
+/// A node's outermost tokens, which its span is measured between.
+pub fn nodeFirstToken(tree: AST, node: Node.Index) Token.Index {
+    return edgeToken(tree, node, .leftmost);
+}
+
+pub fn nodeLastToken(tree: AST, node: Node.Index) Token.Index {
+    return edgeToken(tree, node, .rightmost);
 }
 
 const Edgewise = enum { leftmost, rightmost };
@@ -743,7 +764,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => return it.op_token,
                 .rightmost => current = it.operand,
             },
-            .grouped, .optional_type, .error_union_type => |child| switch (side) {
+            .optional_type, .error_union_type => |child| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = child,
             },

@@ -12,6 +12,17 @@ previous: Token.Tag,
 
 pub const TokenList = std.MultiArrayList(Token);
 
+/// Set aside for tools. Nothing the compiler does reads one.
+pub const Comment = struct {
+    kind: Kind,
+    /// No end: the text runs to the end of the line.
+    start: u32,
+
+    pub const Kind = enum { plain, doc, file };
+};
+
+pub const CommentList = std.ArrayList(Comment);
+
 const Tokenizer = @This();
 
 pub fn init(source: [:0]const u8) Tokenizer {
@@ -21,20 +32,41 @@ pub fn init(source: [:0]const u8) Tokenizer {
     return .{ .source = source, .cursor = bom, .previous = .semi };
 }
 
-pub fn tokenizeAll(gpa: Allocator, source: [:0]const u8, tokens: *TokenList) Allocator.Error!void {
+/// Comments are set aside, so the parser never meets one.
+pub fn tokenizeAll(
+    gpa: Allocator,
+    source: [:0]const u8,
+    tokens: *TokenList,
+    comments: *CommentList,
+) Allocator.Error!void {
     assert(tokens.len == 0);
+    assert(comments.items.len == 0);
 
     try tokens.ensureTotalCapacity(gpa, @divFloor(source.len, 5) + 2);
+    try comments.ensureTotalCapacity(gpa, @divFloor(source.len, 128) + 2);
 
     var tokenizer: Tokenizer = .init(source);
     while (true) {
         const token = tokenizer.next();
+        if (commentKind(token.tag)) |kind| {
+            try comments.append(gpa, .{ .kind = kind, .start = token.start });
+            continue;
+        }
         try tokens.append(gpa, token);
         if (token.tag == .eof) break;
     }
 
     assert(tokens.len > 0);
     assert(tokens.items(.tag)[tokens.len - 1] == .eof);
+}
+
+fn commentKind(tag: Token.Tag) ?Comment.Kind {
+    return switch (tag) {
+        .comment => .plain,
+        .doc_comment => .doc,
+        .file_doc_comment => .file,
+        else => null,
+    };
 }
 
 /// The next token, cursor left just past it.
@@ -145,8 +177,7 @@ pub fn next(tokenizer: *Tokenizer) Token {
         // restart so the newline rules see the pre-comment `previous`
         .line_comment => {
             cursor = endOfLine(source, cursor);
-            start = cursor;
-            continue :state .start;
+            break :state .comment;
         },
 
         .doc_comment => {
@@ -180,7 +211,11 @@ pub fn next(tokenizer: *Tokenizer) Token {
     }
 
     tokenizer.cursor = cursor;
-    tokenizer.previous = tag;
+    // a comment is transparent, so a line ends where it would have without one
+    switch (tag) {
+        .comment, .doc_comment, .file_doc_comment => {},
+        else => tokenizer.previous = tag,
+    }
     return .{ .tag = tag, .start = start };
 }
 
@@ -237,7 +272,7 @@ fn pair(
 }
 
 /// Bounded by `Source.bytes_max`, which keeps every offset a `u32`.
-fn endOfLine(source: [:0]const u8, from: u32) u32 {
+pub fn endOfLine(source: [:0]const u8, from: u32) u32 {
     assert(from <= source.len);
     const newline = std.mem.indexOfScalarPos(u8, source, from, '\n') orelse source.len;
     assert(newline >= from);
@@ -279,24 +314,26 @@ test "the last line ends without a newline of its own" {
     try expectTags("return x", &.{ .kw_return, .ident, .semi });
 }
 
-test "a comment does not change what came before it" {
-    try expectTags("x // note\ny", &.{ .ident, .semi, .ident, .semi });
-    try expectTags("x +  // note\ny", &.{ .ident, .plus, .ident, .semi });
+test "a comment is scanned, and changes nothing around it" {
+    try expectTags("x // note\ny", &.{ .ident, .comment, .semi, .ident, .semi });
+    try expectTags("x +  // note\ny", &.{ .ident, .plus, .comment, .ident, .semi });
 }
 
 test "a doc comment is its own token" {
     try expectTags("/// doc\nfn f() {}", &.{
         .doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
     });
-    try expectTags("//// not doc\nfn", &.{.kw_fn});
+    try expectTags("//// not doc\nfn", &.{ .comment, .kw_fn });
 }
 
 test "a file doc comment is a tag of its own" {
     try expectTags("//! about this file\nfn f() {}", &.{
         .file_doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
     });
-    // three kinds, told apart by the character after the slashes
-    try expectTags("//! a\n/// b\n// c\nfn", &.{ .file_doc_comment, .doc_comment, .kw_fn });
+
+    try expectTags("//! a\n/// b\n// c\nfn", &.{
+        .file_doc_comment, .doc_comment, .comment, .kw_fn,
+    });
 }
 
 test "blank lines and leading newlines emit nothing" {
@@ -319,8 +356,6 @@ test "a byte order mark is skipped" {
     try expectTags("\xEF\xBB\xBFx", &.{ .ident, .semi });
 }
 
-// a rescan must land where the first scan did, which is what lets a token
-// store no length
 test "tokenEnd agrees with the scan that produced the token" {
     const source: [:0]const u8 = "hello 12.5 \"a\\nb\" /// doc\n<= orelse";
     var tokenizer: Tokenizer = .init(source);

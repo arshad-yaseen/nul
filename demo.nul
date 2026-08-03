@@ -1,5 +1,16 @@
-pub fn main() i64 {
-    let nice = 2
+fn spread(
+    a: i32
+    b: i32
+) {
 
-    return nice
+}
+
+pub fn main() i64 {
+    let a = 10
+    spread(
+        a,
+        -1
+    )
+
+    return 10
 }

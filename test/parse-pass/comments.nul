@@ -1,0 +1,38 @@
+//! A file doc comment.
+
+// a comment before anything
+use std.mem // after a use
+
+/// A documented struct.
+pub // between 'pub' and what it introduces
+struct Pair[
+    A, // after a type parameter
+    B
+] {
+    // above a field
+    first: A, // after a field
+    second: B
+
+    /// A documented method.
+    pub fn sum( // inside a parameter list
+        self: *Pair[A, B], // after a parameter
+        by: A
+    ) A {
+        // inside a block
+        return self.first + // after an operator
+            by
+    }
+}
+
+pub fn build(a: i64) i64 { // after the brace
+    let p: Pair[i64, i64] = .{ // inside a literal
+        first: a, // after a field value
+        second: 2
+    }
+    // between statements
+    let doubled = p.sum(
+        a // the only argument
+    )
+    _ = doubled
+    return p.first // before the closing brace
+}

@@ -22,10 +22,9 @@ root
             rhs: ident c
       var_decl grouped let
         init: binary mul
-          lhs: grouped
-            child: binary add
-              lhs: ident a
-              rhs: ident b
+          lhs: binary add
+            lhs: ident a
+            rhs: ident b
           rhs: ident c
       var_decl compared let
         init: binary equal
@@ -54,10 +53,9 @@ root
       var_decl mixed let
         init: binary add
           lhs: unary negate
-            operand: grouped
-              child: binary mul
-                lhs: ident a
-                rhs: ident b
+            operand: binary mul
+              lhs: ident a
+              rhs: ident b
           rhs: ident c
       return_expr
         value: binary add

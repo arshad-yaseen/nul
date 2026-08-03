@@ -11,37 +11,10 @@ No garbage collector. No hidden allocations. No lifetime annotations.
 
 ## Try it
 
-```zig
-struct Counter {
-    hits: i64
-
-    fn bump(self: *var Counter, by: i64) {
-        self.hits = self.hits + by
-    }
-}
-
-pub fn main() i64 {
-    var counter: Counter = .{ hits: 0 }
-
-    var i: i64 = 0
-    while i < 13 {
-        let step = if i % 2 == 0 { i } else { 0 }
-        counter.bump(step)
-        i = i + 1
-    }
-
-    return counter.hits
-}
-```
-
 ```console
 $ zig build
-$ ./zig-out/bin/nul check counter.nul
-$ ./zig-out/bin/nul ir counter.nul
-fn Counter.bump(self: *var Counter, by: i64)
-b0:
-  %0 = param self : *var Counter
-  ...
+$ ./zig-out/bin/nul check demo.nul
+$ ./zig-out/bin/nul ir demo.nul
 ```
 
 ```

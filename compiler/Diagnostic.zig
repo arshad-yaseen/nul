@@ -42,6 +42,7 @@ pub const Code = enum(u16) {
     invalid_bytes = 112,
     stray_else = 113,
     var_at_top_level = 116,
+    ambiguous_line = 117,
 
     undefined_name = 201,
     not_a_type = 202,

@@ -15,10 +15,10 @@ error[E0217]: this condition is always false, so the body never runs
   = help: delete the loop, or give it a condition that can be true
 
 error[E0217]: this condition is always true
-  --> test/fail/constant_loop.nul:15:11
+  --> test/fail/constant_loop.nul:15:12
    |
 15 |     while (true) {
-   |           ^^^^^ never false
+   |            ^^^^ never false
    |
    = help: 'while { }' is the loop that only a 'break' or a 'return' leaves
 

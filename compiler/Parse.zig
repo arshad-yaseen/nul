@@ -26,7 +26,7 @@ tags: []const Token.Tag,
 eof_index: Token.Index,
 /// Only ever moves forward.
 token_index: Token.Index,
-nodes: AST.NodeList,
+nodes: std.MultiArrayList(AST.Node),
 extra: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Diagnostic),
@@ -40,7 +40,10 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     var tokens: Tokenizer.TokenList = .empty;
     errdefer tokens.deinit(gpa);
 
-    try Tokenizer.tokenizeAll(gpa, source, &tokens);
+    var comments: Tokenizer.CommentList = .empty;
+    errdefer comments.deinit(gpa);
+
+    try Tokenizer.tokenizeAll(gpa, source, &tokens, &comments);
     assert(tokens.len > 0);
 
     var parse: Parse = .{
@@ -81,6 +84,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     return .{
         .source = source,
         .tokens = tokens.toOwnedSlice(),
+        .comments = try comments.toOwnedSlice(gpa),
         .nodes = parse.nodes.toOwnedSlice(),
         .extra = extra,
         .errors = errors,
@@ -169,14 +173,16 @@ fn err(self: *Parse, diagnostic: Diagnostic) Allocator.Error!void {
     if (self.errors.items.len == errors_max) self.stop();
 }
 
-/// Over the rest of a statement, so one mistake reports once.
-fn skipToEndOfStatement(self: *Parse) void {
+/// Over the rest of an item, so one mistake reports once.
+fn skipToTerminator(self: *Parse, closer: Token.Tag) void {
     assert(self.token_index.int() <= self.eof_index.int());
 
-    while (self.eof() == false and self.at(.semi) == false and self.at(.r_brace) == false) {
+    while (self.eof() == false and self.at(closer) == false and
+        self.at(.semi) == false and self.at(.comma) == false and self.at(.r_brace) == false)
+    {
         self.token_index = self.token_index.after(1);
     }
-    _ = self.eatToken(.semi);
+    _ = self.eatTerminators();
 
     assert(self.token_index.int() <= self.eof_index.int());
 }
@@ -191,7 +197,7 @@ fn stop(self: *Parse) void {
     assert(self.eof());
 }
 
-fn errExpected(self: *Parse, code: Diagnostic.Code, what: []const u8) Allocator.Error!void {
+fn errExpected(self: *Parse, code: Diagnostic.Code, what: []const u8, help: ?[]const u8) Allocator.Error!void {
     @branchHint(.cold);
     assert(what.len > 0);
     try self.err(.{
@@ -199,18 +205,19 @@ fn errExpected(self: *Parse, code: Diagnostic.Code, what: []const u8) Allocator.
         .span = self.here(),
         .message = try self.fmt("expected {s}, found {s}", .{ what, self.current().symbol() }),
         .label = try self.fmt("expected {s}", .{what}),
+        .help = help,
     });
 }
 
 fn expectToken(self: *Parse, expected: Token.Tag) Allocator.Error!void {
     assert(expected != .eof);
-    if (self.eatToken(expected) == null) try self.errExpected(.expected_token, expected.symbol());
+    if (self.eatToken(expected) == null) try self.errExpected(.expected_token, expected.symbol(), null);
 }
 
 fn expectClosing(self: *Parse, closer: Token.Tag, opener: ?Token.Index) Allocator.Error!void {
     assert(closer.lexeme() != null);
     if (self.eatToken(closer) != null) return;
-    const open = opener orelse return self.errExpected(.expected_token, closer.symbol());
+    const open = opener orelse return self.errExpected(.expected_token, closer.symbol(), null);
     const opened = self.tags[open.int()].symbol();
     const found = self.current().symbol();
 
@@ -226,23 +233,53 @@ fn expectClosing(self: *Parse, closer: Token.Tag, opener: ?Token.Index) Allocato
     });
 }
 
-fn expectEndOfStatement(self: *Parse) Allocator.Error!void {
-    const found = self.current().symbol();
-    switch (self.current()) {
-        .semi => self.token_index = self.token_index.after(1),
-        // a block or the file itself also ends a statement
-        .r_brace, .eof => {},
-        else => {
-            try self.err(.{
-                .code = .expected_token,
-                .span = self.here(),
-                .message = try self.fmt("expected the end of a statement, found {s}", .{found}),
-                .label = "unexpected here",
-                .help = "one statement per line",
-            });
-            self.skipToEndOfStatement();
-        },
+/// What stood between two items. Only a bare line break leaves doubt.
+const Terminator = enum { none, line, comma };
+
+/// An end of line, a ',' and a ';' all end an item, and a run of them ends one.
+fn eatTerminators(self: *Parse) Terminator {
+    var found: Terminator = .none;
+    while (self.at(.semi) or self.at(.comma)) {
+        if (self.at(.comma)) found = .comma else if (found == .none) found = .line;
+        self.token_index = self.token_index.after(1);
     }
+    return found;
+}
+
+/// Every item ends the same way, and a bracket ends the last one for free.
+fn expectTerminator(self: *Parse, closer: Token.Tag) Allocator.Error!void {
+    if (self.eatTerminators() != .none) return;
+    switch (self.current()) {
+        // a bracket or the file itself also ends an item
+        .r_paren, .r_bracket, .r_brace, .eof => return,
+        else => {},
+    }
+    try self.err(.{
+        .code = .expected_token,
+        .span = self.here(),
+        .message = try self.fmt("expected ',' or the end of the line, found {s}", .{
+            self.current().symbol(),
+        }),
+        .label = "unexpected here",
+        .help = "one per line, or a ',' between them",
+    });
+    self.skipToTerminator(closer);
+}
+
+/// A line opening with one of these may be continuing the line above.
+const continues_line = TokenSet.initMany(&.{ .minus, .ampersand, .bang, .l_paren });
+
+fn errAmbiguousLine(self: *Parse) Allocator.Error!void {
+    @branchHint(.cold);
+    try self.err(.{
+        .code = .ambiguous_line,
+        .span = self.here(),
+        .message = try self.fmt("this line opens with {s}, which may continue the line above", .{
+            self.current().symbol(),
+        }),
+        .label = "unclear what this belongs to",
+        .help = "move it up to continue that line, or write ',' before it to start a new one",
+    });
 }
 
 fn tooDeep(self: *Parse) Allocator.Error!Node.Index {
@@ -356,8 +393,10 @@ const starts_expr = TokenSet.initMany(&.{
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
-    .kw_let, .kw_var, .kw_while, .kw_defer,
+    .kw_let, .kw_var, .kw_while, .kw_defer, .kw_else,
 }));
+
+const starts_member = TokenSet.initMany(&.{ .ident, .kw_fn, .kw_pub });
 
 const starts_type = TokenSet.initMany(&.{ .ident, .star, .question, .bang });
 
@@ -370,16 +409,21 @@ const starts_decl = TokenSet.initMany(&.{
 
 const ends_list = starts_decl.unionWith(TokenSet.initMany(&.{ .l_brace, .r_brace, .semi }));
 
+/// Every list: a file, a block, a struct body, and everything bracketed.
 const List = struct {
     /// Each element lands in `scratch`.
     item: *const fn (*Parse) Allocator.Error!Node.Index,
     starts: TokenSet,
+    /// `.eof` for the file, which no bracket closes.
     closer: Token.Tag,
     /// Null when the opening bracket was itself missing.
     opener: ?Token.Index,
     code: Diagnostic.Code,
     /// Named in "expected _, found ...".
     expected: []const u8,
+    help: ?[]const u8 = null,
+    /// What means this list was never closed. Nothing does, for a file.
+    bails: TokenSet = ends_list,
 };
 
 fn skipItem(self: *Parse, closer: Token.Tag) Allocator.Error!Node.Index {
@@ -397,19 +441,36 @@ fn skipItem(self: *Parse, closer: Token.Tag) Allocator.Error!Node.Index {
 fn parseList(self: *Parse, list: List) Allocator.Error!void {
     assert(list.expected.len > 0);
 
+    var item_end = self.token_index;
+    var line_break_only = false;
     while (self.at(list.closer) == false and self.eof() == false) {
         const before = self.token_index;
 
         if (list.starts.contains(self.current())) {
+            if (line_break_only and continues_line.contains(self.current())) {
+                try self.errAmbiguousLine();
+            }
             try self.scratch.append(self.gpa, try list.item(self));
         } else {
-            if (ends_list.contains(self.current())) break;
-            try self.errExpected(list.code, list.expected);
+            if (list.bails.contains(self.current())) break;
+            try self.errExpected(list.code, list.expected, list.help);
             try self.scratch.append(self.gpa, try self.skipItem(list.closer));
         }
 
         self.ensureProgress(before);
-        if (self.eatToken(.comma) == null) break;
+        item_end = self.token_index;
+        const terminator = self.eatTerminators();
+        line_break_only = terminator == .line;
+        if (terminator == .none) {
+            if (self.at(list.closer) or self.eof()) break;
+            try self.expectTerminator(list.closer);
+        }
+    }
+    if (list.closer == .eof) return;
+
+    // a list that never closed ran out at the end of its last line
+    if (self.at(list.closer) == false and self.tags[item_end.int()] == .semi) {
+        self.token_index = item_end;
     }
     try self.expectClosing(list.closer, list.opener);
 }
@@ -424,14 +485,16 @@ fn parseRoot(self: *Parse) Allocator.Error!void {
     const top = self.scratch.items.len;
     defer self.scratch.shrinkRetainingCapacity(top);
 
-    while (self.eof() == false) {
-        const before = self.token_index;
-        switch (self.current()) {
-            .semi, .doc_comment, .file_doc_comment => self.token_index = self.token_index.after(1),
-            else => try self.scratch.append(self.gpa, try self.parseDecl()),
-        }
-        self.ensureProgress(before);
-    }
+    try self.parseList(.{
+        .item = parseDecl,
+        .starts = starts_decl,
+        .closer = .eof,
+        .opener = null,
+        .code = .expected_declaration,
+        .expected = "a declaration",
+        .help = "a file holds 'use', 'struct', 'type', 'fn', and 'let'",
+        .bails = TokenSet.initEmpty(),
+    });
 
     assert(self.eof());
     const start = self.extraStart();
@@ -459,15 +522,9 @@ fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
             });
             return self.parseVarDecl();
         },
+        // `pub` with nothing it can introduce
         else => {
-            const found = self.current().symbol();
-            try self.err(.{
-                .code = .expected_declaration,
-                .span = self.here(),
-                .message = try self.fmt("expected a declaration, found {s}", .{found}),
-                .label = "not a declaration",
-                .help = "a file holds 'use', 'struct', 'type', 'fn', and 'let'",
-            });
+            try self.errExpected(.expected_declaration, "a declaration", null);
             return self.skip();
         },
     }
@@ -477,7 +534,6 @@ fn parseUseDecl(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_use));
     const use_token = self.nextToken();
     const path = try self.parsePath();
-    try self.expectEndOfStatement();
     return self.addNode(.{
         .tag = .use_decl,
         .main_token = use_token,
@@ -485,27 +541,30 @@ fn parseUseDecl(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
+/// `.name` reached from what came before, or null once reported.
+fn parseFieldAccess(self: *Parse, base: Node.Index) Allocator.Error!?Node.Index {
+    assert(self.at(.dot));
+    const dot = self.nextToken();
+    if (self.at(.ident) == false) {
+        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
+        return null;
+    }
+    _ = self.nextToken();
+    return try self.addNode(.{
+        .tag = .field_access,
+        .main_token = dot,
+        .data = .{ .node = base },
+    });
+}
+
 /// An import path, or the head of a type.
 fn parsePath(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.eof() == false or self.current() == .eof);
     if (self.at(.ident) == false) {
-        try self.errExpected(.expected_token, Token.Tag.ident.symbol());
+        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
         return self.hole();
     }
     var node = try self.addLeaf(.ident);
-    while (self.at(.dot)) {
-        const dot = self.nextToken();
-        if (self.at(.ident) == false) {
-            try self.errExpected(.expected_token, Token.Tag.ident.symbol());
-            return self.hole();
-        }
-        _ = self.nextToken();
-        node = try self.addNode(.{
-            .tag = .field_access,
-            .main_token = dot,
-            .data = .{ .node = node },
-        });
-    }
+    while (self.at(.dot)) node = try self.parseFieldAccess(node) orelse return self.hole();
     return node;
 }
 
@@ -521,33 +580,16 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
     const members_start = self.scratch.items.len;
 
     const lbrace = self.eatToken(.l_brace);
-    if (lbrace == null) try self.errExpected(.expected_token, Token.Tag.l_brace.symbol());
+    if (lbrace == null) try self.errExpected(.expected_token, Token.Tag.l_brace.symbol(), null);
 
-    while (self.at(.r_brace) == false and self.eof() == false) {
-        const before = self.token_index;
-        if (self.at(.semi) or self.at(.doc_comment) or self.at(.file_doc_comment)) {
-            self.token_index = self.token_index.after(1);
-        } else if (self.at(.ident)) {
-            try self.scratch.append(self.gpa, try self.parseField());
-        } else if (self.at(.kw_fn) or self.at(.kw_pub)) {
-            _ = self.eatToken(.kw_pub);
-            if (self.at(.kw_fn)) {
-                try self.scratch.append(self.gpa, try self.parseFnDecl());
-            } else {
-                // a `pub` inside a struct body introduces a function
-                try self.errExpected(.expected_struct_member, "a function after 'pub'");
-                try self.scratch.append(self.gpa, try self.hole());
-                self.skipToEndOfStatement();
-            }
-        } else if (starts_decl.contains(self.current())) {
-            break;
-        } else {
-            try self.errExpected(.expected_struct_member, "a field or a function");
-            try self.scratch.append(self.gpa, try self.skip());
-        }
-        self.ensureProgress(before);
-    }
-    try self.expectClosing(.r_brace, lbrace);
+    try self.parseList(.{
+        .item = parseMember,
+        .starts = starts_member,
+        .closer = .r_brace,
+        .opener = lbrace,
+        .code = .expected_struct_member,
+        .expected = "a field or a function",
+    });
 
     const start = self.extraStart();
     try self.extraList(self.scratch.items[top..members_start]);
@@ -565,7 +607,6 @@ fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
     try self.expectToken(.ident);
     try self.expectToken(.eq);
     const aliased = try self.parseType();
-    try self.expectEndOfStatement();
     return self.addNode(.{
         .tag = .type_decl,
         .main_token = type_token,
@@ -579,7 +620,6 @@ fn parseErrorDecl(self: *Parse) Allocator.Error!Node.Index {
 
     const error_token = self.nextToken();
     try self.expectToken(.ident);
-    try self.expectEndOfStatement();
     return self.addNode(.{
         .tag = .error_decl,
         .main_token = error_token,
@@ -599,7 +639,7 @@ fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
     const params_start = self.scratch.items.len;
 
     const lparen = self.eatToken(.l_paren);
-    if (lparen == null) try self.errExpected(.expected_token, Token.Tag.l_paren.symbol());
+    if (lparen == null) try self.errExpected(.expected_token, Token.Tag.l_paren.symbol(), null);
     try self.parseList(.{
         .item = parseParam,
         .starts = starts_name,
@@ -617,7 +657,6 @@ fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
 
     const body = if (self.eatToken(.eq) != null) body: {
         const value = try self.parseExpr();
-        try self.expectEndOfStatement();
         break :body value;
     } else try self.parseBlock();
 
@@ -665,15 +704,25 @@ fn parseField(self: *Parse) Allocator.Error!Node.Index {
     const name = self.nextToken();
     try self.expectToken(.colon);
     const type_expr = try self.parseType();
-    try self.expectEndOfStatement();
     return self.addNode(.{ .tag = .field, .main_token = name, .data = .{ .node = type_expr } });
+}
+
+/// A struct body holds fields and functions, and `pub` introduces a function.
+fn parseMember(self: *Parse) Allocator.Error!Node.Index {
+    assert(starts_member.contains(self.current()));
+    if (self.at(.ident)) return self.parseField();
+
+    _ = self.eatToken(.kw_pub);
+    if (self.at(.kw_fn)) return self.parseFnDecl();
+    try self.errExpected(.expected_struct_member, "a function after 'pub'", null);
+    return self.hole();
 }
 
 // statements
 
 fn parseBlock(self: *Parse) Allocator.Error!Node.Index {
     if (self.at(.l_brace) == false) {
-        try self.errExpected(.expected_token, Token.Tag.l_brace.symbol());
+        try self.errExpected(.expected_token, Token.Tag.l_brace.symbol(), null);
         return self.hole();
     }
     if (self.depth >= depth_max) return self.tooDeep();
@@ -684,23 +733,14 @@ fn parseBlock(self: *Parse) Allocator.Error!Node.Index {
     const top = self.scratch.items.len;
     defer self.scratch.shrinkRetainingCapacity(top);
 
-    while (self.at(.r_brace) == false and self.eof() == false) {
-        const before = self.token_index;
-        if (self.at(.semi) or self.at(.doc_comment) or self.at(.file_doc_comment)) {
-            self.token_index = self.token_index.after(1);
-        } else if (self.at(.kw_else)) {
-            try self.scratch.append(self.gpa, try self.parseStrayElse());
-        } else if (starts_stmt.contains(self.current())) {
-            try self.scratch.append(self.gpa, try self.parseStatement());
-        } else if (starts_decl.contains(self.current())) {
-            break;
-        } else {
-            try self.errExpected(.expected_statement, "a statement");
-            try self.scratch.append(self.gpa, try self.skip());
-        }
-        self.ensureProgress(before);
-    }
-    try self.expectClosing(.r_brace, lbrace);
+    try self.parseList(.{
+        .item = parseStatement,
+        .starts = starts_stmt,
+        .closer = .r_brace,
+        .opener = lbrace,
+        .code = .expected_statement,
+        .expected = "a statement",
+    });
 
     const start = self.extraStart();
     try self.extraList(self.scratch.items[top..]);
@@ -716,10 +756,10 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
     switch (self.current()) {
         .kw_let, .kw_var => return self.parseVarDecl(),
         .kw_while => return self.parseWhile(),
+        .kw_else => return self.parseStrayElse(),
         .kw_defer => {
             const defer_token = self.nextToken();
             const expr = try self.parseExpr();
-            try self.expectEndOfStatement();
             return self.addNode(.{
                 .tag = .defer_stmt,
                 .main_token = defer_token,
@@ -804,7 +844,7 @@ fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
     if (self.eatToken(.pipe) == null) return .none;
     assert(self.tags[self.token_index.before(1).int()] == .pipe);
     if (self.at(.ident) == false) {
-        try self.errExpected(.expected_token, Token.Tag.ident.symbol());
+        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
         return (try self.hole()).toOptional();
     }
     const name = self.nextToken();
@@ -853,7 +893,6 @@ fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
 
     try self.expectToken(.eq);
     const init_expr = try self.parseExpr();
-    try self.expectEndOfStatement();
 
     return self.addNode(.{
         .tag = .var_decl,
@@ -868,7 +907,6 @@ fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
     const lhs = try self.parseExpr();
     assert(lhs.int() < self.nodes.len);
     if (self.at(.eq) == false) {
-        try self.expectEndOfStatement();
         return lhs;
     }
 
@@ -886,7 +924,6 @@ fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
 
     const eq = self.nextToken();
     const rhs = try self.parseExpr();
-    try self.expectEndOfStatement();
     return self.addPair(.assign, eq, lhs, rhs);
 }
 
@@ -994,19 +1031,7 @@ fn parseSuffixExpr(self: *Parse) Allocator.Error!Node.Index {
         switch (self.current()) {
             .l_paren => node = try self.parseCall(node),
             .l_bracket => node = try self.parseInstance(node),
-            .dot => {
-                const dot = self.nextToken();
-                if (self.at(.ident) == false) {
-                    try self.errExpected(.expected_token, Token.Tag.ident.symbol());
-                    return self.hole();
-                }
-                _ = self.nextToken();
-                node = try self.addNode(.{
-                    .tag = .field_access,
-                    .main_token = dot,
-                    .data = .{ .node = node },
-                });
-            },
+            .dot => node = try self.parseFieldAccess(node) orelse return self.hole(),
             else => return node,
         }
     }
@@ -1072,15 +1097,12 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .kw_true, .kw_false => return self.addLeaf(.bool_literal),
         .kw_null => return self.addLeaf(.null_literal),
         .dot => return self.parseStructLiteral(),
+        // parentheses group, and the tree already holds the grouping
         .l_paren => {
             const lparen = self.nextToken();
             const inner = try self.parseExpr();
             try self.expectClosing(.r_paren, lparen);
-            return self.addNode(.{
-                .tag = .grouped,
-                .main_token = lparen,
-                .data = .{ .node = inner },
-            });
+            return inner;
         },
         .invalid => {
             try self.err(.{
@@ -1092,7 +1114,7 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
             return self.skip();
         },
         else => {
-            try self.errExpected(.expected_expression, "an expression");
+            try self.errExpected(.expected_expression, "an expression", null);
             return self.hole();
         },
     }
@@ -1169,7 +1191,7 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
 
 fn parseTypePath(self: *Parse) Allocator.Error!Node.Index {
     if (self.at(.ident) == false) {
-        try self.errExpected(.expected_type, "a type");
+        try self.errExpected(.expected_type, "a type", null);
         return self.hole();
     }
     const path = try self.parsePath();
