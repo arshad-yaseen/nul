@@ -10,10 +10,6 @@ No garbage collector. No hidden allocations. No lifetime annotations.
 The question the project is asking: how much of memory safety can be proven from the
 allocator you were already passing down, without a borrow checker to learn?
 
-`arena` is where a function allocates. It is also the name of a lifetime, and you wrote
-it because you needed somewhere to allocate from. That is the entire annotation budget.
-[The model](memory.md) is one page, and the last line above is the only thing it rejects.
-
 ## Try it
 
 ```console
