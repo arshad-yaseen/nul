@@ -1,3 +1,5 @@
+type Nice = u8
+
 pub fn main() i64 {
     let nice = if true { let x: i64 = 5;  x } else { let y: i64 = 10; y }
 
