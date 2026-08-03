@@ -7,20 +7,40 @@ intended for use any time soon.
 
 No garbage collector. No hidden allocations. No lifetime annotations.
 
-The question the project is asking: how much of memory safety can be proven from the
-allocator you were already passing down, without a borrow checker to learn?
+> How much of memory safety can be proven from the allocator you were already passing down, without a borrow checker to learn?
 
 ## Try it
 
+```nul
+struct Counter {
+    hits: i64
+
+    fn bump(self: *var Counter, by: i64) {
+        self.hits = self.hits + by
+    }
+}
+
+pub fn main() i64 {
+    var counter: Counter = .{ hits: 0 }
+
+    var i: i64 = 0
+    while i < 13 {
+        let step = if i % 2 == 0 { i } else { 0 }
+        counter.bump(step)
+        i = i + 1
+    }
+
+    return counter.hits
+}
+```
+
 ```console
 $ zig build
-$ ./zig-out/bin/nul run program.nul
+$ ./zig-out/bin/nul run counter.nul
 42
 ```
 
 ```
-An entry is one file. Everything it imports is part of the program.
-
 commands:
   run <entry>   check, compile, and run the program
   ir  <entry>   print the typed IR
