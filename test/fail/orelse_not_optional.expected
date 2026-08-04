@@ -1,5 +1,5 @@
 error[E0225]: 'orelse' needs an optional, and this is i64
- --> test/fail/orelse_not_optional.nul:2:12
+ --> test/fail/orelse_not_optional.zol:2:12
   |
 2 |     return count orelse 0
   |            ^^^^^ never null

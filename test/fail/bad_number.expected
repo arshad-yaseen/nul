@@ -1,5 +1,5 @@
 error[E0248]: '12abc' is not a number the language knows
- --> test/fail/bad_number.nul:1:18
+ --> test/fail/bad_number.zol:1:18
   |
 1 | let unreadable = 12abc
   |                  ^^^^^ unreadable
@@ -7,13 +7,13 @@ error[E0248]: '12abc' is not a number the language knows
   = help: numbers are decimal, hex '0x', octal '0o', or binary '0b', with '.' and 'e' for floats
 
 error[E0247]: this number needs more than 128 bits, the width constants fold in
- --> test/fail/bad_number.nul:2:16
+ --> test/fail/bad_number.zol:2:16
   |
 2 | let too_wide = 170141183460469231731687303715884105728
   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ too large
 
 error[E0247]: this number is too large for a float
- --> test/fail/bad_number.nul:3:25
+ --> test/fail/bad_number.zol:3:25
   |
 3 | let too_large_a_float = 1e999
   |                         ^^^^^ does not fit

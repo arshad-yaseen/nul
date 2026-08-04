@@ -1,5 +1,5 @@
 error[E0215]: 'total' needs a type before it can vary
- --> test/fail/var_needs_type.nul:2:5
+ --> test/fail/var_needs_type.zol:2:5
   |
 2 |     var total = 0
   |     ^^^^^^^^^^^^^ no type to hold it

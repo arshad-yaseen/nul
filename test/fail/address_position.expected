@@ -1,5 +1,5 @@
 error[E0223]: '&' can only appear as a call argument
- --> test/fail/address_position.nul:2:16
+ --> test/fail/address_position.zol:2:16
   |
 2 |     let held = &value
   |                ^^^^^^ not an argument here

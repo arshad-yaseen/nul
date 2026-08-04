@@ -1,5 +1,5 @@
 error[E0227]: this can fail, and nothing here handles it
- --> test/fail/error_ignored.nul:6:5
+ --> test/fail/error_ignored.zol:6:5
   |
 6 |     risky()
   |     ^^^^^^^ an unhandled error

@@ -1,5 +1,5 @@
 error[E0110]: this cannot be assigned to
- --> test/parse-error/assign_to_call.nul:2:5
+ --> test/parse-error/assign_to_call.zol:2:5
   |
 2 |     g(a) = 1
   |     ^^^^ not a place

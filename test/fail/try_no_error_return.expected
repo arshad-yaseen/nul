@@ -1,5 +1,5 @@
 error[E0228]: 'try' passes the error up, but this function cannot fail
- --> test/fail/try_no_error_return.nul:6:12
+ --> test/fail/try_no_error_return.zol:6:12
   |
 6 |     return try risky()
   |            ^^^^^^^^^^^ nowhere to send the error

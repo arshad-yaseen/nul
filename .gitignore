@@ -2,8 +2,8 @@
 zig-out/
 
 # what the release workflow leaves in the working tree
-/nul-*.tar.xz
-/nul-*.zip
+/zol-*.tar.xz
+/zol-*.zip
 /SHA256SUMS
 /NOTES.md
 

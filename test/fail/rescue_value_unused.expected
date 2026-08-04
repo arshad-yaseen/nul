@@ -1,5 +1,5 @@
 error[E0230]: this i64 goes nowhere
-  --> test/fail/rescue_value_unused.nul:11:5
+  --> test/fail/rescue_value_unused.zol:11:5
    |
 11 |     risky(seed) catch {}
    |     ^^^^^^^^^^^^^^^^^^^^ unused value
@@ -7,7 +7,7 @@ error[E0230]: this i64 goes nowhere
    = help: 'catch' settles the other path, and the value still needs a home, as in '_ = f() catch 0'
 
 error[E0230]: this i64 goes nowhere
-  --> test/fail/rescue_value_unused.nul:12:5
+  --> test/fail/rescue_value_unused.zol:12:5
    |
 12 |     opt orelse 0
    |     ^^^^^^^^^^^^ unused value

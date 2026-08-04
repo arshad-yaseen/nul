@@ -1,5 +1,5 @@
 error[E0209]: this overflows the 128 bits constants fold in
- --> test/fail/overflow.nul:1:52
+ --> test/fail/overflow.zol:1:52
   |
 1 | let huge = 170141183460469231731687303715884105727 + 1
   |                                                    ^ too large

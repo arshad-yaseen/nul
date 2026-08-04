@@ -1,11 +1,11 @@
 error[E0101]: expected an identifier, found 'error'
- --> test/parse-error/error_decl_shape.nul:3:1
+ --> test/parse-error/error_decl_shape.zol:3:1
   |
 3 | error 1
   | ^^^^^ expected an identifier
 
 error[E0101]: expected ',' or the end of the line, found 'error'
- --> test/parse-error/error_decl_shape.nul:3:1
+ --> test/parse-error/error_decl_shape.zol:3:1
   |
 3 | error 1
   | ^^^^^ unexpected here
@@ -13,7 +13,7 @@ error[E0101]: expected ',' or the end of the line, found 'error'
   = help: one per line, or a ',' between them
 
 error[E0101]: expected ',' or the end of the line, found an identifier
- --> test/parse-error/error_decl_shape.nul:5:16
+ --> test/parse-error/error_decl_shape.zol:5:16
   |
 5 | error NotFound extra
   |                ^^^^^ unexpected here

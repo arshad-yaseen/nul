@@ -1,5 +1,5 @@
 error[E0205]: 'bool' is already the name of a type every file can see
- --> test/fail/shadow.nul:3:8
+ --> test/fail/shadow.zol:3:8
   |
 3 | struct bool {
   |        ^^^^ already taken
@@ -7,18 +7,18 @@ error[E0205]: 'bool' is already the name of a type every file can see
   = help: pick another name, and alias it with 'type' if you want a synonym
 
 error[E0205]: 'outer' is already declared in this file
- --> test/fail/shadow.nul:8:5
+ --> test/fail/shadow.zol:8:5
   |
 8 |     let outer = 2
   |     ^^^^^^^^^^^^^ shadows it
 note: declared here
- --> test/fail/shadow.nul:1:1
+ --> test/fail/shadow.zol:1:1
   |
 1 | let outer = 1
   | ^^^^^^^^^^^^^
 
 error[E0205]: 'u32' is the name of a type every file can see
- --> test/fail/shadow.nul:9:5
+ --> test/fail/shadow.zol:9:5
   |
 9 |     let u32 = 3
   |     ^^^^^^^^^^^ shadows it

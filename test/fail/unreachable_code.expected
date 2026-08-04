@@ -1,32 +1,32 @@
 error[E0250]: this cannot be reached
- --> test/fail/unreachable_code.nul:3:5
+ --> test/fail/unreachable_code.zol:3:5
   |
 3 |     let ignored = a + 1
   |     ^^^^^^^^^^^^^^^^^^^ never runs
 note: the block already left here
- --> test/fail/unreachable_code.nul:2:5
+ --> test/fail/unreachable_code.zol:2:5
   |
 2 |     return 1
   |     ^^^^^^^^
 
 error[E0250]: this cannot be reached
-  --> test/fail/unreachable_code.nul:11:9
+  --> test/fail/unreachable_code.zol:11:9
    |
 11 |         i = i + 1
    |         ^^^^^^^^^ never runs
 note: the block already left here
-  --> test/fail/unreachable_code.nul:10:9
+  --> test/fail/unreachable_code.zol:10:9
    |
 10 |         break
    |         ^^^^^
 
 error[E0250]: this cannot be reached
-  --> test/fail/unreachable_code.nul:22:5
+  --> test/fail/unreachable_code.zol:22:5
    |
 22 |     let ignored = 3
    |     ^^^^^^^^^^^^^^^ never runs
 note: the block already left here
-  --> test/fail/unreachable_code.nul:17:5
+  --> test/fail/unreachable_code.zol:17:5
    |
 17 |     if c {
    |     ^^^^^^

@@ -1,5 +1,5 @@
 error[E0235]: no module named 'nowhere'
- --> test/multi/missing_module/main.nul:1:5
+ --> test/multi/missing_module/main.zol:1:5
   |
 1 | use nowhere
   |     ^^^^^^^ nothing on disk answers to this

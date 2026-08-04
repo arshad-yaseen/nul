@@ -1,7 +1,7 @@
 .{
-    .name = .nul,
+    .name = .zol,
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
     .paths = .{""},
-    .fingerprint = 0xab449ff8b5dc911a,
+    .fingerprint = 0x466e8fd3c814dd,
 }

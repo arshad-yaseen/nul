@@ -1,5 +1,5 @@
 error[E0107]: expected a type, found '='
- --> test/parse-error/missing_type.nul:2:12
+ --> test/parse-error/missing_type.zol:2:12
   |
 2 |     let x: = a
   |            ^ expected a type

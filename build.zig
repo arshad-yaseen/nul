@@ -42,9 +42,9 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "nul",
+        .name = "zol",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/nul/main.zig"),
+            .root_source_file = b.path("tools/zol/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -66,7 +66,7 @@ pub fn build(b: *std.Build) void {
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
     if (b.args) |args| run.addArgs(args);
-    b.step("run", "Build and run nul").dependOn(&run.step);
+    b.step("run", "Build and run zol").dependOn(&run.step);
 
     const test_step = b.step("test", "Run unit tests and file tests");
 
@@ -112,9 +112,9 @@ fn addRelease(b: *std.Build, version: []const u8, options: *std.Build.Step.Optio
     for (release_targets) |triple| {
         const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch
             std.debug.panic("release target '{s}' is not a target triple", .{triple});
-        const exe = addNul(b, b.resolveTargetQuery(query), .ReleaseFast, options);
+        const exe = addZol(b, b.resolveTargetQuery(query), .ReleaseFast, options);
 
-        const tree = b.fmt("release/nul-{s}-{s}", .{ version, triple });
+        const tree = b.fmt("release/zol-{s}-{s}", .{ version, triple });
         const binary = b.addInstallArtifact(exe, .{
             .dest_dir = .{ .override = .{ .custom = b.fmt("{s}/bin", .{tree}) } },
         });
@@ -135,7 +135,7 @@ fn addRelease(b: *std.Build, version: []const u8, options: *std.Build.Step.Optio
 }
 
 /// The binary, and the compiler module it is built over.
-fn addNul(
+fn addZol(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -147,9 +147,9 @@ fn addNul(
         .optimize = optimize,
     });
     const exe = b.addExecutable(.{
-        .name = "nul",
+        .name = "zol",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/nul/main.zig"),
+            .root_source_file = b.path("tools/zol/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -203,14 +203,14 @@ fn addTestFiles(b: *std.Build, run: *std.Build.Step.Run) void {
         var names: std.ArrayList([]const u8) = .empty;
         var walk = dir.iterate();
         while (walk.next(io) catch null) |entry| {
-            // a multi-module case is a directory entered at main.nul
+            // a multi-module case is a directory entered at main.zol
             if (entry.kind == .directory) {
-                const main_path = b.fmt("{s}/{s}/main.nul", .{ sub, entry.name });
-                dir.access(io, b.fmt("{s}/main.nul", .{entry.name}), .{}) catch continue;
+                const main_path = b.fmt("{s}/{s}/main.zol", .{ sub, entry.name });
+                dir.access(io, b.fmt("{s}/main.zol", .{entry.name}), .{}) catch continue;
                 names.append(b.allocator, main_path) catch @panic("OOM");
                 continue;
             }
-            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".nul")) continue;
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zol")) continue;
             names.append(b.allocator, b.fmt("{s}/{s}", .{ sub, entry.name })) catch @panic("OOM");
         }
         std.mem.sort([]const u8, names.items, {}, stringLessThan);

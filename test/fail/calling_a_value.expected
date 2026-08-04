@@ -1,5 +1,5 @@
 error[E0212]: this is an untyped number, not a function
- --> test/fail/calling_a_value.nul:3:12
+ --> test/fail/calling_a_value.zol:3:12
   |
 3 |     return x()
   |            ^ cannot be called

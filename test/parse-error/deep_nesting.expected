@@ -1,5 +1,5 @@
 error[E0111]: this nests more than 128 levels deep
-   --> test/parse-error/deep_nesting.nul:129:1
+   --> test/parse-error/deep_nesting.zol:129:1
     |
 129 | (
     | ^ too deep

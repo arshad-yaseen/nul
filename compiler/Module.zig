@@ -440,7 +440,7 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
     };
     const path = try std.fs.path.join(comp.arena.allocator(), &.{
         base,
-        try comp.fmt("{s}.nul", .{sub}),
+        try comp.fmt("{s}.zol", .{sub}),
     });
 
     const source = Source.load(comp.gpa, comp.io, .cwd(), path) catch |err| switch (err) {

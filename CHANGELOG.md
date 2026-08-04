@@ -4,7 +4,7 @@
 
 ## [0.1.0] - 2026-08-04
 
-Initial release. `nul` checks a program and prints its typed IR. Nothing runs yet.
+Initial release. `zol` checks a program and prints its typed IR. Nothing runs yet.
 
 ### Language
 
@@ -25,8 +25,8 @@ Initial release. `nul` checks a program and prints its typed IR. Nothing runs ye
 
 ### Command line
 
-- `nul check <entry>` and `nul ir <entry>`.
+- `zol check <entry>` and `zol ir <entry>`.
 - `--std <dir>`, `--color auto|on|off`, and `--version`.
 
-[Unreleased]: https://github.com/arshad-yaseen/nul/compare/0.1.0...HEAD
-[0.1.0]: https://github.com/arshad-yaseen/nul/releases/tag/0.1.0
+[Unreleased]: https://github.com/arshad-yaseen/zol/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/arshad-yaseen/zol/releases/tag/0.1.0

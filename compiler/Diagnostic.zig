@@ -246,7 +246,7 @@ fn tint(color: Color, escape: []const u8) []const u8 {
 const testing = std.testing;
 
 fn expectRender(text: [:0]const u8, diagnostic: Diagnostic, want: []const u8) !void {
-    var source: Source = .{ .path = "demo.nul", .bytes = text };
+    var source: Source = .{ .path = "demo.zol", .bytes = text };
     defer if (source.line_starts) |starts| testing.allocator.free(starts);
 
     var out: Writer.Allocating = .init(testing.allocator);
@@ -264,7 +264,7 @@ test "header, arrow, gutter, source line, carets, label" {
         .label = "here",
     },
         \\error[E0101]: expected ':', found '='
-        \\ --> demo.nul:2:7
+        \\ --> demo.zol:2:7
         \\  |
         \\2 | let y = 2
         \\  |       ^ here
@@ -286,14 +286,14 @@ test "help and a note with its own snippet" {
         }},
     },
         \\error[E0101]: expected ')', found an identifier
-        \\ --> demo.nul:2:3
+        \\ --> demo.zol:2:3
         \\  |
         \\2 |   b)
         \\  |   ^ expected ')'
         \\  |
         \\  = help: arguments are separated by ','
         \\note: to match this '('
-        \\ --> demo.nul:1:2
+        \\ --> demo.zol:1:2
         \\  |
         \\1 | f(a
         \\  |  ^
@@ -310,12 +310,12 @@ test "one gutter width covers the widest line the diagnostic shows" {
         .notes = &.{.{ .message = "the file starts here", .span = .{ .start = 0, .end = 1 } }},
     },
         \\error[E0112]: invalid bytes
-        \\  --> demo.nul:10:1
+        \\  --> demo.zol:10:1
         \\   |
         \\10 | bad
         \\   | ^^^
         \\note: the file starts here
-        \\  --> demo.nul:1:1
+        \\  --> demo.zol:1:1
         \\   |
         \\ 1 |
         \\   | ^
@@ -331,7 +331,7 @@ test "a span past the end of its line still renders one caret" {
         .message = "expected ';', found end of file",
     },
         \\error[E0101]: expected ';', found end of file
-        \\ --> demo.nul:1:3
+        \\ --> demo.zol:1:3
         \\  |
         \\1 | ab
         \\  |   ^
@@ -341,7 +341,7 @@ test "a span past the end of its line still renders one caret" {
 }
 
 test "color wraps the pieces without moving them" {
-    var source: Source = .{ .path = "d.nul", .bytes = "ab\n" };
+    var source: Source = .{ .path = "d.zol", .bytes = "ab\n" };
     defer if (source.line_starts) |starts| testing.allocator.free(starts);
 
     var out: Writer.Allocating = .init(testing.allocator);
@@ -355,7 +355,7 @@ test "color wraps the pieces without moving them" {
     try diagnostic.render(testing.allocator, &source, &out.writer, .on);
     try testing.expectEqualStrings(
         "\x1b[1;31merror[E0112]\x1b[0m\x1b[1m: m\x1b[0m\n" ++
-            " \x1b[1;34m-->\x1b[0m d.nul:1:1\n" ++
+            " \x1b[1;34m-->\x1b[0m d.zol:1:1\n" ++
             "  \x1b[1;34m|\x1b[0m\n" ++
             "\x1b[1;34m1 |\x1b[0m ab\n" ++
             "  \x1b[1;34m|\x1b[0m \x1b[1;31m^\x1b[0m\n\n",

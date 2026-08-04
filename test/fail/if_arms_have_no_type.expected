@@ -1,5 +1,5 @@
 error[E0215]: the arms of this 'if' do not say what type it is
- --> test/fail/if_arms_have_no_type.nul:2:13
+ --> test/fail/if_arms_have_no_type.zol:2:13
   |
 2 |     let n = if c { 10 } else { 100 }
   |             ^^^^^^^^^^^^^^^^^^^^^^ no type in sight
@@ -7,7 +7,7 @@ error[E0215]: the arms of this 'if' do not say what type it is
   = help: annotate what it feeds, as in 'let n: i64 = if ...'
 
 error[E0215]: the arms of this 'if' do not say what type it is
- --> test/fail/if_arms_have_no_type.nul:7:13
+ --> test/fail/if_arms_have_no_type.zol:7:13
   |
 7 |     let n = if c { null } else { null }
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^ no type in sight
@@ -15,7 +15,7 @@ error[E0215]: the arms of this 'if' do not say what type it is
   = help: annotate what it feeds, as in 'let n: i64 = if ...'
 
 error[E0206]: this 'if' produces nothing, so it cannot stand where a value does
-  --> test/fail/if_arms_have_no_type.nul:13:13
+  --> test/fail/if_arms_have_no_type.zol:13:13
    |
 13 |     let n = if c { effect() } else { effect() }
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value here

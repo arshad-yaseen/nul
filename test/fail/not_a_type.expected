@@ -1,17 +1,17 @@
 error[E0202]: 'count' is a value, not a type
- --> test/fail/not_a_type.nul:9:20
+ --> test/fail/not_a_type.zol:9:20
   |
 9 | fn from_a_value(a: count) i64 {
   |                    ^^^^^ not a type
 
 error[E0202]: 'helper' is a function, not a type
-  --> test/fail/not_a_type.nul:13:23
+  --> test/fail/not_a_type.zol:13:23
    |
 13 | fn from_a_function(a: helper) i64 {
    |                       ^^^^^^ not a type
 
 error[E0202]: 'mem' is a module, not a type
-  --> test/fail/not_a_type.nul:17:21
+  --> test/fail/not_a_type.zol:17:21
    |
 17 | fn from_a_module(a: mem) i64 {
    |                     ^^^ a module

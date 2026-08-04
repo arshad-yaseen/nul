@@ -1,5 +1,5 @@
 error[E0108]: expected 'field: value', found a number
- --> test/parse-error/expected_field_value.nul:6:23
+ --> test/parse-error/expected_field_value.zol:6:23
   |
 6 |     let p: Point = .{ 1 }
   |                       ^ expected 'field: value'

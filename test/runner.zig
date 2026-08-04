@@ -11,7 +11,7 @@ const Kind = enum {
     @"parse-error",
     ir,
     fail,
-    /// A directory of modules entered at `main.nul`.
+    /// A directory of modules entered at `main.zol`.
     multi,
 
     fn extension(kind: Kind) []const u8 {
@@ -68,8 +68,8 @@ fn runOne(
     update: bool,
     log: *Writer,
 ) !bool {
-    assert(path.len > ".nul".len);
-    assert(std.mem.endsWith(u8, path, ".nul"));
+    assert(path.len > ".zol".len);
+    assert(std.mem.endsWith(u8, path, ".zol"));
     const kind = kindOf(path) orelse {
         try log.print("{s}: not under a directory the runner knows\n", .{path});
         return false;
@@ -85,7 +85,7 @@ fn runOne(
     if (produced == false) return false;
 
     const golden_path = try std.fmt.allocPrint(gpa, "{s}{s}", .{
-        path[0 .. path.len - ".nul".len],
+        path[0 .. path.len - ".zol".len],
         kind.extension(),
     });
     defer gpa.free(golden_path);
@@ -195,7 +195,7 @@ fn runCompile(
 
 fn kindOf(path: []const u8) ?Kind {
     assert(path.len > 0);
-    if (std.mem.endsWith(u8, path, ".nul") == false) return null;
+    if (std.mem.endsWith(u8, path, ".zol") == false) return null;
 
     var components = std.mem.splitScalar(u8, path, '/');
     const first = components.next() orelse return null;

@@ -1,4 +1,4 @@
-# Nul
+# Zol
 
 **As simple as Go, as bare as C. Memory safe at compile time, with nothing to annotate.**
 
@@ -13,8 +13,8 @@ No garbage collector. No hidden allocations. No lifetime annotations.
 
 ```console
 $ zig build
-$ ./zig-out/bin/nul check demo.nul
-$ ./zig-out/bin/nul ir demo.nul
+$ ./zig-out/bin/zol check demo.zol
+$ ./zig-out/bin/zol ir demo.zol
 ```
 
 ```
@@ -32,7 +32,7 @@ options:
 
 Design first, implementation second. The front end is real: parsing with recovery,
 modules, generics instantiated on demand, and a typed control flow graph. It ends
-there: `nul` checks a program and prints its IR, and nothing runs.
+there: `zol` checks a program and prints its IR, and nothing runs.
 
 Nothing about memory is checked either. Arenas type check and lower like any other
 value, so memory safety is the model rather than the implementation. Read this as a

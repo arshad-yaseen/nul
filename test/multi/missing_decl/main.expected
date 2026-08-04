@@ -1,5 +1,5 @@
 error[E0219]: 'helper' has no declaration named 'twise'
- --> test/multi/missing_decl/main.nul:1:12
+ --> test/multi/missing_decl/main.zol:1:12
   |
 1 | use helper.twise
   |            ^^^^^ not found

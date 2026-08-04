@@ -1,5 +1,5 @@
 error[E0210]: this divides by zero
- --> test/fail/division_by_zero.nul:1:17
+ --> test/fail/division_by_zero.zol:1:17
   |
 1 | let broken = 10 / (5 - 5)
   |                 ^ the divisor is zero

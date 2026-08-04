@@ -1,10 +1,10 @@
 error[E0101]: expected '}', found the end of the line
- --> test/parse-error/unclosed_struct_literal.nul:1:29
+ --> test/parse-error/unclosed_struct_literal.zol:1:29
   |
 1 | fn f() Point = .{ x: 1, y: 2
   |                             ^ expected '}'
 note: to close the '{' opened here
- --> test/parse-error/unclosed_struct_literal.nul:1:17
+ --> test/parse-error/unclosed_struct_literal.zol:1:17
   |
 1 | fn f() Point = .{ x: 1, y: 2
   |                 ^

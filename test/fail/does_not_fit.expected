@@ -1,5 +1,5 @@
 error[E0208]: 256 does not fit in u8
- --> test/fail/does_not_fit.nul:4:20
+ --> test/fail/does_not_fit.zol:4:20
   |
 4 |     let wide: u8 = n
   |                    ^ past the type's edge
