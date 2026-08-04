@@ -9,7 +9,9 @@ struct Mixed {
     x: i64, y: i64,
     z: i64
 
-    fn sum(self: *Mixed) i64 = self.x + self.y + self.z
+    fn sum(self: *Mixed) i64 {
+        return self.x + self.y + self.z
+    }
 }
 
 struct Pair[

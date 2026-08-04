@@ -1,117 +1,98 @@
+fn Counter.bump(self: *var Counter)
+b0:
+  %0 = param self : *var Counter
+  %1 = field_ptr %0, .hits : *var i64
+  %2 = field_ptr %0, .hits : *var i64
+  %3 = load %2 : i64
+  %4 = add %3, 1:i64 : i64
+  %5 = store %1, %4
+  return
+
 fn risky(seed: i64) !i64
 b0:
   %0 = param seed : i64
-  %1 = scope_begin
-  %2 = cmp_gt %0, 4:i64 : bool
-  branch %2, b1, b2
+  %1 = cmp_gt %0, 4:i64 : bool
+  branch %1, b1, b2
 b1:
-  %3 = scope_begin
-  %4 = wrap_err TooRisky : !i64
-  %5 = scope_end %3
-  %6 = scope_end %1
+  %2 = wrap_err TooRisky : !i64
+  return %2
+b2:
+  jump b3
+b3:
+  %3 = wrap_ok %0 : !i64
+  return %3
+
+fn tidy(early: bool) !i64
+b0:
+  %0 = param early : bool
+  %1 = struct_init .{ hits: 0:i64 } : Counter
+  %2 = local counter : *var Counter
+  %3 = store %2, %1
+  branch %0, b1, b2
+b1:
+  %4 = wrap_ok 1:i64 : !i64
+  %5 = call Counter.bump(%2)
   return %4
 b2:
   jump b3
 b3:
-  %7 = wrap_ok %0 : !i64
-  %8 = scope_end %1
-  return %7
-
-fn tidy(arena: Arena, early: bool) !i64
-b0:
-  %0 = param arena : Arena
-  %1 = param early : bool
-  %2 = scope_begin
-  %3 = arena_child %0 : Arena
-  %4 = local scratch : *var Arena
-  %5 = store %4, %3
-  branch %1, b1, b2
-b1:
-  %6 = scope_begin
-  %7 = wrap_ok 1:i64 : !i64
-  %8 = scope_end %6
-  %9 = load %4 : Arena
-  %10 = arena_reset %9
-  %11 = scope_end %2
-  return %7
-b2:
-  jump b3
-b3:
-  %12 = call risky(5:i64) : !i64
-  %13 = is_error %12 : bool
-  branch %13, b4, b5
+  %6 = call risky(5:i64) : !i64
+  %7 = is_error %6 : bool
+  branch %7, b4, b5
 b4:
-  %14 = unwrap_err %12 : an error
-  %15 = load %4 : Arena
-  %16 = arena_reset %15
-  %17 = scope_end %2
-  %18 = wrap_err %14 : !i64
-  return %18
+  %8 = unwrap_err %6 : an error
+  %9 = call Counter.bump(%2)
+  %10 = wrap_err %8 : !i64
+  return %10
 b5:
-  %19 = unwrap_ok %12 : i64
-  %20 = wrap_ok %19 : !i64
-  %21 = load %4 : Arena
-  %22 = arena_reset %21
-  %23 = scope_end %2
-  return %20
+  %11 = unwrap_ok %6 : i64
+  %12 = wrap_ok %11 : !i64
+  %13 = call Counter.bump(%2)
+  return %12
 
-fn each_iteration(arena: Arena, rounds: i64) i64
+fn each_iteration(rounds: i64) i64
 b0:
-  %0 = param arena : Arena
-  %1 = param rounds : i64
-  %2 = scope_begin
-  %3 = arena_child %0 : Arena
-  %4 = local outer : *var Arena
-  %5 = store %4, %3
-  %6 = local round : *var i64
+  %0 = param rounds : i64
+  %1 = struct_init .{ hits: 0:i64 } : Counter
+  %2 = local counter : *var Counter
+  %3 = store %2, %1
+  %4 = local round : *var i64
+  %5 = store %4, 0:i64
+  %6 = local kept : *var i64
   %7 = store %6, 0:i64
-  %8 = local kept : *var i64
-  %9 = store %8, 0:i64
   jump b1
 b1:
-  %10 = load %6 : i64
-  %11 = cmp_lt %10, %1 : bool
-  branch %11, b2, b3
+  %8 = load %4 : i64
+  %9 = cmp_lt %8, %0 : bool
+  branch %9, b2, b3
 b2:
-  %12 = scope_begin
-  %13 = load %6 : i64
-  %14 = add %13, 1:i64 : i64
-  %15 = store %6, %14
-  %16 = load %6 : i64
-  %17 = cmp_eq %16, 2:i64 : bool
-  branch %17, b4, b5
+  %10 = load %4 : i64
+  %11 = add %10, 1:i64 : i64
+  %12 = store %4, %11
+  %13 = load %4 : i64
+  %14 = cmp_eq %13, 2:i64 : bool
+  branch %14, b4, b5
 b3:
-  %37 = load %8 : i64
-  %38 = scope_end %2
-  return %37
+  %24 = load %6 : i64
+  return %24
 b4:
-  %18 = scope_begin
-  %19 = scope_end %18
-  %20 = load %4 : Arena
-  %21 = arena_reset %20
-  %22 = scope_end %12
+  %15 = call Counter.bump(%2)
   jump b1
 b5:
   jump b6
 b6:
-  %23 = load %6 : i64
-  %24 = cmp_eq %23, 4:i64 : bool
-  branch %24, b7, b8
+  %16 = load %4 : i64
+  %17 = cmp_eq %16, 4:i64 : bool
+  branch %17, b7, b8
 b7:
-  %25 = scope_begin
-  %26 = scope_end %25
-  %27 = load %4 : Arena
-  %28 = arena_reset %27
-  %29 = scope_end %12
+  %18 = call Counter.bump(%2)
   jump b3
 b8:
   jump b9
 b9:
-  %30 = load %8 : i64
-  %31 = load %6 : i64
-  %32 = add %30, %31 : i64
-  %33 = store %8, %32
-  %34 = load %4 : Arena
-  %35 = arena_reset %34
-  %36 = scope_end %12
+  %19 = load %6 : i64
+  %20 = load %4 : i64
+  %21 = add %19, %20 : i64
+  %22 = store %6, %21
+  %23 = call Counter.bump(%2)
   jump b1

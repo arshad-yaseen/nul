@@ -1,23 +1,18 @@
-use std.mem.Arena
-
 struct Wide {
     a: i64
 }
 
-fn direct[T](arena: Arena, value: T) T {
-    return arena.copy(value)
-}
-
-fn through[T](arena: Arena, value: *var T) *var T {
-    var slot = arena.create[T]()
-    _ = slot
+fn direct[T](value: T) T {
     return value
 }
 
-fn drive(arena: Arena) i64 {
-    var wide = arena.create[Wide]()
-    wide.a = 7
-    let a = direct(arena, wide.a)
-    let b = through(arena, wide)
-    return a + b.a
+fn through[T](value: *var T) *var T {
+    return value
+}
+
+fn drive(wide: Wide) i64 {
+    var mine = wide
+    let copied = direct(mine)
+    let pointer = through(&mine)
+    return copied.a + pointer.a
 }

@@ -1,5 +1,3 @@
-use std.mem
-
 let count = 5
 
 fn helper() i64 {
@@ -11,9 +9,5 @@ fn from_a_value(a: count) i64 {
 }
 
 fn from_a_function(a: helper) i64 {
-    return 1
-}
-
-fn from_a_module(a: mem) i64 {
     return 1
 }

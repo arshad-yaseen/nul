@@ -34,6 +34,6 @@ Design first, implementation second. The front end is real: parsing with recover
 modules, generics instantiated on demand, and a typed control flow graph. It ends
 there: `zol` checks a program and prints its IR, and nothing runs.
 
-Nothing about memory is checked either. Arenas type check and lower like any other
-value, so memory safety is the model rather than the implementation. Read this as a
-set of ideas, not a toolchain.
+Nothing about memory is checked either, and the first sketch of an allocator has
+been taken back out while the model is redesigned. There is no standard library
+right now. Read this as a set of ideas, not a toolchain.

@@ -46,7 +46,7 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
     try writer.writeAll("...");
 }
 
-/// `Box[i64]`, or `Arena.copy[Pair]` for a member.
+/// `Box[i64]`, or `Pair[K, V].swap[T]` for a member.
 pub fn writeInstance(
     comp: *const Compilation,
     writer: *Writer,

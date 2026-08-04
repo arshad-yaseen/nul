@@ -1,5 +1,3 @@
-use std.mem.Arena
-
 pub struct Box[T] {
     item: T
 }
@@ -8,12 +6,17 @@ pub type Number = i64
 pub type Boxed = Box[Number]
 pub type Same = Boxed
 
-fn fill(arena: Arena, value: Number) *var Same {
-    var box = arena.create[Boxed]()
+fn fill(value: Number) Same {
+    var box: Same = .{ item: value }
     box.item = value
     return box
 }
 
 fn read(box: *Same) Number {
     return box.item
+}
+
+fn drive(value: Number) Number {
+    var box = fill(value)
+    return read(&box)
 }

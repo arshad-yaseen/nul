@@ -1,16 +1,50 @@
-fn spread(
-    a: i32
-    b: i32
-) {
+error TooSmall
 
+struct Counter {
+    hits: i64
+    label: u32
+
+    fn bump(self: *var Counter) {
+        self.hits = self.hits + 1
+    }
+
+    fn read(self: *Counter) i64 {
+        return self.hits
+    }
+}
+
+struct Box[T] {
+    item: T
+}
+
+fn checked(n: i64) !i64 {
+    if n < 10 {
+        return TooSmall
+    }
+    return n
+}
+
+fn first(maybe: ?i64) i64 {
+    if maybe |value| {
+        return value
+    }
+    return 0
 }
 
 pub fn main() i64 {
-    let a = 10
-    spread(
-        a,
-        -1
-    )
+    var counter: Counter = .{ hits: 0, label: 7 }
+    defer counter.bump()
 
-    return 10
+    var round: i64 = 0
+    while round < 3 {
+        round = round + 1
+        if round == 2 {
+            continue
+        }
+        counter.bump()
+    }
+
+    let boxed: Box[i64] = .{ item: counter.read() }
+    let safe = checked(boxed.item) catch 0
+    return safe + first(null) + first(41)
 }

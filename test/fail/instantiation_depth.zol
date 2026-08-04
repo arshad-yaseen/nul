@@ -1,13 +1,13 @@
-use std.mem.Arena
-
 pub struct Box[T] {
     item: T
 }
 
-fn dig[T](arena: Arena, value: *var T) i64 {
-    return dig(arena, arena.create[Box[T]]())
+fn dig[T](value: *var T) i64 {
+    var boxed: Box[*var T] = .{ item: value }
+    return dig(&boxed)
 }
 
-fn start(arena: Arena) i64 {
-    return dig(arena, arena.create[i64]())
+fn start() i64 {
+    var seed: i64 = 0
+    return dig(&seed)
 }

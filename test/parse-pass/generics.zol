@@ -10,12 +10,12 @@ pub struct Pair[K, V] {
 pub type IntBox = Box[i64]
 pub type Nested = Box[Box[i64]]
 
-pub fn make[T](arena: Arena, v: T) *var Box[T] {
-    let b = arena.create[Box[T]]()
+pub fn make[T](store: Store, v: T) *var Box[T] {
+    let b = store.make[Box[T]]()
     return b
 }
 
-fn use_them(arena: Arena) {
-    _ = make[i64](arena, 1)
-    _ = arena.create[Pair[i64, bool]]()
+fn use_them(store: Store) {
+    _ = make[i64](store, 1)
+    _ = store.make[Pair[i64, bool]]()
 }

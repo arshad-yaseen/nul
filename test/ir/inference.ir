@@ -1,42 +1,23 @@
-fn direct[i64](arena: Arena, value: i64) i64
+fn direct[Wide](value: Wide) Wide
 b0:
-  %0 = param arena : Arena
-  %1 = param value : i64
-  %2 = scope_begin
-  %3 = arena_copy %0, %1 : i64
-  %4 = scope_end %2
-  return %3
+  %0 = param value : Wide
+  return %0
 
-fn through[Wide](arena: Arena, value: *var Wide) *var Wide
+fn through[Wide](value: *var Wide) *var Wide
 b0:
-  %0 = param arena : Arena
-  %1 = param value : *var Wide
-  %2 = scope_begin
-  %3 = arena_create %0 : *var Wide
-  %4 = local slot : *var *var Wide
-  %5 = store %4, %3
-  %6 = load %4 : *var Wide
-  %7 = scope_end %2
-  return %1
+  %0 = param value : *var Wide
+  return %0
 
-fn drive(arena: Arena) i64
+fn drive(wide: Wide) i64
 b0:
-  %0 = param arena : Arena
-  %1 = scope_begin
-  %2 = arena_create %0 : *var Wide
-  %3 = local wide : *var *var Wide
-  %4 = store %3, %2
-  %5 = load %3 : *var Wide
-  %6 = field_ptr %5, .a : *var i64
-  %7 = store %6, 7:i64
-  %8 = load %3 : *var Wide
-  %9 = field_ptr %8, .a : *var i64
-  %10 = load %9 : i64
-  %11 = call direct[i64](%0, %10) : i64
-  %12 = load %3 : *var Wide
-  %13 = call through[Wide](%0, %12) : *var Wide
-  %14 = field_ptr %13, .a : *var i64
-  %15 = load %14 : i64
-  %16 = add %11, %15 : i64
-  %17 = scope_end %1
-  return %16
+  %0 = param wide : Wide
+  %1 = local mine : *var Wide
+  %2 = store %1, %0
+  %3 = load %1 : Wide
+  %4 = call direct[Wide](%3) : Wide
+  %5 = call through[Wide](%1) : *var Wide
+  %6 = field_val %4, .a : i64
+  %7 = field_ptr %5, .a : *var i64
+  %8 = load %7 : i64
+  %9 = add %6, %8 : i64
+  return %9

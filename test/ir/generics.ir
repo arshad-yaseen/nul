@@ -1,44 +1,25 @@
-fn make(arena: Arena) *var Pair[bool, i64]
+fn make() Pair[bool, i64]
 b0:
-  %0 = param arena : Arena
-  %1 = scope_begin
-  %2 = arena_create %0 : *var Pair[bool, i64]
-  %3 = local pair : *var *var Pair[bool, i64]
-  %4 = store %3, %2
-  %5 = load %3 : *var Pair[bool, i64]
-  %6 = field_ptr %5, .key : *var bool
-  %7 = store %6, true
-  %8 = load %3 : *var Pair[bool, i64]
-  %9 = field_ptr %8, .value : *var i64
-  %10 = store %9, 41:i64
-  %11 = load %3 : *var Pair[bool, i64]
-  %12 = scope_end %1
-  return %11
+  %0 = struct_init .{ key: true, value: 41:i64 } : Pair[bool, i64]
+  return %0
 
 fn Pair[bool, i64].swap_value(self: *var Pair[bool, i64], value: i64) i64
 b0:
   %0 = param self : *var Pair[bool, i64]
   %1 = param value : i64
-  %2 = scope_begin
-  %3 = field_ptr %0, .value : *var i64
-  %4 = load %3 : i64
-  %5 = field_ptr %0, .value : *var i64
-  %6 = store %5, %1
-  %7 = scope_end %2
-  return %4
+  %2 = field_ptr %0, .value : *var i64
+  %3 = load %2 : i64
+  %4 = field_ptr %0, .value : *var i64
+  %5 = store %4, %1
+  return %3
 
-fn use_them(arena: Arena) i64
+fn use_them() i64
 b0:
-  %0 = param arena : Arena
-  %1 = scope_begin
-  %2 = call make(%0) : *var Pair[bool, i64]
-  %3 = local pair : *var *var Pair[bool, i64]
-  %4 = store %3, %2
-  %5 = load %3 : *var Pair[bool, i64]
-  %6 = call Pair[bool, i64].swap_value(%5, 42:i64) : i64
-  %7 = load %3 : *var Pair[bool, i64]
-  %8 = field_ptr %7, .value : *var i64
-  %9 = load %8 : i64
-  %10 = add %6, %9 : i64
-  %11 = scope_end %1
-  return %10
+  %0 = call make() : Pair[bool, i64]
+  %1 = local pair : *var Pair[bool, i64]
+  %2 = store %1, %0
+  %3 = call Pair[bool, i64].swap_value(%1, 42:i64) : i64
+  %4 = load %1 : Pair[bool, i64]
+  %5 = field_val %4, .value : i64
+  %6 = add %3, %5 : i64
+  return %6

@@ -24,8 +24,8 @@ tree: *const AST,
 bindings: []const Binding,
 /// Null means constants only.
 builder: ?*Builder,
-/// Field types skip the size demand, because their struct gets its own walk.
-demand_sizes: bool,
+/// Field types skip the embedding demand, because their struct gets its own walk.
+demand_embedding: bool,
 
 const Check = @This();
 
@@ -52,8 +52,6 @@ const Value = union(enum) {
     named_fn: Decl.Index,
     /// `std` in `std.mem`.
     named_module: Module.Index,
-    /// `builtin` in `= builtin.arena_init`.
-    named_builtin,
 
     const Runtime = struct { ref: Ref, type: Pool.Index };
 
@@ -104,7 +102,7 @@ pub fn structRows(comp: *Compilation, instance: Pool.Instance) Allocator.Error!b
     var buffer: [bindings_max]Binding = undefined;
     const bindings = try bindTypeParams(comp, instance, &buffer);
     var check = context(comp, decl_index, bindings);
-    check.demand_sizes = false;
+    check.demand_embedding = false;
 
     const view = check.tree.viewOf(check.declNode(decl_index)).struct_decl;
 
@@ -139,8 +137,8 @@ fn commitRows(comp: *Compilation, instance: Pool.Instance, mark: usize) Allocato
     comp.instancePtr(instance).rows = .{ .start = rows_start, .len = @intCast(staged.len) };
 }
 
-/// A struct embedding itself by value has no size, which `ensure` reports.
-pub fn structSize(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
+/// What a struct embeds by value. A cycle means no size, which `ensure` reports.
+pub fn structEmbedding(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
     const decl_index = comp.instanceDecl(instance);
     const decl = comp.declAt(decl_index);
     const from: Compilation.Origin = .{ .module = decl.module, .node = decl.node };
@@ -150,13 +148,13 @@ pub fn structSize(comp: *Compilation, instance: Pool.Instance) Allocator.Error!b
     for (rows.start..rows.end()) |raw| {
         // by index, because the walk can grow the rows table
         const row = comp.rowAt(@intCast(raw));
-        try sizeWalkType(comp, row.type, .{ .module = decl.module, .node = row.node }, 0);
+        try walkEmbedded(comp, row.type, .{ .module = decl.module, .node = row.node }, 0);
     }
     return true;
 }
 
 /// The types a value embeds directly. A pointer breaks the chain.
-fn sizeWalkType(
+fn walkEmbedded(
     comp: *Compilation,
     type_index: Pool.Index,
     from: Compilation.Origin,
@@ -164,8 +162,8 @@ fn sizeWalkType(
 ) Allocator.Error!void {
     if (depth >= type_depth_max) return;
     switch (comp.pool.keyOf(type_index)) {
-        .type_struct => |embedded| try comp.ensure(.of(.size, embedded), from),
-        .type_optional, .type_error_union => |child| try sizeWalkType(comp, child, from, depth + 1),
+        .type_struct => |embedded| try comp.ensure(.of(.embedding, embedded), from),
+        .type_optional, .type_error_union => |child| try walkEmbedded(comp, child, from, depth + 1),
         .type_simple, .value_simple, .type_pointer => {},
         .value_int, .value_float, .value_error, .value_typed_null => unreachable,
     }
@@ -282,7 +280,7 @@ fn context(comp: *Compilation, decl_index: Decl.Index, bindings: []const Binding
         .tree = &module.tree,
         .bindings = bindings,
         .builder = null,
-        .demand_sizes = true,
+        .demand_embedding = true,
     };
 }
 
@@ -297,8 +295,8 @@ fn declNode(check: *const Check, decl_index: Decl.Index) Node.Index {
 /// A written type promises storage, so what it embeds must have a size.
 fn resolveWrittenType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const resolved = try check.resolveType(node);
-    if (check.demand_sizes and resolved != .poison) {
-        try sizeWalkType(check.comp, resolved, check.origin(node), 0);
+    if (check.demand_embedding and resolved != .poison) {
+        try walkEmbedded(check.comp, resolved, check.origin(node), 0);
     }
     return resolved;
 }
@@ -431,10 +429,6 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
                     });
                     return .poison;
                 },
-                .builtin => {
-                    try check.failBuiltinMisuse(node);
-                    return .poison;
-                },
             }
         },
         .let, .error_decl, .fn_decl => {
@@ -543,8 +537,6 @@ const Builder = struct {
     };
 
     const Scope = struct {
-        /// `.none` for a binding scope.
-        marker: Ref,
         locals_start: u32,
         defers_start: u32,
     };
@@ -624,7 +616,6 @@ const Builder = struct {
 pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
     const decl_index = comp.instanceDecl(instance);
     const decl = comp.declAt(decl_index);
-    if (decl.builtin() != null) return true;
     if (comp.instanceAt(instance).rows_state != .done) return false;
 
     var buffer: [bindings_max]Binding = undefined;
@@ -670,42 +661,22 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
         }, row.node);
     }
 
-    if (check.tree.nodeTag(view.body) == .block) {
-        // a body is statement position, so `return` is always written
-        _ = try check.checkBlockValue(view.body, .void_type);
-        if (check.blockOpen()) {
-            const falls_off = builder.reachable and builder.return_type != .void_type;
-            if (falls_off) {
-                try check.failToken(view.name_token, .{
-                    .code = .missing_return,
-                    .message = try comp.fmt("not every path through '{s}' returns its {s}", .{
-                        comp.pool.stringText(decl.name),
-                        try comp.typeName(builder.return_type),
-                    }),
-                    .label = "a path falls off the end",
-                    .help = "every path must end in 'return', or loop forever",
-                });
-            }
-            check.endBlock(.{ .ret = .none });
+    // a body is statement position, so `return` is always written
+    _ = try check.checkBlockValue(view.body, .void_type);
+    if (check.blockOpen()) {
+        const falls_off = builder.reachable and builder.return_type != .void_type;
+        if (falls_off) {
+            try check.failToken(view.name_token, .{
+                .code = .missing_return,
+                .message = try comp.fmt("not every path through '{s}' returns its {s}", .{
+                    comp.pool.stringText(decl.name),
+                    try comp.typeName(builder.return_type),
+                }),
+                .label = "a path falls off the end",
+                .help = "every path must end in 'return', or loop forever",
+            });
         }
-    } else {
-        // an `= expr` body returns its expression
-        try check.pushScope();
-        const value = try check.checkExpr(view.body, builder.return_type);
-        if (builder.return_type == .void_type) {
-            try check.expectNothing(view.body, value);
-            try check.unwindScopesTo(0);
-            check.endBlock(.{ .ret = .none });
-        } else if (value == .diverged) {
-            check.popScope();
-            try check.finishFunc();
-            return true;
-        } else {
-            const met = try check.coerce(value, builder.return_type, view.body);
-            try check.unwindScopesTo(0);
-            check.endBlock(.{ .ret = refOf(met) });
-        }
-        check.popScope();
+        check.endBlock(.{ .ret = .none });
     }
     assert(builder.scopes.items.len == 0);
 
@@ -802,19 +773,7 @@ fn blockOpen(check: *const Check) bool {
 
 fn pushScope(check: *Check) Allocator.Error!void {
     const builder = check.builder.?;
-    const marker = try check.emit(.scope_begin, .void_type, .{ .none = {} });
     try builder.scopes.append(check.comp.gpa, .{
-        .marker = marker,
-        .locals_start = @intCast(builder.locals.items.len),
-        .defers_start = @intCast(builder.defer_nodes.items.len),
-    });
-}
-
-/// Bindings only, a capture say. Nothing to emit on the way out.
-fn pushBindingScope(check: *Check) Allocator.Error!void {
-    const builder = check.builder.?;
-    try builder.scopes.append(check.comp.gpa, .{
-        .marker = .none,
         .locals_start = @intCast(builder.locals.items.len),
         .defers_start = @intCast(builder.defer_nodes.items.len),
     });
@@ -827,8 +786,8 @@ fn popScope(check: *Check) void {
     builder.defer_nodes.shrinkRetainingCapacity(scope.defers_start);
 }
 
-/// Every scope from the innermost down to `target`, defers in reverse then
-/// the scope end. Every way out goes through here.
+/// Every scope from the innermost down to `target`, defers in reverse.
+/// Every way out goes through here.
 fn unwindScopesTo(check: *Check, target: u32) Allocator.Error!void {
     const builder = check.builder.?;
     assert(target <= builder.scopes.items.len);
@@ -847,10 +806,6 @@ fn unwindScopesTo(check: *Check, target: u32) Allocator.Error!void {
         while (defer_index > scope.defers_start) {
             defer_index -= 1;
             try check.emitDefer(builder.defer_nodes.items[defer_index]);
-        }
-
-        if (scope.marker != .none) {
-            _ = try check.emitOne(.scope_end, .void_type, scope.marker);
         }
     }
 }
@@ -1235,7 +1190,7 @@ fn checkIf(
 
     check.startBlock(then_block);
     if (capture) |bound| {
-        try check.pushBindingScope();
+        try check.pushScope();
         const unwrapped = try check.emitOne(.unwrap_value, payload, tested);
         try check.bindCapture(bound, unwrapped, payload);
     }
@@ -1385,7 +1340,7 @@ fn checkWhile(check: *Check, view: AST.View.While) Allocator.Error!void {
         });
         check.startBlock(body_block);
         builder.reachable = entry_reachable;
-        try check.pushBindingScope();
+        try check.pushScope();
         if (view.capture.unwrap()) |capture| {
             const unwrapped = try check.emitOne(.unwrap_value, payload, tested);
             try check.bindCapture(capture, unwrapped, payload);
@@ -1655,7 +1610,7 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .break_expr => return check.checkLoopJump(node, .breaking),
         .continue_expr => return check.checkLoopJump(node, .continuing),
         .binary => |view| return check.checkBinary(view),
-        .unary => |view| return check.checkUnary(node, view),
+        .unary => |view| return check.checkUnary(view),
         .field_access => |view| return check.checkFieldAccess(node, view),
         .call => return check.checkCall(node),
         .instance => |view| return check.checkInstanceExpr(node, view),
@@ -1740,7 +1695,6 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             switch (Module.useTarget(comp, decl_index)) {
                 .module => |target| return .{ .named_module = target },
                 .decl => |target| return check.declAsValue(target, node),
-                .builtin => return .named_builtin,
             }
         },
     }
@@ -1999,18 +1953,25 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     return runtimeValue(loaded, .bool_type);
 }
 
-fn checkUnary(check: *Check, node: Node.Index, view: AST.View.Unary) Allocator.Error!Value {
+fn checkUnary(check: *Check, view: AST.View.Unary) Allocator.Error!Value {
     const comp = check.comp;
     switch (view.op) {
         .address_of => {
-            try check.fail(node, .{
-                .code = .address_position,
-                .message = "'&' can only appear as a call argument",
-                .label = "not an argument here",
-                .help = "a borrowed address cannot be stored, returned, or named, " ++
-                    "so it never outlives the call",
-            });
-            return .poison;
+            const place = try check.checkPlace(view.operand) orelse return .poison;
+            if (check.typeCanHold(place.type) == false) {
+                try check.failToken(view.op_token, .{
+                    .code = .type_mismatch,
+                    .message = try comp.fmt("'&' needs a value with a type, and this is {s}", .{
+                        try comp.typeName(place.type),
+                    }),
+                    .label = "nothing to point at",
+                    .help = "give the value a type first, as in 'let n: i64 = 10'",
+                });
+                return .poison;
+            }
+            const addressed = try check.placeAddress(place) orelse return .poison;
+            const type_pointer = try check.pointerTo(addressed.type, addressed.mutable);
+            return runtimeValue(addressed.ref, type_pointer);
         },
         .negate => {
             const operand = try check.checkExpr(view.operand, null);
@@ -2280,7 +2241,7 @@ fn checkRescue(
     check.endBlock(.{ .jump = join });
 
     check.startBlock(fallback_block);
-    try check.pushBindingScope();
+    try check.pushScope();
     try check.bindCaught(rescue.capture, tested);
     // quiet once the drop above was reported
     const fallback_hint: Pool.Index = if (carries)
@@ -2364,10 +2325,6 @@ fn checkFieldAccess(
             const member = try check.moduleMember(target, node, view.name_token) orelse
                 return .poison;
             return check.declAsValue(member, node);
-        },
-        .named_builtin => {
-            try check.failBuiltinMisuse(node);
-            return .poison;
         },
         .named_type, .named_generic => {
             try check.fail(node, .{
@@ -2828,10 +2785,6 @@ fn resolveCalleeMember(
                 const value = try check.declAsValue(member, callee_node);
                 return check.calleeOfValue(callee_node, value);
             },
-            .named_builtin => {
-                try check.failBuiltinMisuse(callee_node);
-                return null;
-            },
             .named_type => |type_index| {
                 switch (comp.pool.keyOf(type_index)) {
                     .type_struct => |owner| {
@@ -2935,10 +2888,6 @@ fn calleeOfValue(check: *Check, node: Node.Index, value: Value) Allocator.Error!
                 .message = "a module is not callable, so name a function inside it",
                 .label = "a module",
             });
-            return null;
-        },
-        .named_builtin => {
-            try check.failBuiltinMisuse(node);
             return null;
         },
     }
@@ -3100,10 +3049,6 @@ fn checkCallResolved(
     if (clean == false) return .poison;
     assert(builder.operands.items.len == start + receiver_count + args.len);
 
-    if (decl.builtin()) |bound| {
-        return check.emitBuiltin(bound, builder.operands.items[start..], return_type);
-    }
-
     // on its own `Builder`, so the operands staged here cannot move
     try comp.ensure(.of(.body, instance), check.origin(node));
 
@@ -3145,26 +3090,6 @@ fn checkArgument(
     early: ?Value,
 ) Allocator.Error!Value {
     if (early) |value| return check.coerce(value, row_type, argument);
-
-    // `&place` lives only here, addressing the place directly
-    if (check.tree.nodeTag(argument) == .unary) {
-        const unary = check.tree.viewOf(argument).unary;
-        if (unary.op == .address_of) {
-            const place = try check.checkPlace(unary.operand) orelse return .poison;
-            const wanted_mutable = switch (check.comp.pool.keyOf(row_type)) {
-                .type_pointer => |pointer| pointer.mutable,
-                else => false,
-            };
-            if (wanted_mutable and place.mutable == false) {
-                try check.reportImmutable(argument, place);
-                return .poison;
-            }
-            const addressed = try check.placeAddress(place) orelse return .poison;
-            const type_pointer = try check.pointerTo(addressed.type, addressed.mutable);
-            const value: Value = runtimeValue(addressed.ref, type_pointer);
-            return check.coerce(value, row_type, argument);
-        }
-    }
 
     const value = try check.checkExpr(argument, row_type);
     return check.coerce(value, row_type, argument);
@@ -3383,42 +3308,6 @@ fn reportReceiverMismatch(
         .label = "receiver and parameter disagree",
     });
     return null;
-}
-
-/// A bound primitive becomes its instruction.
-fn emitBuiltin(
-    check: *Check,
-    bound: Compilation.Builtin,
-    operands: []const Builder.Operand,
-    return_type: Pool.Index,
-) Allocator.Error!Value {
-    switch (bound) {
-        .arena_init => {
-            assert(operands.len == 0);
-            const result = try check.emit(.arena_init, return_type, .{ .none = {} });
-            return runtimeValue(result, return_type);
-        },
-        .arena_child, .arena_create => {
-            assert(operands.len == 1);
-            const tag: IR.Inst.Tag = if (bound == .arena_child) .arena_child else .arena_create;
-            const result = try check.emitOne(tag, return_type, refOf(operands[0].value));
-            return runtimeValue(result, return_type);
-        },
-        .arena_copy => {
-            assert(operands.len == 2);
-            const result = try check.emit(.arena_copy, return_type, .{
-                .bin = .{ .lhs = refOf(operands[0].value), .rhs = refOf(operands[1].value) },
-            });
-            return runtimeValue(result, return_type);
-        },
-        // a release produces nothing, whatever the declaration wrote
-        .arena_reset, .arena_destroy => {
-            assert(operands.len == 1);
-            const tag: IR.Inst.Tag = if (bound == .arena_reset) .arena_reset else .arena_destroy;
-            const result = try check.emitOne(tag, .void_type, refOf(operands[0].value));
-            return runtimeValue(result, .void_type);
-        },
-    }
 }
 
 /// A location a chain of names reached. A `value` never had an address, and
@@ -3718,7 +3607,7 @@ fn typeOf(check: *const Check, value: Value) Pool.Index {
         .constant => |constant| check.comp.pool.typeOfValue(constant),
         .runtime => |runtime| runtime.type,
         .poison, .diverged => .poison,
-        .named_type, .named_generic, .named_fn, .named_module, .named_builtin => .poison,
+        .named_type, .named_generic, .named_fn, .named_module => .poison,
     };
 }
 
@@ -3732,7 +3621,7 @@ fn refOf(value: Value) Ref {
         .constant => |constant| .fromConstant(constant),
         .runtime => |runtime| runtime.ref,
         .diverged, .poison => .fromConstant(.poison),
-        .named_type, .named_generic, .named_fn, .named_module, .named_builtin => .fromConstant(.poison),
+        .named_type, .named_generic, .named_fn, .named_module => .fromConstant(.poison),
     };
 }
 
@@ -4050,20 +3939,10 @@ fn reportNotValue(check: *Check, node: Node.Index, value: Value) Allocator.Error
             .message = "a module is not a value",
             .label = "a module, where a value belongs",
         },
-        .named_builtin => return check.failBuiltinMisuse(node),
         // a value that never arrives is never complained about
         .constant, .runtime, .poison, .diverged => unreachable,
     };
     try check.fail(node, report);
-}
-
-fn failBuiltinMisuse(check: *Check, node: Node.Index) Allocator.Error!void {
-    try check.fail(node, .{
-        .code = .builtin_outside_std,
-        .message = "the primitives are not callable, only bindable",
-        .label = "not a value",
-        .help = "a whole function body of the form '= builtin.name' binds one",
-    });
 }
 
 fn reportBadOperand(

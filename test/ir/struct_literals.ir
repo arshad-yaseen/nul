@@ -1,30 +1,24 @@
 fn framed(width: i64) Frame
 b0:
   %0 = param width : i64
-  %1 = scope_begin
-  %2 = struct_init .{ x: 0:i64, y: 0:i64 } : Point
-  %3 = mul %0, 2:i64 : i64
-  %4 = struct_init .{ x: %0, y: %3 } : Point
-  %5 = struct_init .{ origin: %2, size: %4, label: 7:u32 } : Frame
-  %6 = scope_end %1
-  return %5
+  %1 = struct_init .{ x: 0:i64, y: 0:i64 } : Point
+  %2 = mul %0, 2:i64 : i64
+  %3 = struct_init .{ x: %0, y: %2 } : Point
+  %4 = struct_init .{ origin: %1, size: %3, label: 7:u32 } : Frame
+  return %4
 
 fn area_of(frame: Frame) i64
 b0:
   %0 = param frame : Frame
-  %1 = scope_begin
-  %2 = field_val %0, .size : Point
-  %3 = field_val %2, .x : i64
-  %4 = field_val %0, .size : Point
-  %5 = field_val %4, .y : i64
-  %6 = mul %3, %5 : i64
-  %7 = scope_end %1
-  return %6
+  %1 = field_val %0, .size : Point
+  %2 = field_val %1, .x : i64
+  %3 = field_val %0, .size : Point
+  %4 = field_val %3, .y : i64
+  %5 = mul %2, %4 : i64
+  return %5
 
 fn build() i64
 b0:
-  %0 = scope_begin
-  %1 = call framed(3:i64) : Frame
-  %2 = call area_of(%1) : i64
-  %3 = scope_end %0
-  return %2
+  %0 = call framed(3:i64) : Frame
+  %1 = call area_of(%0) : i64
+  return %1

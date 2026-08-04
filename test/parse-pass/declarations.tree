@@ -1,7 +1,7 @@
 root
   use_decl
-    path: field_access Arena
-      lhs: field_access mem
+    path: field_access Buffer
+      lhs: field_access text
         lhs: ident std
   use_decl pub
     path: field_access twice

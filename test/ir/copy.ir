@@ -1,11 +1,21 @@
-fn duplicate(arena: Arena, source: Plain) Plain
+fn Cloner.take[Plain](self: Cloner, value: Plain) Plain
 b0:
-  %0 = param arena : Arena
+  %0 = param self : Cloner
+  %1 = param value : Plain
+  return %1
+
+fn Cloner.take[i64](self: Cloner, value: i64) i64
+b0:
+  %0 = param self : Cloner
+  %1 = param value : i64
+  return %1
+
+fn duplicate(cloner: Cloner, source: Plain) Plain
+b0:
+  %0 = param cloner : Cloner
   %1 = param source : Plain
-  %2 = scope_begin
-  %3 = arena_copy %0, %1 : Plain
-  %4 = arena_copy %0, %3 : Plain
-  %5 = field_val %1, .a : i64
-  %6 = arena_copy %0, %5 : i64
-  %7 = scope_end %2
-  return %4
+  %2 = call Cloner.take[Plain](%0, %1) : Plain
+  %3 = call Cloner.take[Plain](%0, %2) : Plain
+  %4 = field_val %1, .a : i64
+  %5 = call Cloner.take[i64](%0, %4) : i64
+  return %3

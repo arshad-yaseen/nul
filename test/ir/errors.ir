@@ -1,205 +1,164 @@
 fn refuse(over: i64) !i64
 b0:
   %0 = param over : i64
-  %1 = scope_begin
-  %2 = cmp_gt %0, 100:i64 : bool
-  branch %2, b1, b2
+  %1 = cmp_gt %0, 100:i64 : bool
+  branch %1, b1, b2
 b1:
-  %3 = scope_begin
-  %4 = wrap_err TooMuch : !i64
-  %5 = scope_end %3
-  %6 = scope_end %1
-  return %4
+  %2 = wrap_err TooMuch : !i64
+  return %2
 b2:
   jump b3
 b3:
-  %7 = wrap_ok %0 : !i64
-  %8 = scope_end %1
-  return %7
+  %3 = wrap_ok %0 : !i64
+  return %3
 
 fn propagate(seed: i64) !i64
 b0:
   %0 = param seed : i64
-  %1 = scope_begin
-  %2 = call refuse(%0) : !i64
-  %3 = is_error %2 : bool
-  branch %3, b1, b2
+  %1 = call refuse(%0) : !i64
+  %2 = is_error %1 : bool
+  branch %2, b1, b2
 b1:
-  %4 = unwrap_err %2 : an error
-  %5 = scope_end %1
-  %6 = wrap_err %4 : !i64
-  return %6
+  %3 = unwrap_err %1 : an error
+  %4 = wrap_err %3 : !i64
+  return %4
 b2:
-  %7 = unwrap_ok %2 : i64
-  %8 = add %7, 1:i64 : i64
-  %9 = wrap_ok %8 : !i64
-  %10 = scope_end %1
-  return %9
+  %5 = unwrap_ok %1 : i64
+  %6 = add %5, 1:i64 : i64
+  %7 = wrap_ok %6 : !i64
+  return %7
 
 fn supplied(seed: i64) i64
 b0:
   %0 = param seed : i64
-  %1 = scope_begin
-  %2 = call refuse(%0) : !i64
-  %3 = local : *var i64
-  %4 = is_error %2 : bool
-  branch %4, b2, b1
+  %1 = call refuse(%0) : !i64
+  %2 = local : *var i64
+  %3 = is_error %1 : bool
+  branch %3, b2, b1
 b1:
-  %5 = unwrap_ok %2 : i64
-  %6 = store %3, %5
+  %4 = unwrap_ok %1 : i64
+  %5 = store %2, %4
   jump b3
 b2:
-  %7 = store %3, 0:i64
+  %6 = store %2, 0:i64
   jump b3
 b3:
-  %8 = load %3 : i64
-  %9 = scope_end %1
-  return %8
+  %7 = load %2 : i64
+  return %7
 
 fn inspected(seed: i64) i64
 b0:
   %0 = param seed : i64
-  %1 = scope_begin
-  %2 = call refuse(%0) : !i64
-  %3 = local : *var i64
-  %4 = is_error %2 : bool
-  branch %4, b2, b1
+  %1 = call refuse(%0) : !i64
+  %2 = local : *var i64
+  %3 = is_error %1 : bool
+  branch %3, b2, b1
 b1:
-  %5 = unwrap_ok %2 : i64
-  %6 = store %3, %5
+  %4 = unwrap_ok %1 : i64
+  %5 = store %2, %4
   jump b3
 b2:
-  %7 = unwrap_err %2 : an error
-  %8 = scope_begin
-  %9 = cmp_eq %7, TooMuch : bool
-  branch %9, b4, b5
+  %6 = unwrap_err %1 : an error
+  %7 = cmp_eq %6, TooMuch : bool
+  branch %7, b4, b5
 b3:
-  %16 = load %3 : i64
-  %17 = scope_end %1
-  return %16
+  %8 = load %2 : i64
+  return %8
 b4:
-  %10 = scope_begin
-  %11 = scope_end %10
-  %12 = scope_end %8
-  %13 = scope_end %1
   return 100:i64
 b5:
   jump b6
 b6:
-  %14 = scope_end %8
-  %15 = scope_end %1
   return -1:i64
 
 fn handled(seed: i64)
 b0:
   %0 = param seed : i64
-  %1 = scope_begin
-  %2 = call refuse(%0) : !i64
-  %3 = local : *var i64
-  %4 = is_error %2 : bool
-  branch %4, b2, b1
+  %1 = call refuse(%0) : !i64
+  %2 = local : *var i64
+  %3 = is_error %1 : bool
+  branch %3, b2, b1
 b1:
-  %5 = unwrap_ok %2 : i64
-  %6 = store %3, %5
+  %4 = unwrap_ok %1 : i64
+  %5 = store %2, %4
   jump b3
 b2:
-  %7 = scope_begin
-  %8 = scope_end %7
-  %9 = scope_end %1
   return
 b3:
-  %10 = load %3 : i64
-  %11 = scope_end %1
+  %6 = load %2 : i64
   return
 
 fn report_and_zero() i64
 b0:
-  %0 = scope_begin
-  %1 = scope_end %0
   return 0:i64
 
 fn shrugged(seed: i64)
 b0:
   %0 = param seed : i64
-  %1 = scope_begin
-  %2 = call refuse(%0) : !i64
-  %3 = local : *var i64
-  %4 = is_error %2 : bool
-  branch %4, b2, b1
+  %1 = call refuse(%0) : !i64
+  %2 = local : *var i64
+  %3 = is_error %1 : bool
+  branch %3, b2, b1
 b1:
-  %5 = unwrap_ok %2 : i64
-  %6 = store %3, %5
+  %4 = unwrap_ok %1 : i64
+  %5 = store %2, %4
   jump b3
 b2:
-  %7 = call report_and_zero() : i64
-  %8 = store %3, %7
+  %6 = call report_and_zero() : i64
+  %7 = store %2, %6
   jump b3
 b3:
-  %9 = load %3 : i64
-  %10 = scope_end %1
+  %8 = load %2 : i64
   return
 
 fn lookup(id: i64) !?i64
 b0:
   %0 = param id : i64
-  %1 = scope_begin
-  %2 = cmp_lt %0, 0:i64 : bool
-  branch %2, b1, b2
+  %1 = cmp_lt %0, 0:i64 : bool
+  branch %1, b1, b2
 b1:
-  %3 = scope_begin
-  %4 = wrap_err TooMuch : !?i64
-  %5 = scope_end %3
-  %6 = scope_end %1
-  return %4
+  %2 = wrap_err TooMuch : !?i64
+  return %2
 b2:
   jump b3
 b3:
-  %7 = cmp_eq %0, 0:i64 : bool
-  branch %7, b4, b5
+  %3 = cmp_eq %0, 0:i64 : bool
+  branch %3, b4, b5
 b4:
-  %8 = scope_begin
-  %9 = wrap_ok null : !?i64
-  %10 = scope_end %8
-  %11 = scope_end %1
-  return %9
+  %4 = wrap_ok null : !?i64
+  return %4
 b5:
   jump b6
 b6:
-  %12 = wrap_optional %0 : ?i64
-  %13 = wrap_ok %12 : !?i64
-  %14 = scope_end %1
-  return %13
+  %5 = wrap_optional %0 : ?i64
+  %6 = wrap_ok %5 : !?i64
+  return %6
 
 fn resolved(id: i64) i64
 b0:
   %0 = param id : i64
-  %1 = scope_begin
-  %2 = call lookup(%0) : !?i64
-  %3 = local : *var ?i64
-  %4 = is_error %2 : bool
-  branch %4, b2, b1
+  %1 = call lookup(%0) : !?i64
+  %2 = local : *var ?i64
+  %3 = is_error %1 : bool
+  branch %3, b2, b1
 b1:
-  %5 = unwrap_ok %2 : ?i64
-  %6 = store %3, %5
+  %4 = unwrap_ok %1 : ?i64
+  %5 = store %2, %4
   jump b3
 b2:
-  %7 = scope_begin
-  %8 = scope_end %7
-  %9 = scope_end %1
   return -1:i64
 b3:
-  %10 = load %3 : ?i64
-  %11 = local : *var i64
-  %12 = has_value %10 : bool
-  branch %12, b4, b5
+  %6 = load %2 : ?i64
+  %7 = local : *var i64
+  %8 = has_value %6 : bool
+  branch %8, b4, b5
 b4:
-  %13 = unwrap_value %10 : i64
-  %14 = store %11, %13
+  %9 = unwrap_value %6 : i64
+  %10 = store %7, %9
   jump b6
 b5:
-  %15 = store %11, 0:i64
+  %11 = store %7, 0:i64
   jump b6
 b6:
-  %16 = load %11 : i64
-  %17 = scope_end %1
-  return %16
+  %12 = load %7 : i64
+  return %12

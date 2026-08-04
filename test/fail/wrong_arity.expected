@@ -1,11 +1,11 @@
-error[E0213]: 'child' takes 0 arguments, and this call has 1
- --> test/fail/wrong_arity.zol:4:12
-  |
-4 |     return arena.child(1)
-  |            ^^^^^^^^^^^^^ wrong number of arguments
+error[E0213]: 'bump' takes 0 arguments, and this call has 1
+  --> test/fail/wrong_arity.zol:10:12
+   |
+10 |     return counter.bump(1)
+   |            ^^^^^^^^^^^^^^ wrong number of arguments
 note: declared here
- --> lib/std/mem.zol:8:9
-  |
-8 |     pub fn child(self: Arena) Arena = builtin.arena_child
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  --> test/fail/wrong_arity.zol:4:5
+   |
+ 4 |     fn bump(self: Counter) Counter {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

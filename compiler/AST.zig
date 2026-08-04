@@ -343,7 +343,6 @@ pub const View = union(enum) {
         params: []const Node.Index,
         /// `.none` is a function returning nothing.
         return_type: Node.OptionalIndex,
-        /// A block, or the expression of an `= expr` body.
         body: Node.Index,
     };
     pub const VarDecl = struct {

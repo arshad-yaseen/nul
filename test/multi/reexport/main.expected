@@ -1,12 +1,8 @@
 fn answer() i64
 b0:
-  %0 = scope_begin
-  %1 = scope_end %0
   return 42:i64
 
 fn drive() i64
 b0:
-  %0 = scope_begin
-  %1 = call answer() : i64
-  %2 = scope_end %0
-  return %1
+  %0 = call answer() : i64
+  return %0

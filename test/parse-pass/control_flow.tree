@@ -56,13 +56,13 @@ root
               lhs: ident i
               rhs: number_literal 1
   fn_decl cleanup
-    param arena
-      type: ident Arena
+    param store
+      type: ident Store
     body: block
       var_decl scratch var
         init: call
-          callee: field_access child
-            lhs: ident arena
+          callee: field_access reset
+            lhs: ident store
       defer_stmt
         child: call
           callee: field_access destroy

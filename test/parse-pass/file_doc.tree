@@ -1,7 +1,7 @@
 root
   use_decl
-    path: field_access Arena
-      lhs: field_access mem
+    path: field_access Buffer
+      lhs: field_access text
         lhs: ident std
   fn_decl named pub
     doc /// This one documents the declaration below it.

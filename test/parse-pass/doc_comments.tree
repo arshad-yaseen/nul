@@ -1,8 +1,8 @@
 root
   use_decl
     doc /// Where the standard allocator lives.
-    path: field_access Arena
-      lhs: field_access mem
+    path: field_access Buffer
+      lhs: field_access text
         lhs: ident std
   var_decl limit let pub
     doc /// The largest thing anyone should ask for.

@@ -69,16 +69,6 @@ pub const instantiate_max = 64;
 pub const analyze_max = 128;
 const diagnostics_max = 256;
 
-/// The whole floor of the language. Every one becomes an IR instruction.
-pub const Builtin = enum(u8) {
-    arena_init,
-    arena_child,
-    arena_create,
-    arena_copy,
-    arena_reset,
-    arena_destroy,
-};
-
 /// A declaration plus its bracket arguments, memoized so identity is the row.
 pub const Instance = struct {
     decl: Decl.Index,
@@ -89,7 +79,7 @@ pub const Instance = struct {
     rows: Range,
     /// Fields resolved, or signature resolved.
     rows_state: Decl.State,
-    /// The size walk, or the body check.
+    /// The embedding walk, or the body check.
     deep_state: Decl.State,
 };
 
@@ -122,7 +112,7 @@ pub const Unit = struct {
     kind: Kind,
     index: u32,
 
-    pub const Kind = enum(u8) { decl, rows, size, signature, body };
+    pub const Kind = enum(u8) { decl, rows, embedding, signature, body };
 
     pub fn forDecl(index: Decl.Index) Unit {
         return .{ .kind = .decl, .index = index.int() };
@@ -258,7 +248,6 @@ fn ensureBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Al
     if (decl.kind != .fn_decl) return;
     if (decl.state == .poisoned) return;
     if (comp.isGeneric(decl_index)) return;
-    if (decl.builtin() != null) return;
 
     const instance = try comp.instantiate(decl_index, &.{});
     try comp.ensure(.of(.signature, instance), origin);
@@ -330,7 +319,7 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
     const ok = switch (unit.kind) {
         .decl => try comp.runDecl(@enumFromInt(unit.index)),
         .rows => try Check.structRows(comp, @enumFromInt(unit.index)),
-        .size => try Check.structSize(comp, @enumFromInt(unit.index)),
+        .embedding => try Check.structEmbedding(comp, @enumFromInt(unit.index)),
         .signature => try Check.fnSignature(comp, @enumFromInt(unit.index)),
         .body => try Check.fnBody(comp, @enumFromInt(unit.index)),
     };
@@ -349,7 +338,7 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
             const instance = try comp.instantiate(decl_index, &.{});
             const origin: Origin = .{ .module = decl.module, .node = decl.node };
             try comp.ensure(.of(.rows, instance), origin);
-            try comp.ensure(.of(.size, instance), origin);
+            try comp.ensure(.of(.embedding, instance), origin);
             return true;
         },
     }
@@ -359,7 +348,7 @@ fn unitState(comp: *const Compilation, unit: Unit) Decl.State {
     return switch (unit.kind) {
         .decl => comp.declAt(@enumFromInt(unit.index)).state,
         .rows, .signature => comp.instanceAt(@enumFromInt(unit.index)).rows_state,
-        .size, .body => comp.instanceAt(@enumFromInt(unit.index)).deep_state,
+        .embedding, .body => comp.instanceAt(@enumFromInt(unit.index)).deep_state,
     };
 }
 
@@ -367,7 +356,7 @@ fn setUnitState(comp: *Compilation, unit: Unit, state: Decl.State) void {
     switch (unit.kind) {
         .decl => comp.declPtr(@enumFromInt(unit.index)).state = state,
         .rows, .signature => comp.instancePtr(@enumFromInt(unit.index)).rows_state = state,
-        .size, .body => comp.instancePtr(@enumFromInt(unit.index)).deep_state = state,
+        .embedding, .body => comp.instancePtr(@enumFromInt(unit.index)).deep_state = state,
     }
 }
 
@@ -383,11 +372,11 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
             .use => "this import goes in a circle",
             .struct_decl, .error_decl, .fn_decl => "this definition goes in a circle",
         },
-        .size => try comp.fmt("'{s}' holds itself by value, so it has no size", .{name}),
+        .embedding => try comp.fmt("'{s}' holds itself by value, so it has no size", .{name}),
         .rows, .signature, .body => "this definition goes in a circle",
     };
     const help: ?[]const u8 = switch (unit.kind) {
-        .size => try comp.fmt("break the cycle with a pointer: '*{s}' or '?*{s}'", .{ name, name }),
+        .embedding => try comp.fmt("break the cycle with a pointer: '*{s}' or '?*{s}'", .{ name, name }),
         else => null,
     };
 
@@ -412,7 +401,7 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
     }
 
     try comp.reportNode(origin.module, origin.node, .{
-        .code = if (unit.kind == .size) .size_cycle else .value_cycle,
+        .code = if (unit.kind == .embedding) .size_cycle else .value_cycle,
         .message = message,
         .label = "the circle closes here",
         .help = help,
@@ -680,7 +669,7 @@ fn withTrail(
 fn unitIsInstantiation(comp: *const Compilation, unit: Unit) bool {
     switch (unit.kind) {
         .decl => return false,
-        .rows, .size, .signature, .body => {
+        .rows, .embedding, .signature, .body => {
             return comp.instanceAt(@enumFromInt(unit.index)).args.len > 0;
         },
     }

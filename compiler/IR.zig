@@ -137,14 +137,6 @@ pub const Inst = struct {
         /// Uses `payload`, an `IR.Call`.
         call,
 
-        // the six primitives. `un` is the arena, `arena_copy` uses `bin`
-        arena_init,
-        arena_child,
-        arena_create,
-        arena_copy,
-        arena_reset,
-        arena_destroy,
-
         // all `un`
         wrap_optional,
         has_value,
@@ -157,11 +149,6 @@ pub const Inst = struct {
 
         /// Uses `payload`, read by `structInitAt`.
         struct_init,
-
-        /// Its result names the scope.
-        scope_begin,
-        /// Uses `un`, the `scope_begin`.
-        scope_end,
     };
 };
 

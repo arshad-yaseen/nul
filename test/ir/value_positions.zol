@@ -6,7 +6,9 @@ struct Cell {
     value: i64
 }
 
-fn expression_body(a: i64, b: i64) i64 = if a > b { a } else { b }
+fn returned_if(a: i64, b: i64) i64 {
+    return if a > b { a } else { b }
+}
 
 fn tail_of_a_block(c: bool) i64 {
     let n: i64 = if c {

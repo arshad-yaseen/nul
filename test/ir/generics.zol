@@ -1,5 +1,3 @@
-use std.mem.Arena
-
 pub struct Pair[K, V] {
     key: K
     value: V
@@ -13,15 +11,13 @@ pub struct Pair[K, V] {
 
 pub type Named = Pair[bool, i64]
 
-fn make(arena: Arena) *var Named {
-    var pair = arena.create[Pair[bool, i64]]()
-    pair.key = true
-    pair.value = 41
+fn make() Named {
+    let pair: Pair[bool, i64] = .{ key: true, value: 41 }
     return pair
 }
 
-fn use_them(arena: Arena) i64 {
-    var pair = make(arena)
+fn use_them() i64 {
+    var pair = make()
     let old = pair.swap_value(42)
     return old + pair.value
 }

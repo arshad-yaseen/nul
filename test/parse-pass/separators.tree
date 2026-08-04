@@ -21,14 +21,16 @@ root
         type: pointer_type
           child: ident Mixed
       ret: ident i64
-      body: binary add
-        lhs: binary add
-          lhs: field_access x
-            lhs: ident self
-          rhs: field_access y
-            lhs: ident self
-        rhs: field_access z
-          lhs: ident self
+      body: block
+        return_expr
+          value: binary add
+            lhs: binary add
+              lhs: field_access x
+                lhs: ident self
+              rhs: field_access y
+                lhs: ident self
+            rhs: field_access z
+              lhs: ident self
   struct_decl Pair
     type_param A
     type_param B

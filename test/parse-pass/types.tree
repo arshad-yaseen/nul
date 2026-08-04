@@ -1,6 +1,6 @@
 root
   use_decl
-    path: field_access mem
+    path: field_access text
       lhs: ident std
   struct_decl Node
     field plain
@@ -19,8 +19,8 @@ root
         child: pointer_type var
           child: ident Node
     field qualified
-      type: field_access Arena
-        lhs: ident mem
+      type: field_access Buffer
+        lhs: ident text
     field deep
       type: optional_type
         child: pointer_type var

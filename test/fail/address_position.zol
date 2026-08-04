@@ -1,4 +1,0 @@
-fn drive(value: i64) {
-    let held = &value
-    _ = held
-}

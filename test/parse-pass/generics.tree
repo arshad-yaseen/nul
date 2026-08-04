@@ -22,8 +22,8 @@ root
         arg: ident i64
   fn_decl make pub
     type_param T
-    param arena
-      type: ident Arena
+    param store
+      type: ident Store
     param v
       type: ident T
     ret: pointer_type var
@@ -34,16 +34,16 @@ root
       var_decl b let
         init: call
           callee: instance
-            base: field_access create
-              lhs: ident arena
+            base: field_access make
+              lhs: ident store
             arg: instance
               base: ident Box
               arg: ident T
       return_expr
         value: ident b
   fn_decl use_them
-    param arena
-      type: ident Arena
+    param store
+      type: ident Store
     body: block
       assign
         lhs: ident _
@@ -51,14 +51,14 @@ root
           callee: instance
             base: ident make
             arg: ident i64
-          arg: ident arena
+          arg: ident store
           arg: number_literal 1
       assign
         lhs: ident _
         rhs: call
           callee: instance
-            base: field_access create
-              lhs: ident arena
+            base: field_access make
+              lhs: ident store
             arg: instance
               base: ident Pair
               arg: ident i64

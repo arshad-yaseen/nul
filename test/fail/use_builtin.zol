@@ -1,3 +1,0 @@
-use builtin
-
-fn steal() = builtin.arena_init

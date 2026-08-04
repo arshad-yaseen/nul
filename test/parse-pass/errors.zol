@@ -1,17 +1,17 @@
 error NotFound
 error OutOfRange
 
-fn read(arena: Arena, path: i64) !i64 {
-    let value = try io.read_file(arena, path)
+fn read(store: Store, path: i64) !i64 {
+    let value = try io.read_file(store, path)
     return value
 }
 
-fn fallback(arena: Arena) i64 {
-    return read(arena, 1) catch 0
+fn fallback(store: Store) i64 {
+    return read(store, 1) catch 0
 }
 
-fn handled(arena: Arena) {
-    let value = read(arena, 1) catch |e| {
+fn handled(store: Store) {
+    let value = read(store, 1) catch |e| {
         report(e)
     }
     _ = value
@@ -23,6 +23,6 @@ fn named() !i64 {
     return OutOfRange
 }
 
-fn chained(arena: Arena) i64 {
-    return read(arena, 1) catch read(arena, 2) catch 3
+fn chained(store: Store) i64 {
+    return read(store, 1) catch read(store, 2) catch 3
 }

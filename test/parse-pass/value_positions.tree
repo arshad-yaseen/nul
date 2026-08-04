@@ -1,18 +1,20 @@
 root
-  fn_decl expression_body
+  fn_decl returned_if
     param a
       type: ident i64
     param b
       type: ident i64
     ret: ident i64
-    body: if_expr
-      cond: binary greater_than
-        lhs: ident a
-        rhs: ident b
-      then: block
-        ident a
-      else: block
-        ident b
+    body: block
+      return_expr
+        value: if_expr
+          cond: binary greater_than
+            lhs: ident a
+            rhs: ident b
+          then: block
+            ident a
+          else: block
+            ident b
   fn_decl bound
     param strict
       type: ident bool

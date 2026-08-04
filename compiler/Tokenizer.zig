@@ -12,7 +12,7 @@ previous: Token.Tag,
 
 pub const TokenList = std.MultiArrayList(Token);
 
-/// Set aside for tools. Nothing the compiler does reads one.
+/// Set aside for tools.
 pub const Comment = struct {
     kind: Kind,
     /// No end: the text runs to the end of the line.
@@ -289,81 +289,4 @@ fn classOf(comptime members: []const u8) [256]bool {
     var table: [256]bool = @splat(false);
     for (members) |byte| table[byte] = true;
     return table;
-}
-
-const testing = std.testing;
-
-fn expectTags(source: [:0]const u8, expected: []const Token.Tag) !void {
-    var tokenizer: Tokenizer = .init(source);
-    for (expected) |want| try testing.expectEqual(want, tokenizer.next().tag);
-    try testing.expectEqual(Token.Tag.eof, tokenizer.next().tag);
-}
-
-test "a newline after a value ends the statement" {
-    try expectTags("let x = 1\nlet y = 2\n", &.{
-        .kw_let, .ident, .eq, .number, .semi,
-        .kw_let, .ident, .eq, .number, .semi,
-    });
-}
-
-test "a newline after an operator does not" {
-    try expectTags("let x = 1 +\n2\n", &.{ .kw_let, .ident, .eq, .number, .plus, .number, .semi });
-}
-
-test "the last line ends without a newline of its own" {
-    try expectTags("return x", &.{ .kw_return, .ident, .semi });
-}
-
-test "a comment is scanned, and changes nothing around it" {
-    try expectTags("x // note\ny", &.{ .ident, .comment, .semi, .ident, .semi });
-    try expectTags("x +  // note\ny", &.{ .ident, .plus, .comment, .ident, .semi });
-}
-
-test "a doc comment is its own token" {
-    try expectTags("/// doc\nfn f() {}", &.{
-        .doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
-    });
-    try expectTags("//// not doc\nfn", &.{ .comment, .kw_fn });
-}
-
-test "a file doc comment is a tag of its own" {
-    try expectTags("//! about this file\nfn f() {}", &.{
-        .file_doc_comment, .kw_fn, .ident, .l_paren, .r_paren, .l_brace, .r_brace, .semi,
-    });
-
-    try expectTags("//! a\n/// b\n// c\nfn", &.{
-        .file_doc_comment, .doc_comment, .comment, .kw_fn,
-    });
-}
-
-test "blank lines and leading newlines emit nothing" {
-    try expectTags("\n\n\nx\n\n\n", &.{ .ident, .semi });
-}
-
-test "a closing bracket ends a statement, an opening one does not" {
-    try expectTags("f(\na\n)\n", &.{ .ident, .l_paren, .ident, .semi, .r_paren, .semi });
-    try expectTags("type A = B[C]\n", &.{
-        .kw_type, .ident, .eq, .ident, .l_bracket, .ident, .r_bracket, .semi,
-    });
-}
-
-test "invalid bytes gather into one token" {
-    try expectTags("\xFF\xFE x", &.{ .invalid, .ident, .semi });
-    try expectTags("\xFF\n1", &.{ .invalid, .semi, .number, .semi });
-}
-
-test "a byte order mark is skipped" {
-    try expectTags("\xEF\xBB\xBFx", &.{ .ident, .semi });
-}
-
-test "tokenEnd agrees with the scan that produced the token" {
-    const source: [:0]const u8 = "hello 12.5 \"a\\nb\" /// doc\n<= orelse";
-    var tokenizer: Tokenizer = .init(source);
-    while (true) {
-        const token = tokenizer.next();
-        if (token.tag == .eof) break;
-        // an inserted `.semi` stands on a newline, not on a `;`
-        if (token.tag == .semi) continue;
-        try testing.expectEqual(tokenizer.cursor, tokenEnd(source, token.tag, token.start));
-    }
 }

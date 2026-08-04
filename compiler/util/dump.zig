@@ -228,10 +228,6 @@ fn inst(
         .load,
         .negate,
         .not,
-        .arena_child,
-        .arena_create,
-        .arena_reset,
-        .arena_destroy,
         .wrap_optional,
         .has_value,
         .unwrap_value,
@@ -240,13 +236,11 @@ fn inst(
         .is_error,
         .unwrap_ok,
         .unwrap_err,
-        .scope_end,
         => {
             try writer.writeByte(' ');
             try ref(comp, data.un, writer);
         },
         .store,
-        .arena_copy,
         .add,
         .sub,
         .mul,
@@ -290,7 +284,6 @@ fn inst(
             }
             try writer.writeAll(" }");
         },
-        .arena_init, .scope_begin => {},
     }
 
     if (type_index != .void_type) {

@@ -1,5 +1,11 @@
-use std.mem.Arena
+struct Counter {
+    hits: i64
 
-fn drive(arena: Arena) Arena {
-    return arena.child(1)
+    fn bump(self: Counter) Counter {
+        return self
+    }
+}
+
+fn drive(counter: Counter) Counter {
+    return counter.bump(1)
 }

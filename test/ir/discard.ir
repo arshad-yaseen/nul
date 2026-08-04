@@ -1,50 +1,41 @@
 fn noisy() !i64
 b0:
-  %0 = scope_begin
-  %1 = wrap_ok 5:i64 : !i64
-  %2 = scope_end %0
-  return %1
+  %0 = wrap_ok 5:i64 : !i64
+  return %0
 
 fn quiet() i64
 b0:
-  %0 = scope_begin
-  %1 = scope_end %0
   return 5:i64
 
 fn drive()
 b0:
-  %0 = scope_begin
-  %1 = call noisy() : !i64
-  %2 = local : *var i64
-  %3 = is_error %1 : bool
-  branch %3, b2, b1
+  %0 = call noisy() : !i64
+  %1 = local : *var i64
+  %2 = is_error %0 : bool
+  branch %2, b2, b1
 b1:
-  %4 = unwrap_ok %1 : i64
-  %5 = store %2, %4
+  %3 = unwrap_ok %0 : i64
+  %4 = store %1, %3
   jump b3
 b2:
-  %6 = store %2, 0:i64
+  %5 = store %1, 0:i64
   jump b3
 b3:
-  %7 = load %2 : i64
+  %6 = load %1 : i64
+  %7 = call quiet() : i64
   %8 = call quiet() : i64
-  %9 = call quiet() : i64
-  %10 = scope_end %0
   return
 
 fn passing() !i64
 b0:
-  %0 = scope_begin
-  %1 = call noisy() : !i64
-  %2 = is_error %1 : bool
-  branch %2, b1, b2
+  %0 = call noisy() : !i64
+  %1 = is_error %0 : bool
+  branch %1, b1, b2
 b1:
-  %3 = unwrap_err %1 : an error
-  %4 = scope_end %0
-  %5 = wrap_err %3 : !i64
-  return %5
+  %2 = unwrap_err %0 : an error
+  %3 = wrap_err %2 : !i64
+  return %3
 b2:
-  %6 = unwrap_ok %1 : i64
-  %7 = wrap_ok 0:i64 : !i64
-  %8 = scope_end %0
-  return %7
+  %4 = unwrap_ok %0 : i64
+  %5 = wrap_ok 0:i64 : !i64
+  return %5

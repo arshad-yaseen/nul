@@ -1,10 +1,16 @@
-use std.mem.Arena
-
 error TooRisky
 
-fn tidy(arena: Arena, early: bool) !i64 {
-    var scratch = arena.child()
-    defer scratch.reset()
+struct Counter {
+    hits: i64
+
+    fn bump(self: *var Counter) {
+        self.hits = self.hits + 1
+    }
+}
+
+fn tidy(early: bool) !i64 {
+    var counter: Counter = .{ hits: 0 }
+    defer counter.bump()
     if early {
         return 1
     }
@@ -19,12 +25,12 @@ fn risky(seed: i64) !i64 {
     return seed
 }
 
-fn each_iteration(arena: Arena, rounds: i64) i64 {
-    var outer = arena.child()
+fn each_iteration(rounds: i64) i64 {
+    var counter: Counter = .{ hits: 0 }
     var round: i64 = 0
     var kept: i64 = 0
     while round < rounds {
-        defer outer.reset()
+        defer counter.bump()
         round = round + 1
         if round == 2 {
             continue

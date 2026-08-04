@@ -1,15 +1,21 @@
-use std.mem.Arena
-
 struct Plain {
     a: i64
     b: bool
     label: u32
 }
 
-fn duplicate(arena: Arena, source: Plain) Plain {
-    let explicit = arena.copy[Plain](source)
-    let inferred = arena.copy(explicit)
-    let number = arena.copy(source.a)
+struct Cloner {
+    seen: i64
+
+    fn take[T](self: Cloner, value: T) T {
+        return value
+    }
+}
+
+fn duplicate(cloner: Cloner, source: Plain) Plain {
+    let explicit = cloner.take[Plain](source)
+    let inferred = cloner.take(explicit)
+    let number = cloner.take(source.a)
     _ = number
     return inferred
 }

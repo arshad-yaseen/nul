@@ -1,4 +1,4 @@
-use std.mem
+use std.text
 
 struct Node {
     plain: i64
@@ -6,7 +6,7 @@ struct Node {
     writable: *var Node
     maybe: ?Node
     maybe_pointer: ?*var Node
-    qualified: mem.Arena
+    qualified: text.Buffer
     deep: ?*var mem.Buffer
 }
 

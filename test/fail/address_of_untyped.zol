@@ -1,0 +1,11 @@
+struct Cell {
+    value: i64
+}
+
+fn take(cell: *Cell) i64 {
+    return cell.value
+}
+
+fn drive() i64 {
+    return take(&10)
+}

@@ -1,9 +1,7 @@
-use std.mem.Arena
-
-fn plant[T](arena: Arena, value: T) T {
-    return arena.copy(value)
+fn plant[T](value: T) T {
+    return value
 }
 
-fn drive(arena: Arena) i64 {
-    return plant(arena, 5)
+fn drive() i64 {
+    return plant(5)
 }

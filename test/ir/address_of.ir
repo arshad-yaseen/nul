@@ -1,36 +1,30 @@
 fn read(tally: *Tally) i64
 b0:
   %0 = param tally : *Tally
-  %1 = scope_begin
-  %2 = field_ptr %0, .hits : *i64
-  %3 = load %2 : i64
-  %4 = scope_end %1
-  return %3
+  %1 = field_ptr %0, .hits : *i64
+  %2 = load %1 : i64
+  return %2
 
 fn bump(tally: *var Tally)
 b0:
   %0 = param tally : *var Tally
-  %1 = scope_begin
+  %1 = field_ptr %0, .hits : *var i64
   %2 = field_ptr %0, .hits : *var i64
-  %3 = field_ptr %0, .hits : *var i64
-  %4 = load %3 : i64
-  %5 = add %4, 1:i64 : i64
-  %6 = store %2, %5
-  %7 = scope_end %1
+  %3 = load %2 : i64
+  %4 = add %3, 1:i64 : i64
+  %5 = store %1, %4
   return
 
 fn drive() i64
 b0:
-  %0 = scope_begin
-  %1 = struct_init .{ hits: 0:i64 } : Tally
-  %2 = local mine : *var Tally
-  %3 = store %2, %1
-  %4 = call bump(%2)
-  %5 = struct_init .{ hits: 5:i64 } : Tally
-  %6 = call read(%2) : i64
-  %7 = local : *var Tally
-  %8 = store %7, %5
-  %9 = call read(%7) : i64
-  %10 = add %6, %9 : i64
-  %11 = scope_end %0
-  return %10
+  %0 = struct_init .{ hits: 0:i64 } : Tally
+  %1 = local mine : *var Tally
+  %2 = store %1, %0
+  %3 = call bump(%1)
+  %4 = struct_init .{ hits: 5:i64 } : Tally
+  %5 = call read(%1) : i64
+  %6 = local : *var Tally
+  %7 = store %6, %4
+  %8 = call read(%6) : i64
+  %9 = add %5, %8 : i64
+  return %9

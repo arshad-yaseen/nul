@@ -62,7 +62,7 @@ pub const Decl = struct {
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
 
     /// Stored in `aux` beside the payload.
-    pub const UseTarget = enum(u8) { module, decl, builtin };
+    pub const UseTarget = enum(u8) { module, decl };
 
     pub const Index = enum(u32) {
         _,
@@ -92,13 +92,6 @@ pub const Decl = struct {
             return @enumFromInt(@intFromEnum(optional));
         }
     };
-
-    /// The primitive a `= builtin.name` body bound, if any.
-    pub fn builtin(decl: Decl) ?Compilation.Builtin {
-        if (decl.kind != .fn_decl) return null;
-        if (decl.aux == 0) return null;
-        return @enumFromInt(decl.aux - 1);
-    }
 
     /// Members sit contiguously after their struct.
     pub fn members(decl: Decl) Compilation.Range {
@@ -174,15 +167,6 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
     const tree = &module.tree;
     const root = tree.viewOf(.root).root;
 
-    // only std may name the primitives, and a binding is found before
-    // anything resolves
-    var binds_builtin = false;
-    if (module.space == .std) {
-        for (root) |node| {
-            if (usePathIsBuiltin(tree, node)) binds_builtin = true;
-        }
-    }
-
     try comp.decls.ensureUnusedCapacity(comp.gpa, root.len * 2);
     try module.names.ensureTotalCapacity(comp.gpa, @intCast(root.len));
 
@@ -202,7 +186,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
                     .node = node,
                     .name_token = decl.name_token,
                 }) orelse continue;
-                try registerMembers(comp, module, index, struct_index, decl, binds_builtin);
+                try registerMembers(comp, module, index, struct_index, decl);
             },
             .type_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .type_alias,
@@ -231,14 +215,12 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
     }
 }
 
-/// A body that is exactly `builtin.name` binds that primitive instead.
 fn registerMembers(
     comp: *Compilation,
     module: *Module,
     index: Module.Index,
     struct_index: Decl.Index,
     decl: AST.View.StructDecl,
-    binds_builtin: bool,
 ) Allocator.Error!void {
     const tree = &module.tree;
     const members_start: u32 = @intCast(comp.decls.items.len);
@@ -246,17 +228,11 @@ fn registerMembers(
     for (decl.members) |member| {
         switch (tree.viewOf(member)) {
             .fn_decl => |fn_view| {
-                const member_index = try addMember(comp, module, index, struct_index, .{
+                _ = try addMember(comp, module, index, struct_index, .{
                     .kind = .fn_decl,
                     .node = member,
                     .name_token = fn_view.name_token,
-                }) orelse continue;
-
-                if (binds_builtin) {
-                    if (boundBuiltin(tree, fn_view.body)) |bound| {
-                        comp.declPtr(member_index).aux = @intFromEnum(bound) + 1;
-                    }
-                }
+                });
             },
             .field => {},
             .err => {},
@@ -387,27 +363,6 @@ fn appendDecl(
     return index;
 }
 
-fn usePathIsBuiltin(tree: *const AST, node: AST.Node.Index) bool {
-    if (tree.nodeTag(node) != .use_decl) return false;
-    const use = tree.viewOf(node).use_decl;
-    if (tree.nodeTag(use.path) != .ident) return false;
-    return std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(use.path)), "builtin");
-}
-
-/// The primitive a `builtin.name` body binds. A misspelled name is no
-/// binding, so the body stays ordinary.
-fn boundBuiltin(tree: *const AST, body: AST.Node.Index) ?Compilation.Builtin {
-    if (tree.nodeTag(body) != .field_access) return null;
-    const access = tree.viewOf(body).field_access;
-    if (tree.nodeTag(access.lhs) != .ident) return null;
-
-    const base = tree.tokenSlice(tree.nodeMainToken(access.lhs));
-    if (std.mem.eql(u8, base, "builtin") == false) return null;
-
-    const name = tree.tokenSlice(access.name_token);
-    return std.meta.stringToEnum(Compilation.Builtin, name);
-}
-
 /// The last component of a `use` path, which is what it binds.
 pub fn lastPathComponent(tree: *const AST, path: AST.Node.Index) ?Token.Index {
     return switch (tree.nodeTag(path)) {
@@ -451,7 +406,7 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
     return .{ .module = index };
 }
 
-/// A module, a module plus one public declaration, or the builtin floor.
+/// A module, or a module plus one public declaration.
 pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     const decl = comp.declAt(decl_index);
     const module = comp.moduleAt(decl.module);
@@ -470,20 +425,6 @@ pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bo
         return false;
     };
     assert(count > 0);
-
-    if (count == 1 and std.mem.eql(u8, names[0], "builtin")) {
-        if (module.space == .std) {
-            setUseTarget(comp, decl_index, .builtin, 0);
-            return true;
-        }
-        try comp.reportNode(decl.module, path, .{
-            .code = .builtin_outside_std,
-            .message = "only the standard library can reach 'builtin'",
-            .label = "not available here",
-            .help = "the primitives are ordinary declarations in std, so call those instead",
-        });
-        return false;
-    }
 
     var space = module.space;
     var first: u32 = 0;
@@ -564,7 +505,7 @@ fn setUseTarget(
     comp.declPtr(decl_index).result = payload;
 }
 
-pub const UseResolved = union(enum) { module: Module.Index, decl: Decl.Index, builtin };
+pub const UseResolved = union(enum) { module: Module.Index, decl: Decl.Index };
 
 pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
     const decl = comp.declAt(decl_index);
@@ -573,7 +514,6 @@ pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
     return switch (@as(Decl.UseTarget, @enumFromInt(decl.aux))) {
         .module => .{ .module = @enumFromInt(decl.result) },
         .decl => .{ .decl = @enumFromInt(decl.result) },
-        .builtin => .builtin,
     };
 }
 
@@ -630,7 +570,7 @@ pub fn findExported(
                 continue;
             },
             // a module name, where a declaration was asked for
-            .module, .builtin => return found,
+            .module => return found,
         }
     }
     try comp.report(origin.module, at, .{

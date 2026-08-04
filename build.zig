@@ -14,8 +14,6 @@ const test_dirs = [_][]const u8{
 /// for room for the deepest source the parser allows.
 const analysis_stack_bytes = 256 << 20;
 
-/// What a release ships. Linux is musl, so one binary runs on every
-/// distribution rather than on the glibc it happened to be built against.
 const release_targets = [_][]const u8{
     "aarch64-macos",
     "x86_64-macos",

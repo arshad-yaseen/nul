@@ -1,2 +1,2 @@
-pub fn read(arena: Arena, path: i64) !i64 {
-    let value = try io.read_file(arena, pa
+pub fn read(store: Store, path: i64) !i64 {
+    let value = try io.read_file(store, pa

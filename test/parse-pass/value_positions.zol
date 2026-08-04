@@ -1,7 +1,9 @@
 // 'if' and the three ways out are expressions, so they parse where a value
 // parses. A block is still only reachable as an arm, never by starting one.
 
-fn expression_body(a: i64, b: i64) i64 = if a > b { a } else { b }
+fn returned_if(a: i64, b: i64) i64 {
+    return if a > b { a } else { b }
+}
 
 fn bound(strict: bool) i64 {
     let limit: i64 = if strict { 10 } else { 100 }

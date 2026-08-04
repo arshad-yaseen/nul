@@ -656,10 +656,7 @@ fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
     else
         .none;
 
-    const body = if (self.eatToken(.eq) != null) body: {
-        const value = try self.parseExpr();
-        break :body value;
-    } else try self.parseBlock();
+    const body = try self.parseBlock();
 
     const start = self.extraStart();
     try self.extraList(self.scratch.items[top..params_start]);

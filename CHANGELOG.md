@@ -5,6 +5,7 @@
 - A declaration that writes more than 16 type parameters is now refused with
   `E0118` instead of crashing the compiler. A generic method inside a generic
   struct may hold 16 of its own on top of the struct's.
+- A function body is always a block. The `fn f() T = expr` form is gone.
 
 ## [0.1.0] - 2026-08-04
 

@@ -1,6 +1,6 @@
 root
   use_decl
-    path: field_access mem
+    path: field_access text
       lhs: ident std
   struct_decl Pair pub
     doc /// A documented struct.
