@@ -1,0 +1,44 @@
+fn arithmetic(a: i64, b: i64, c: i64) i64 {
+    return a + b * c - a / b % c
+}
+
+fn bitwise(a: i64, b: i64, c: i64) i64 {
+    return a & b | c ^ a
+}
+
+fn shifts(a: i64, b: i64, c: i64) i64 {
+    return a << b + c >> c
+}
+
+fn comparison(a: i64, b: i64) bool {
+    return a & b == 0
+}
+
+fn booleans(a: i64, b: i64, c: i64) bool {
+    return a > b and b > c or a == c
+}
+
+fn associativity(a: i64, b: i64, c: i64) i64 {
+    return a - b - c
+}
+
+fn grouped(a: i64, b: i64, c: i64) i64 {
+    return (a + b) * c
+}
+
+fn unary(a: i64, flag: bool) i64 {
+    let negated = -a
+    let complemented = ~a
+    let inverted = !flag
+    let address = &a
+    _ = inverted
+    _ = address
+    return negated + complemented
+}
+
+fn rescue(a: ?i64, b: !i64) i64 {
+    let settled = a orelse 0
+    let caught = b catch |err| 0
+    let tried = try b
+    return settled + caught + tried
+}

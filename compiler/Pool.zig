@@ -465,11 +465,16 @@ pub const Fold = union(enum) {
     /// Past the 128 bits constants fold in.
     overflow,
     division_by_zero,
+    /// Outside `0 ..< 128`, the width constants fold in.
+    bad_shift: i128,
     /// Refused by the type both operands carry.
     does_not_fit: struct { value: i128, type: Index },
     mismatch: struct { left: Index, right: Index },
     bad_operand: Index,
 };
+
+/// The width constants fold in, which bounds every shift.
+pub const fold_bits = 128;
 
 pub fn fold(
     pool: *Pool,
@@ -529,6 +534,39 @@ pub fn foldNot(pool: *const Pool, operand: Index) Fold {
         return .{ .bad_operand = pool.typeOfValue(operand) };
     };
     return .{ .value = if (value) .false_value else .true_value };
+}
+
+/// The complement inside the operand's own type.
+pub fn foldBitNot(pool: *Pool, gpa: Allocator, operand: Index) Allocator.Error!Fold {
+    if (operand == .poison) return .{ .value = .poison };
+
+    const number = numberOf(pool.keyOf(operand)) orelse {
+        return .{ .bad_operand = pool.typeOfValue(operand) };
+    };
+    if (isInteger(number.type) == false) return .{ .bad_operand = number.type };
+    return pool.internInt(gpa, complementOf(number.int, number.type), number.type);
+}
+
+/// An unsigned type complements inside its width. Every other integer, an
+/// untyped one included, complements in two's complement.
+fn complementOf(value: i128, type_index: Index) i128 {
+    assert(isInteger(type_index));
+    assert(fitsInt(value, type_index));
+
+    return switch (type_index) {
+        .u8_type => ~value & 0xff,
+        .u16_type => ~value & 0xffff,
+        .u32_type => ~value & 0xffff_ffff,
+        .u64_type => ~value & 0xffff_ffff_ffff_ffff,
+        else => ~value,
+    };
+}
+
+/// Null outside `0 ..< fold_bits`, which bounds every type Zol has.
+fn shiftAmount(count: i128) ?std.math.Log2Int(i128) {
+    if (count < 0) return null;
+    if (count >= fold_bits) return null;
+    return @intCast(count);
 }
 
 pub const Fit = union(enum) {
@@ -679,6 +717,18 @@ fn foldInt(
             const wide = if (b == -1) 0 else @rem(a, b);
             return pool.internInt(gpa, wide, result_type);
         },
+        .bit_and => return pool.internInt(gpa, a & b, result_type),
+        .bit_or => return pool.internInt(gpa, a | b, result_type),
+        .bit_xor => return pool.internInt(gpa, a ^ b, result_type),
+        .shift_left => {
+            const amount = shiftAmount(b) orelse return .{ .bad_shift = b };
+            const wide = std.math.shlExact(i128, a, amount) catch return .overflow;
+            return pool.internInt(gpa, wide, result_type);
+        },
+        .shift_right => {
+            const amount = shiftAmount(b) orelse return .{ .bad_shift = b };
+            return pool.internInt(gpa, a >> amount, result_type);
+        },
         .equal => return boolFold(a == b),
         .not_equal => return boolFold(a != b),
         .less_than => return boolFold(a < b),
@@ -706,7 +756,9 @@ fn foldFloat(
             if (b == 0) return .division_by_zero;
             return pool.internFloat(gpa, a / b, result_type);
         },
-        .mod => return .{ .bad_operand = result_type },
+        .mod, .bit_and, .bit_or, .bit_xor, .shift_left, .shift_right => {
+            return .{ .bad_operand = result_type };
+        },
         .equal => return boolFold(a == b),
         .not_equal => return boolFold(a != b),
         .less_than => return boolFold(a < b),

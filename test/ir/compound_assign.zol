@@ -1,0 +1,22 @@
+struct Holder {
+    count: i64
+}
+
+fn on_a_var(n: i64) i64 {
+    var total: i64 = 0
+    total += n
+    total *= 2
+    total -= 1
+    return total
+}
+
+fn on_a_field(holder: *var Holder, n: i64) i64 {
+    holder.count += n
+    return holder.count
+}
+
+fn through_a_pointer(p: *var i64) i64 {
+    p.* <<= 1
+    p.* |= 1
+    return p.*
+}

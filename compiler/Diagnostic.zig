@@ -89,6 +89,8 @@ pub const Code = enum(u16) {
     analysis_too_deep = 249,
     unreachable_code = 250,
     intrinsic_outside_std = 251,
+    not_indexable = 252,
+    bad_shift = 253,
 };
 
 pub const Color = enum { off, on };

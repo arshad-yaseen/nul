@@ -17,7 +17,7 @@ root
       param by
         type: ident i64
       body: block
-        assign
+        assign =
           lhs: field_access hits
             lhs: ident self
           rhs: binary add
@@ -41,7 +41,7 @@ root
         callee: field_access bump
           lhs: ident c
         arg: number_literal 1
-      assign
+      assign =
         lhs: ident _
         rhs: call
           callee: field_access zero

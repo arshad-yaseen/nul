@@ -52,12 +52,13 @@ pub const Tag = enum(u8) {
     r_bracket,
     comma,
     dot,
+    /// One token, so a line ending in `p.*` ends its statement.
+    dot_star,
     colon,
-    /// Written, or inserted at a newline.
+    /// Written, or inserted at a line break.
     semi,
-    /// Delimits a capture, `|err|`.
+    /// A capture's delimiter, and the bitwise or.
     pipe,
-    ampersand,
     question,
 
     eq,
@@ -73,6 +74,22 @@ pub const Tag = enum(u8) {
     star,
     slash,
     percent,
+    ampersand,
+    caret,
+    tilde,
+    lt_lt,
+    gt_gt,
+
+    plus_eq,
+    minus_eq,
+    star_eq,
+    slash_eq,
+    percent_eq,
+    ampersand_eq,
+    pipe_eq,
+    caret_eq,
+    lt_lt_eq,
+    gt_gt_eq,
 
     /// Fixed text, or null when the text is the source itself.
     pub fn lexeme(tag: Tag) ?[]const u8 {
@@ -113,10 +130,10 @@ pub const Tag = enum(u8) {
             .r_bracket => "]",
             .comma => ",",
             .dot => ".",
+            .dot_star => ".*",
             .colon => ":",
             .semi => ";",
             .pipe => "|",
-            .ampersand => "&",
             .question => "?",
 
             .eq => "=",
@@ -132,6 +149,22 @@ pub const Tag = enum(u8) {
             .star => "*",
             .slash => "/",
             .percent => "%",
+            .ampersand => "&",
+            .caret => "^",
+            .tilde => "~",
+            .lt_lt => "<<",
+            .gt_gt => ">>",
+
+            .plus_eq => "+=",
+            .minus_eq => "-=",
+            .star_eq => "*=",
+            .slash_eq => "/=",
+            .percent_eq => "%=",
+            .ampersand_eq => "&=",
+            .pipe_eq => "|=",
+            .caret_eq => "^=",
+            .lt_lt_eq => "<<=",
+            .gt_gt_eq => ">>=",
         };
     }
 
@@ -140,6 +173,10 @@ pub const Tag = enum(u8) {
         const text = symbols[@intFromEnum(tag)];
         assert(text.len > 0);
         return text;
+    }
+
+    fn isKeyword(tag: Tag) bool {
+        return std.mem.startsWith(u8, @tagName(tag), "kw_");
     }
 };
 
@@ -172,6 +209,20 @@ pub const Index = enum(u32) {
 
 pub const tag_count = @typeInfo(Tag).@"enum".fields.len;
 
+/// The tags whose spelling begins with one byte, longest first.
+pub const Punctuation = struct {
+    tags: [max]Tag,
+    count: u8,
+
+    /// `<`, `<=`, `<<`, and `<<=` are the largest group.
+    pub const max = 4;
+
+    pub fn candidates(group: *const Punctuation) []const Tag {
+        assert(group.count <= max);
+        return group.tags[0..group.count];
+    }
+};
+
 const Token = @This();
 
 comptime {
@@ -180,12 +231,13 @@ comptime {
     assert(@sizeOf(Index) == 4);
 }
 
-/// Whether a newline after this tag ends a statement.
+/// Whether a line break after this tag ends a statement.
 pub fn endsStatement(tag: Tag) bool {
     return switch (tag) {
         .ident, .number, .invalid => true,
         .kw_intrinsic => true,
         .r_paren, .r_brace, .r_bracket => true,
+        .dot_star => true,
         .kw_true, .kw_false, .kw_null => true,
         .kw_return, .kw_break, .kw_continue => true,
         else => false,
@@ -199,11 +251,12 @@ pub fn keywordOrIdent(bytes: []const u8) Tag {
 
 /// Derived from `lexeme`, so the table cannot drift from the tags.
 const keywords = build: {
+    @setEvalBranchQuota(8000);
     const tags = std.enums.values(Tag);
     var entries: [tags.len]struct { []const u8, Tag } = undefined;
     var count = 0;
     for (tags) |tag| {
-        if (std.mem.startsWith(u8, @tagName(tag), "kw_") == false) continue;
+        if (tag.isKeyword() == false) continue;
         entries[count] = .{ tag.lexeme().?, tag };
         count += 1;
     }
@@ -211,7 +264,38 @@ const keywords = build: {
     break :build std.StaticStringMap(Tag).initComptime(entries[0..count].*);
 };
 
+/// Derived too, so a new operator needs no scanning code. Longest first, which
+/// is what makes `<<=` win over `<<`.
+pub const punctuation: [256]Punctuation = build: {
+    @setEvalBranchQuota(8000);
+    var table: [256]Punctuation = @splat(.{ .tags = @splat(.invalid), .count = 0 });
+
+    var longest = 0;
+    for (std.enums.values(Tag)) |tag| {
+        if (tag.isKeyword()) continue;
+        const text = tag.lexeme() orelse continue;
+        longest = @max(longest, text.len);
+    }
+    assert(longest == 3);
+
+    var length = longest;
+    while (length > 0) : (length -= 1) {
+        for (std.enums.values(Tag)) |tag| {
+            if (tag.isKeyword()) continue;
+            const text = tag.lexeme() orelse continue;
+            if (text.len != length) continue;
+
+            const group = &table[text[0]];
+            assert(group.count < Punctuation.max);
+            group.tags[group.count] = tag;
+            group.count += 1;
+        }
+    }
+    break :build table;
+};
+
 const symbols: [tag_count][]const u8 = blk: {
+    @setEvalBranchQuota(8000);
     var table: [tag_count][]const u8 = @splat("");
     for (std.enums.values(Tag)) |tag| {
         table[@intFromEnum(tag)] = switch (tag) {

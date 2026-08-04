@@ -136,7 +136,7 @@ root
           lhs: ident i
           rhs: ident limit
         body: block
-          assign
+          assign =
             lhs: ident i
             rhs: binary add
               lhs: ident i
@@ -151,7 +151,7 @@ root
               rhs: number_literal 3
             then: block
               continue_expr
-          assign
+          assign =
             lhs: ident total
             rhs: binary add
               lhs: ident total

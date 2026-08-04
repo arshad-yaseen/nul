@@ -1,0 +1,29 @@
+fn masks(value: u32, mask: u32, shift: u32) u32
+b0:
+  %0 = param value : u32
+  %1 = param mask : u32
+  %2 = param shift : u32
+  %3 = bit_and %0, %1 : u32
+  %4 = bit_or %0, %1 : u32
+  %5 = bit_xor %0, %1 : u32
+  %6 = shift_left %0, %2 : u32
+  %7 = shift_right %0, %2 : u32
+  %8 = add %3, %4 : u32
+  %9 = add %8, %5 : u32
+  %10 = add %9, %6 : u32
+  %11 = add %10, %7 : u32
+  return %11
+
+fn complemented(value: u8) u8
+b0:
+  %0 = param value : u8
+  %1 = bit_not %0 : u8
+  return %1
+
+fn folded() u8
+b0:
+  return 95:u8
+
+fn folded_complement() i64
+b0:
+  return -1:i64

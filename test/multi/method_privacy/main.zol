@@ -1,0 +1,9 @@
+use shape.Box
+
+fn reach_public(b: *Box) i64 {
+    return b.shown()
+}
+
+fn reach_private(b: *Box) i64 {
+    return b.hidden()
+}

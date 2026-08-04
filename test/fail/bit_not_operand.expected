@@ -1,0 +1,12 @@
+error[E0211]: '~' cannot be applied to an untyped float
+ --> test/fail/bit_not_operand.zol:1:14
+  |
+1 | let folded = ~1.5
+  |              ^ wrong operand type
+
+error[E0211]: '~' needs an integer, and this is f64
+ --> test/fail/bit_not_operand.zol:4:12
+  |
+4 |     return ~x
+  |            ^ wrong operand type
+

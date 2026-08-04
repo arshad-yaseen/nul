@@ -76,6 +76,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     try parse.parseRoot();
     assert(parse.nodes.len > 0);
     assert(parse.scratch.items.len == 0);
+    assert(parse.depth == 0);
 
     const extra = try parse.extra.toOwnedSlice(gpa);
     errdefer gpa.free(extra);
@@ -93,9 +94,12 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     };
 }
 
-/// Or `.eof` past the end.
+// the cursor
+
+/// Or `.eof` past the end. Three ahead is what `atCapture` needs to see a
+/// whole `| name | {`, and nothing looks further.
 fn peek(self: *const Parse, ahead: u32) Token.Tag {
-    assert(ahead <= 1);
+    assert(ahead <= 3);
     const index = self.token_index.after(ahead).int();
     if (index < self.tags.len) return self.tags[index];
     return .eof;
@@ -141,6 +145,24 @@ fn ensureProgress(self: *Parse, before: Token.Index) void {
     if (self.eof() == false) assert(self.token_index.int() > before.int());
 }
 
+// nesting
+
+/// One level deeper, or false when the limit is reached. Every `enter` that
+/// returned true is paired with a `leave`.
+fn enter(self: *Parse) bool {
+    assert(self.depth <= depth_max);
+    if (self.depth == depth_max) return false;
+    self.depth += 1;
+    return true;
+}
+
+fn leave(self: *Parse) void {
+    assert(self.depth > 0);
+    self.depth -= 1;
+}
+
+// spans
+
 fn spanOf(self: *const Parse, index: Token.Index) Diagnostic.Span {
     const start = self.tokens.items(.start)[index.int()];
     const end = Tokenizer.tokenEnd(self.source, self.tags[index.int()], start);
@@ -159,6 +181,8 @@ fn spanSince(self: *const Parse, from: Token.Index) Diagnostic.Span {
     return .{ .start = self.spanOf(from).start, .end = self.spanOf(last).end };
 }
 
+// diagnostics
+
 fn fmt(self: *Parse, comptime template: []const u8, args: anytype) Allocator.Error![]const u8 {
     comptime assert(template.len > 0);
     return std.fmt.allocPrint(self.arena.allocator(), template, args);
@@ -174,20 +198,6 @@ fn err(self: *Parse, diagnostic: Diagnostic) Allocator.Error!void {
     if (self.errors.items.len == errors_max) self.stop();
 }
 
-/// Over the rest of an item, so one mistake reports once.
-fn skipToTerminator(self: *Parse, closer: Token.Tag) void {
-    assert(self.token_index.int() <= self.eof_index.int());
-
-    while (self.eof() == false and self.at(closer) == false and
-        self.at(.semi) == false and self.at(.comma) == false and self.at(.r_brace) == false)
-    {
-        self.token_index = self.token_index.after(1);
-    }
-    _ = self.eatTerminators();
-
-    assert(self.token_index.int() <= self.eof_index.int());
-}
-
 /// Unwind without reading further.
 fn stop(self: *Parse) void {
     @branchHint(.cold);
@@ -198,7 +208,12 @@ fn stop(self: *Parse) void {
     assert(self.eof());
 }
 
-fn errExpected(self: *Parse, code: Diagnostic.Code, what: []const u8, help: ?[]const u8) Allocator.Error!void {
+fn errExpected(
+    self: *Parse,
+    code: Diagnostic.Code,
+    what: []const u8,
+    help: ?[]const u8,
+) Allocator.Error!void {
     @branchHint(.cold);
     assert(what.len > 0);
     try self.err(.{
@@ -212,7 +227,9 @@ fn errExpected(self: *Parse, code: Diagnostic.Code, what: []const u8, help: ?[]c
 
 fn expectToken(self: *Parse, expected: Token.Tag) Allocator.Error!void {
     assert(expected != .eof);
-    if (self.eatToken(expected) == null) try self.errExpected(.expected_token, expected.symbol(), null);
+    if (self.eatToken(expected) == null) {
+        try self.errExpected(.expected_token, expected.symbol(), null);
+    }
 }
 
 fn expectClosing(self: *Parse, closer: Token.Tag, opener: ?Token.Index) Allocator.Error!void {
@@ -232,6 +249,47 @@ fn expectClosing(self: *Parse, closer: Token.Tag, opener: ?Token.Index) Allocato
             .span = self.spanOf(open),
         }}),
     });
+}
+
+fn errChainedComparison(self: *Parse) Allocator.Error!void {
+    @branchHint(.cold);
+    try self.err(.{
+        .code = .chained_comparison,
+        .span = self.here(),
+        .message = "comparisons cannot be chained",
+        .label = "a second comparison",
+        .help = "write it as two comparisons joined with 'and'",
+    });
+}
+
+fn tooDeep(self: *Parse) Allocator.Error!Node.Index {
+    @branchHint(.cold);
+    try self.err(.{
+        .code = .nesting_too_deep,
+        .span = self.here(),
+        .message = try self.fmt("this nests more than {d} levels deep", .{depth_max}),
+        .label = "too deep",
+        .help = "the rest of the file was not read",
+    });
+    const node = try self.hole();
+    self.stop();
+    return node;
+}
+
+// recovery
+
+/// Over the rest of an item, so one mistake reports once.
+fn skipToTerminator(self: *Parse, closer: Token.Tag) void {
+    assert(self.token_index.int() <= self.eof_index.int());
+
+    while (self.eof() == false and self.at(closer) == false and
+        self.at(.semi) == false and self.at(.comma) == false and self.at(.r_brace) == false)
+    {
+        self.token_index = self.token_index.after(1);
+    }
+    _ = self.eatTerminators();
+
+    assert(self.token_index.int() <= self.eof_index.int());
 }
 
 /// What stood between two items. Only a bare line break leaves doubt.
@@ -267,7 +325,8 @@ fn expectTerminator(self: *Parse, closer: Token.Tag) Allocator.Error!void {
     self.skipToTerminator(closer);
 }
 
-/// A line opening with one of these may be continuing the line above.
+/// A line opening with one of these may be continuing the line above. A line
+/// opening with `.` is not among them, because the tokenizer already joined it.
 const continues_line = TokenSet.initMany(&.{ .minus, .ampersand, .bang, .l_paren });
 
 fn errAmbiguousLine(self: *Parse) Allocator.Error!void {
@@ -283,19 +342,7 @@ fn errAmbiguousLine(self: *Parse) Allocator.Error!void {
     });
 }
 
-fn tooDeep(self: *Parse) Allocator.Error!Node.Index {
-    @branchHint(.cold);
-    try self.err(.{
-        .code = .nesting_too_deep,
-        .span = self.here(),
-        .message = try self.fmt("this nests more than {d} levels deep", .{depth_max}),
-        .label = "too deep",
-        .help = "the rest of the file was not read",
-    });
-    const node = try self.hole();
-    self.stop();
-    return node;
-}
+// nodes and payloads
 
 fn addNode(self: *Parse, node: Node) Allocator.Error!Node.Index {
     assert(node.main_token.int() < self.tags.len);
@@ -312,6 +359,20 @@ fn addLeaf(self: *Parse, node_tag: Node.Tag) Allocator.Error!Node.Index {
     assert(self.eof() == false or self.current() == .eof);
     const token = self.nextToken();
     return self.addNode(.{ .tag = node_tag, .main_token = token, .data = .{ .none = {} } });
+}
+
+fn addUnary(
+    self: *Parse,
+    node_tag: Node.Tag,
+    main_token: Token.Index,
+    operand: Node.Index,
+) Allocator.Error!Node.Index {
+    assert(operand.int() < self.nodes.len);
+    return self.addNode(.{
+        .tag = node_tag,
+        .main_token = main_token,
+        .data = .{ .node = operand },
+    });
 }
 
 fn addPair(
@@ -387,11 +448,11 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,        .number,    .kw_true,   .kw_false,
-    .kw_null,      .l_paren,   .dot,       .minus,
-    .bang,         .kw_try,    .ampersand, .invalid,
-    .kw_if,        .kw_return, .kw_break,  .kw_continue,
-    .kw_intrinsic,
+    .ident,       .number,       .kw_true,   .kw_false,
+    .kw_null,     .l_paren,      .dot,       .minus,
+    .bang,        .tilde,        .kw_try,    .ampersand,
+    .invalid,     .kw_if,        .kw_return, .kw_break,
+    .kw_continue, .kw_intrinsic,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
@@ -402,6 +463,9 @@ const starts_member = TokenSet.initMany(&.{ .ident, .kw_fn, .kw_pub });
 
 const starts_type = TokenSet.initMany(&.{ .ident, .star, .question, .bang });
 
+/// Whatever opens a type argument or an index, which a bracket may hold.
+const starts_bracket_item = starts_expr.unionWith(TokenSet.initMany(&.{ .star, .question }));
+
 const starts_name = TokenSet.initOne(.ident);
 
 const starts_decl = TokenSet.initMany(&.{
@@ -411,7 +475,7 @@ const starts_decl = TokenSet.initMany(&.{
 
 const ends_list = starts_decl.unionWith(TokenSet.initMany(&.{ .l_brace, .r_brace, .semi }));
 
-/// Every list: a file, a block, a struct body, and everything bracketed.
+/// Every list, a file, a block, a struct body, and everything bracketed.
 const List = struct {
     /// Each element lands in `scratch`.
     item: *const fn (*Parse) Allocator.Error!Node.Index,
@@ -494,7 +558,7 @@ fn parseRoot(self: *Parse) Allocator.Error!void {
         .opener = null,
         .code = .expected_declaration,
         .expected = "a declaration",
-        .help = "a file holds 'use', 'struct', 'type', 'fn', and 'let'",
+        .help = "a file holds 'use', 'struct', 'type', 'error', 'fn', and 'let'",
         .bails = TokenSet.initEmpty(),
     });
 
@@ -536,37 +600,24 @@ fn parseUseDecl(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_use));
     const use_token = self.nextToken();
     const path = try self.parsePath();
-    return self.addNode(.{
-        .tag = .use_decl,
-        .main_token = use_token,
-        .data = .{ .node = path },
-    });
+    return self.addUnary(.use_decl, use_token, path);
 }
 
-/// `.name` reached from what came before, or null once reported.
-fn parseFieldAccess(self: *Parse, base: Node.Index) Allocator.Error!?Node.Index {
-    assert(self.at(.dot));
-    const dot = self.nextToken();
-    if (self.at(.ident) == false) {
-        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
-        return null;
-    }
-    _ = self.nextToken();
-    return try self.addNode(.{
-        .tag = .field_access,
-        .main_token = dot,
-        .data = .{ .node = base },
-    });
-}
-
-/// An import path, or the head of a type.
+/// An import path, or the head of a type. Only names, never `.*`.
 fn parsePath(self: *Parse) Allocator.Error!Node.Index {
     if (self.at(.ident) == false) {
         try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
         return self.hole();
     }
     var node = try self.addLeaf(.ident);
-    while (self.at(.dot)) node = try self.parseFieldAccess(node) orelse return self.hole();
+    while (self.at(.dot)) {
+        const dot = self.nextToken();
+        if (self.eatToken(.ident) == null) {
+            try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
+            return self.hole();
+        }
+        node = try self.addUnary(.field_access, dot, node);
+    }
     return node;
 }
 
@@ -609,11 +660,7 @@ fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
     try self.expectToken(.ident);
     try self.expectToken(.eq);
     const aliased = try self.parseType();
-    return self.addNode(.{
-        .tag = .type_decl,
-        .main_token = type_token,
-        .data = .{ .node = aliased },
-    });
+    return self.addUnary(.type_decl, type_token, aliased);
 }
 
 /// `error Name`
@@ -715,7 +762,7 @@ fn parseParam(self: *Parse) Allocator.Error!Node.Index {
     const name = self.nextToken();
     try self.expectToken(.colon);
     const type_expr = try self.parseType();
-    return self.addNode(.{ .tag = .param, .main_token = name, .data = .{ .node = type_expr } });
+    return self.addUnary(.param, name, type_expr);
 }
 
 fn parseField(self: *Parse) Allocator.Error!Node.Index {
@@ -723,7 +770,7 @@ fn parseField(self: *Parse) Allocator.Error!Node.Index {
     const name = self.nextToken();
     try self.expectToken(.colon);
     const type_expr = try self.parseType();
-    return self.addNode(.{ .tag = .field, .main_token = name, .data = .{ .node = type_expr } });
+    return self.addUnary(.field, name, type_expr);
 }
 
 /// A struct body holds fields and functions, and `pub` introduces a function.
@@ -744,9 +791,8 @@ fn parseBlock(self: *Parse) Allocator.Error!Node.Index {
         try self.errExpected(.expected_token, Token.Tag.l_brace.symbol(), null);
         return self.hole();
     }
-    if (self.depth >= depth_max) return self.tooDeep();
-    self.depth += 1;
-    defer self.depth -= 1;
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
 
     const lbrace = self.nextToken();
     const top = self.scratch.items.len;
@@ -778,12 +824,11 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
         .kw_else => return self.parseStrayElse(),
         .kw_defer => {
             const defer_token = self.nextToken();
-            const expr = try self.parseExpr();
-            return self.addNode(.{
-                .tag = .defer_stmt,
-                .main_token = defer_token,
-                .data = .{ .node = expr },
-            });
+            const body = if (self.at(.l_brace))
+                try self.parseBlock()
+            else
+                try self.parseExprStatement();
+            return self.addUnary(.defer_stmt, defer_token, body);
         },
         else => return self.parseExprStatement(),
     }
@@ -802,99 +847,6 @@ fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
     });
     _ = self.nextToken();
     return if (self.at(.kw_if)) self.parseIf() else self.parseBlock();
-}
-
-/// No parentheses, and mandatory braces, so no arm can dangle.
-fn parseIf(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_if));
-    // an `else if` chain recurses with no block between
-    if (self.depth >= depth_max) return self.tooDeep();
-    self.depth += 1;
-    defer self.depth -= 1;
-
-    const if_token = self.nextToken();
-    const cond = try self.parseExpr();
-    const capture = try self.parseCapture();
-    const then_block = try self.parseBlock();
-    const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
-        // `else if` nests as an `if_expr`
-        (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
-    else
-        .none;
-
-    const start = self.extraStart();
-    try self.extraNode(cond);
-    try self.extraOpt(capture);
-    try self.extraNode(then_block);
-    try self.extraOpt(else_node);
-    return self.addNode(.{
-        .tag = .if_expr,
-        .main_token = if_token,
-        .data = .{ .extra = start },
-    });
-}
-
-fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_return));
-
-    const return_token = self.nextToken();
-    const operand: Node.OptionalIndex = if (starts_expr.contains(self.current()))
-        (try self.parseExpr()).toOptional()
-    else
-        .none;
-    return self.addNode(.{
-        .tag = .return_expr,
-        .main_token = return_token,
-        .data = .{ .opt_node = operand },
-    });
-}
-
-fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_break) or self.at(.kw_continue));
-
-    const tag: Node.Tag = if (self.at(.kw_break)) .break_expr else .continue_expr;
-    const keyword = self.nextToken();
-    return self.addNode(.{ .tag = tag, .main_token = keyword, .data = .{ .none = {} } });
-}
-
-/// `|v|`, naming an optional payload or a caught error.
-fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
-    assert(self.token_index.int() <= self.eof_index.int());
-    if (self.eatToken(.pipe) == null) return .none;
-    assert(self.tags[self.token_index.before(1).int()] == .pipe);
-    if (self.at(.ident) == false) {
-        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
-        return (try self.hole()).toOptional();
-    }
-    const name = self.nextToken();
-    try self.expectToken(.pipe);
-    const node = try self.addNode(.{
-        .tag = .capture,
-        .main_token = name,
-        .data = .{ .none = {} },
-    });
-    return node.toOptional();
-}
-
-fn parseWhile(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_while));
-    const while_token = self.nextToken();
-    const cond: Node.OptionalIndex = if (self.at(.l_brace))
-        .none
-    else
-        (try self.parseExpr()).toOptional();
-    const capture = try self.parseCapture();
-    const body = try self.parseBlock();
-
-    const start = self.extraStart();
-    try self.extraOpt(cond);
-    try self.extraOpt(capture);
-    try self.extraNode(body);
-    return self.addNode(.{
-        .tag = .while_stmt,
-        .main_token = while_token,
-        .data = .{ .extra = start },
-    });
 }
 
 fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
@@ -920,30 +872,108 @@ fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
+/// An expression, or an expression assigned into.
 fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
     const from = self.token_index;
 
     const lhs = try self.parseExpr();
     assert(lhs.int() < self.nodes.len);
-    if (self.at(.eq) == false) {
-        return lhs;
-    }
+
+    if (AST.assigns(self.current()) == false) return lhs;
 
     // `1 = x` is a shape error, so it never reaches a checker
     switch (self.nodes.items(.tag)[@intFromEnum(lhs)]) {
-        .ident, .field_access, .err => {},
+        .ident, .field_access, .deref, .bracket, .err => {},
         else => try self.err(.{
             .code = .invalid_assign_target,
             .span = self.spanSince(from),
             .message = "this cannot be assigned to",
             .label = "not a place",
-            .help = "the left of '=' is a name, or a field reached from one",
+            .help = "the left of '=' is a name, a field, an index, or a pointer written '.*'",
         }),
     }
 
-    const eq = self.nextToken();
+    const op_token = self.nextToken();
     const rhs = try self.parseExpr();
-    return self.addPair(.assign, eq, lhs, rhs);
+    return self.addPair(.assign, op_token, lhs, rhs);
+}
+
+fn parseWhile(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_while));
+    const while_token = self.nextToken();
+
+    var capture: Node.OptionalIndex = .none;
+    const cond: Node.OptionalIndex = if (self.at(.l_brace)) .none else cond: {
+        const written = try self.parseExpr();
+        capture = try self.parseCapture();
+        break :cond written.toOptional();
+    };
+    const body = try self.parseBlock();
+
+    const start = self.extraStart();
+    try self.extraOpt(cond);
+    try self.extraOpt(capture);
+    try self.extraNode(body);
+    return self.addNode(.{
+        .tag = .while_stmt,
+        .main_token = while_token,
+        .data = .{ .extra = start },
+    });
+}
+
+/// No parentheses, and mandatory braces, so no arm can dangle.
+fn parseIf(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_if));
+    // an `else if` chain recurses with no block between
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
+
+    const if_token = self.nextToken();
+    const cond = try self.parseExpr();
+    const capture = try self.parseCapture();
+    const then_block = try self.parseBlock();
+    const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
+        (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
+    else
+        .none;
+
+    const start = self.extraStart();
+    try self.extraNode(cond);
+    try self.extraOpt(capture);
+    try self.extraNode(then_block);
+    try self.extraOpt(else_node);
+    return self.addNode(.{
+        .tag = .if_expr,
+        .main_token = if_token,
+        .data = .{ .extra = start },
+    });
+}
+
+/// `| name | {` opens a capture, and so does `| name {` with its close left
+/// out. A `|` anywhere else is the bitwise or.
+fn atCapture(self: *const Parse) bool {
+    assert(self.at(.pipe));
+    if (self.peek(1) != .ident) return false;
+    if (self.peek(2) == .pipe) return self.peek(3) == .l_brace;
+    return self.peek(2) == .l_brace;
+}
+
+/// `|v|`, naming an optional payload or a caught error.
+fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
+    if (self.eatToken(.pipe) == null) return .none;
+
+    if (self.at(.ident) == false) {
+        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
+        return (try self.hole()).toOptional();
+    }
+    const name = self.nextToken();
+    try self.expectToken(.pipe);
+
+    return (try self.addNode(.{
+        .tag = .capture,
+        .main_token = name,
+        .data = .{ .none = {} },
+    })).toOptional();
 }
 
 // expressions
@@ -952,42 +982,29 @@ fn parseExpr(self: *Parse) Allocator.Error!Node.Index {
     return self.parseExprPrec(1);
 }
 
+/// Precedence climbing over `AST.oper_table`.
 fn parseExprPrec(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
     assert(min_prec > 0);
-    if (self.depth >= depth_max) return self.tooDeep();
-    self.depth += 1;
-    defer self.depth -= 1;
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
 
     var node = try self.parsePrefixExpr();
     var banned_prec: u8 = 0;
 
     while (true) {
-        const info = AST.oper_table[@intFromEnum(self.current())];
-        if (info.prec < min_prec) break;
-        if (info.prec == banned_prec) {
-            try self.err(.{
-                .code = .chained_comparison,
-                .span = self.here(),
-                .message = "comparisons cannot be chained",
-                .label = "a second comparison",
-                .help = "write it as two comparisons joined with 'and'",
-            });
-        }
-
         const op_tag = self.current();
+        if (op_tag == .pipe and self.atCapture()) break;
+
+        const info = AST.oper_table[@intFromEnum(op_tag)];
+        if (info.prec < min_prec) break;
+        if (info.prec == banned_prec) try self.errChainedComparison();
+
         const op_token = self.nextToken();
         const min = if (info.assoc == .right) info.prec else info.prec + 1;
 
         node = switch (op_tag) {
             .kw_catch => try self.parseCatchTail(node, op_token, min),
-            .kw_orelse => orelse_expr: {
-                // `a orelse { }`
-                const rhs = if (self.at(.l_brace))
-                    try self.parseBlock()
-                else
-                    try self.parseExprPrec(min);
-                break :orelse_expr try self.addPair(.orelse_expr, op_token, node, rhs);
-            },
+            .kw_orelse => try self.addPair(.orelse_expr, op_token, node, try self.parseRescue(min)),
             else => try self.addPair(.binary, op_token, node, try self.parseExprPrec(min)),
         };
 
@@ -1006,7 +1023,7 @@ fn parseCatchTail(
     assert(lhs.int() < self.nodes.len);
     assert(self.tags[catch_token.int()] == .kw_catch);
     const capture = try self.parseCapture();
-    const rhs = if (self.at(.l_brace)) try self.parseBlock() else try self.parseExprPrec(min_prec);
+    const rhs = try self.parseRescue(min_prec);
 
     const start = self.extraStart();
     try self.extraNode(lhs);
@@ -1019,29 +1036,62 @@ fn parseCatchTail(
     });
 }
 
+/// What settles an `orelse` or a `catch`, which may be a block.
+fn parseRescue(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
+    if (self.at(.l_brace)) return self.parseBlock();
+    return self.parseExprPrec(min_prec);
+}
+
 fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
-    // these build their own node rather than wrapping an operand
-    const node_tag: Node.Tag = switch (self.current()) {
+    // these carry their own node instead of wrapping an operand
+    switch (self.current()) {
         .kw_if => return self.parseIf(),
         .kw_return => return self.parseReturn(),
         .kw_break, .kw_continue => return self.parseLoopExit(),
-        .kw_try => .try_expr,
-        .minus, .bang, .ampersand => .unary,
-        else => return self.parseSuffixExpr(),
+        else => {},
+    }
+
+    const node_tag: Node.Tag = tag: {
+        if (self.at(.kw_try)) break :tag .try_expr;
+        if (AST.unary_table[@intFromEnum(self.current())] != null) break :tag .unary;
+        return self.parseSuffixExpr();
     };
-    if (self.depth >= depth_max) return self.tooDeep();
-    self.depth += 1;
-    defer self.depth -= 1;
+
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
 
     const op_token = self.nextToken();
     const operand = try self.parsePrefixExpr();
-    return self.addNode(.{ .tag = node_tag, .main_token = op_token, .data = .{ .node = operand } });
+    return self.addUnary(node_tag, op_token, operand);
 }
 
+fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_return));
+
+    const return_token = self.nextToken();
+    const operand: Node.OptionalIndex = if (starts_expr.contains(self.current()))
+        (try self.parseExpr()).toOptional()
+    else
+        .none;
+    return self.addNode(.{
+        .tag = .return_expr,
+        .main_token = return_token,
+        .data = .{ .opt_node = operand },
+    });
+}
+
+fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_break) or self.at(.kw_continue));
+
+    const node_tag: Node.Tag = if (self.at(.kw_break)) .break_expr else .continue_expr;
+    const keyword = self.nextToken();
+    return self.addNode(.{ .tag = node_tag, .main_token = keyword, .data = .{ .none = {} } });
+}
+
+/// Suffixes bind tighter than any operator, and each wraps the one before.
 fn parseSuffixExpr(self: *Parse) Allocator.Error!Node.Index {
     var node = try self.parsePrimaryExpr();
     assert(node.int() < self.nodes.len);
-    // each suffix wraps the one before, so a chain is still tree depth
     var suffixes: u32 = 0;
 
     while (true) {
@@ -1049,11 +1099,25 @@ fn parseSuffixExpr(self: *Parse) Allocator.Error!Node.Index {
         suffixes += 1;
         switch (self.current()) {
             .l_paren => node = try self.parseCall(node),
-            .l_bracket => node = try self.parseInstance(node),
-            .dot => node = try self.parseFieldAccess(node) orelse return self.hole(),
+            .l_bracket => node = try self.parseBracket(node),
+            .dot, .dot_star => node = try self.parseSelector(node) orelse return self.hole(),
             else => return node,
         }
     }
+}
+
+/// `.name` reaches a field, `.*` reaches what a pointer points at.
+fn parseSelector(self: *Parse, base: Node.Index) Allocator.Error!?Node.Index {
+    if (self.eatToken(.dot_star)) |star| return try self.addUnary(.deref, star, base);
+
+    assert(self.at(.dot));
+    const dot = self.nextToken();
+    if (self.eatToken(.ident) != null) return try self.addUnary(.field_access, dot, base);
+
+    try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
+    // an operator cannot follow a `.`, so it is the mistake itself
+    if (AST.oper_table[@intFromEnum(self.current())].prec > 0) _ = self.nextToken();
+    return null;
 }
 
 fn parseCall(self: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
@@ -1082,8 +1146,9 @@ fn parseCall(self: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
     });
 }
 
-/// `Box[i64]` in a type and `create[Node]` in a call are one node.
-fn parseInstance(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
+/// `Box[i64]`, `create[Node](...)`, and `row[0]` are one node. Only the
+/// checker can tell which, from what the base names.
+fn parseBracket(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     assert(self.at(.l_bracket));
     assert(base.int() < self.nodes.len);
     const lbracket = self.nextToken();
@@ -1091,22 +1156,31 @@ fn parseInstance(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     defer self.scratch.shrinkRetainingCapacity(top);
 
     try self.parseList(.{
-        .item = parseType,
-        .starts = starts_type,
+        .item = parseBracketItem,
+        .starts = starts_bracket_item,
         .closer = .r_bracket,
         .opener = lbracket,
-        .code = .expected_type,
-        .expected = "a type argument",
+        .code = .expected_expression,
+        .expected = "a type argument or an index",
     });
 
     const start = self.extraStart();
     try self.extraNode(base);
     try self.extraList(self.scratch.items[top..]);
     return self.addNode(.{
-        .tag = .instance,
+        .tag = .bracket,
         .main_token = lbracket,
         .data = .{ .extra = start },
     });
+}
+
+/// Only a type opens with `*`, `?`, or `!`. Everything else is an expression,
+/// which the checker reads as a type when the base turns out to be generic.
+fn parseBracketItem(self: *Parse) Allocator.Error!Node.Index {
+    return switch (self.current()) {
+        .star, .question, .bang => self.parseType(),
+        else => self.parseExpr(),
+    };
 }
 
 fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
@@ -1182,19 +1256,14 @@ fn parseFieldInit(self: *Parse) Allocator.Error!Node.Index {
     const name = self.nextToken();
     try self.expectToken(.colon);
     const value = try self.parseExpr();
-    return self.addNode(.{
-        .tag = .struct_field_init,
-        .main_token = name,
-        .data = .{ .node = value },
-    });
+    return self.addUnary(.struct_field_init, name, value);
 }
 
 // types
 
 fn parseType(self: *Parse) Allocator.Error!Node.Index {
-    if (self.depth >= depth_max) return self.tooDeep();
-    self.depth += 1;
-    defer self.depth -= 1;
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
 
     const node_tag: Node.Tag = switch (self.current()) {
         .star => .pointer_type,
@@ -1206,7 +1275,7 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
     const op_token = self.nextToken();
     if (node_tag == .pointer_type) _ = self.eatToken(.kw_var);
     const child = try self.parseType();
-    return self.addNode(.{ .tag = node_tag, .main_token = op_token, .data = .{ .node = child } });
+    return self.addUnary(node_tag, op_token, child);
 }
 
 fn parseTypePath(self: *Parse) Allocator.Error!Node.Index {
@@ -1215,5 +1284,5 @@ fn parseTypePath(self: *Parse) Allocator.Error!Node.Index {
         return self.hole();
     }
     const path = try self.parsePath();
-    return if (self.at(.l_bracket)) self.parseInstance(path) else path;
+    return if (self.at(.l_bracket)) self.parseBracket(path) else path;
 }

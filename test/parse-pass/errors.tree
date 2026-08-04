@@ -45,7 +45,7 @@ root
             call
               callee: ident report
               arg: ident e
-      assign
+      assign =
         lhs: ident _
         rhs: ident value
   fn_decl named
@@ -54,7 +54,7 @@ root
     body: block
       var_decl e let
         init: ident NotFound
-      assign
+      assign =
         lhs: ident _
         rhs: ident e
       return_expr

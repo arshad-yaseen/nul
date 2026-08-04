@@ -1,0 +1,8 @@
+error[E0252]: i64 cannot be indexed
+ --> test/fail/not_indexable.zol:2:12
+  |
+2 |     return n[0]
+  |            ^^^ not something to index
+  |
+  = help: no type holds more than one value yet, so nothing can be indexed
+

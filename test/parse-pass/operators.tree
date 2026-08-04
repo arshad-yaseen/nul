@@ -1,0 +1,176 @@
+root
+  fn_decl arithmetic
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: binary sub
+          lhs: binary add
+            lhs: ident a
+            rhs: binary mul
+              lhs: ident b
+              rhs: ident c
+          rhs: binary mod
+            lhs: binary div
+              lhs: ident a
+              rhs: ident b
+            rhs: ident c
+  fn_decl bitwise
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: binary bit_or
+          lhs: binary bit_and
+            lhs: ident a
+            rhs: ident b
+          rhs: binary bit_xor
+            lhs: ident c
+            rhs: ident a
+  fn_decl shifts
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: binary shift_right
+          lhs: binary shift_left
+            lhs: ident a
+            rhs: binary add
+              lhs: ident b
+              rhs: ident c
+          rhs: ident c
+  fn_decl comparison
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    ret: ident bool
+    body: block
+      return_expr
+        value: binary equal
+          lhs: binary bit_and
+            lhs: ident a
+            rhs: ident b
+          rhs: number_literal 0
+  fn_decl booleans
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident bool
+    body: block
+      return_expr
+        value: binary bool_or
+          lhs: binary bool_and
+            lhs: binary greater_than
+              lhs: ident a
+              rhs: ident b
+            rhs: binary greater_than
+              lhs: ident b
+              rhs: ident c
+          rhs: binary equal
+            lhs: ident a
+            rhs: ident c
+  fn_decl associativity
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: binary sub
+          lhs: binary sub
+            lhs: ident a
+            rhs: ident b
+          rhs: ident c
+  fn_decl grouped
+    param a
+      type: ident i64
+    param b
+      type: ident i64
+    param c
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: binary mul
+          lhs: binary add
+            lhs: ident a
+            rhs: ident b
+          rhs: ident c
+  fn_decl unary
+    param a
+      type: ident i64
+    param flag
+      type: ident bool
+    ret: ident i64
+    body: block
+      var_decl negated let
+        init: unary negate
+          operand: ident a
+      var_decl complemented let
+        init: unary bit_not
+          operand: ident a
+      var_decl inverted let
+        init: unary bool_not
+          operand: ident flag
+      var_decl address let
+        init: unary address_of
+          operand: ident a
+      assign =
+        lhs: ident _
+        rhs: ident inverted
+      assign =
+        lhs: ident _
+        rhs: ident address
+      return_expr
+        value: binary add
+          lhs: ident negated
+          rhs: ident complemented
+  fn_decl rescue
+    param a
+      type: optional_type
+        child: ident i64
+    param b
+      type: error_union_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      var_decl settled let
+        init: orelse_expr
+          lhs: ident a
+          rhs: number_literal 0
+      var_decl caught let
+        init: catch_expr
+          lhs: ident b
+          capture: capture err
+          rhs: number_literal 0
+      var_decl tried let
+        init: try_expr
+          child: ident b
+      return_expr
+        value: binary add
+          lhs: binary add
+            lhs: ident settled
+            rhs: ident caught
+          rhs: ident tried

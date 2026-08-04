@@ -37,13 +37,13 @@ root
             value: number_literal 1
           struct_field_init y
             value: number_literal 2
-      assign
+      assign =
         lhs: ident _
         rhs: ident nested
-      assign
+      assign =
         lhs: ident _
         rhs: ident empty
-      assign
+      assign =
         lhs: ident _
         rhs: ident spread
       return_expr
@@ -62,16 +62,16 @@ root
         init: unary address_of
           operand: field_access x
             lhs: ident p
-      assign
+      assign =
         lhs: ident _
         rhs: ident address
-      assign
+      assign =
         lhs: ident _
         rhs: ident field_address
-      assign
+      assign =
         lhs: field_access x
           lhs: ident p
         rhs: number_literal 1
-      assign
+      assign =
         lhs: ident _
         rhs: ident a

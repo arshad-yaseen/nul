@@ -80,7 +80,7 @@ root
           struct_field_init y
             value: number_literal 2
       var_decl pair let
-        type: instance
+        type: bracket
           base: ident Pair
           arg: ident i64
           arg: ident i64
@@ -89,16 +89,16 @@ root
             value: number_literal 1
           struct_field_init second
             value: number_literal 2
-      assign
+      assign =
         lhs: ident _
         rhs: ident inline_literal
-      assign
+      assign =
         lhs: ident _
         rhs: ident spread_literal
-      assign
+      assign =
         lhs: ident _
         rhs: ident trailing
-      assign
+      assign =
         lhs: ident _
         rhs: ident pair
       return_expr

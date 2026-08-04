@@ -1,0 +1,21 @@
+fn read(p: *i64) i64 {
+    return p.*
+}
+
+fn write(p: *var i64, value: i64) {
+    p.* = value
+}
+
+fn through_a_field(p: *var Holder) i64 {
+    p.field = 1
+    return p.field
+}
+
+fn address_then_read(value: i64) i64 {
+    let p = &value
+    return p.*
+}
+
+fn chained_deref(pp: **i64) i64 {
+    return pp.*.*
+}

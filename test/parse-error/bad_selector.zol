@@ -1,0 +1,3 @@
+fn f(holder: Holder) i64 {
+    return holder.+
+}

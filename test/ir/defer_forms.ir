@@ -1,0 +1,34 @@
+fn every_form(n: i64) i64
+b0:
+  %0 = param n : i64
+  %1 = local total : *var i64
+  %2 = store %1, %0
+  %3 = load %1 : i64
+  %4 = load %1 : i64
+  %5 = mul %4, 2:i64 : i64
+  %6 = store %1, %5
+  %7 = load %1 : i64
+  %8 = sub %7, 1:i64 : i64
+  %9 = store %1, %8
+  %10 = load %1 : i64
+  %11 = add %10, 1:i64 : i64
+  %12 = store %1, %11
+  %13 = store %1, 0:i64
+  return %3
+
+fn Counter.bump(self: *var Counter)
+b0:
+  %0 = param self : *var Counter
+  %1 = field_ptr %0, .hits : *var i64
+  %2 = load %1 : i64
+  %3 = add %2, 1:i64 : i64
+  %4 = store %1, %3
+  return
+
+fn a_call(counter: *var Counter) i64
+b0:
+  %0 = param counter : *var Counter
+  %1 = field_ptr %0, .hits : *var i64
+  %2 = load %1 : i64
+  %3 = call Counter.bump(%0)
+  return %2

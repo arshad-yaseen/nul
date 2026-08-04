@@ -95,7 +95,13 @@ fn node(
             try node(ast, writer, it.type_expr, below, "type");
         },
 
-        .assign, .orelse_expr => |it| {
+        .assign => |it| {
+            try writer.print(" {s}", .{ast.tokenSlice(it.op_token)});
+            try writer.writeByte('\n');
+            try node(ast, writer, it.lhs, below, "lhs");
+            try node(ast, writer, it.rhs, below, "rhs");
+        },
+        .orelse_expr => |it| {
             try writer.writeByte('\n');
             try node(ast, writer, it.lhs, below, "lhs");
             try node(ast, writer, it.rhs, below, "rhs");
@@ -130,7 +136,7 @@ fn node(
             try writer.print(" {s}\n", .{ast.tokenSlice(it.name_token)});
             try node(ast, writer, it.lhs, below, "lhs");
         },
-        .instance => |it| {
+        .bracket => |it| {
             try writer.writeByte('\n');
             try node(ast, writer, it.base, below, "base");
             for (it.args) |arg| try node(ast, writer, arg, below, "arg");
@@ -164,7 +170,7 @@ fn node(
             try writer.writeByte('\n');
             try node(ast, writer, it.child, below, "child");
         },
-        .defer_stmt, .try_expr, .optional_type, .error_union_type => |child| {
+        .deref, .defer_stmt, .try_expr, .optional_type, .error_union_type => |child| {
             try writer.writeByte('\n');
             try node(ast, writer, child, below, "child");
         },
@@ -229,6 +235,7 @@ fn inst(
         .ptr_cast,
         .negate,
         .not,
+        .bit_not,
         .wrap_optional,
         .has_value,
         .unwrap_value,
@@ -247,6 +254,11 @@ fn inst(
         .mul,
         .div,
         .mod,
+        .bit_and,
+        .bit_or,
+        .bit_xor,
+        .shift_left,
+        .shift_right,
         .cmp_eq,
         .cmp_ne,
         .cmp_lt,

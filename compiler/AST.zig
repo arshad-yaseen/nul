@@ -138,8 +138,10 @@ pub const Node = struct {
         null_literal,
 
         field_access,
-        /// `Name[A, B]` in a type, `f[T]` in a call.
-        instance,
+        /// `p.*`, what a pointer points at.
+        deref,
+        /// `a[x, y]`. Type arguments where `a` is generic, an index otherwise.
+        bracket,
         call,
         /// `.{ ... }`, whose type comes from context.
         struct_literal,
@@ -220,6 +222,11 @@ pub const BinaryOp = enum {
     mul,
     div,
     mod,
+    bit_and,
+    bit_or,
+    bit_xor,
+    shift_left,
+    shift_right,
     equal,
     not_equal,
     less_than,
@@ -230,13 +237,18 @@ pub const BinaryOp = enum {
     bool_or,
 };
 
-pub const UnaryOp = enum { negate, bool_not, address_of };
+pub const UnaryOp = enum {
+    negate,
+    bool_not,
+    bit_not,
+    address_of,
+};
 
 /// `none` bans chaining, so `a < b < c` is reported rather than nested.
 pub const Assoc = enum { left, right, none };
 
 pub const OperInfo = struct {
-    /// Zero means the token is not an infix operator.
+    /// Zero means the token is not an infix operator. One is the loosest.
     prec: u8 = 0,
     assoc: Assoc = .left,
     /// Null for the tokens whose node is not `.binary`.
@@ -245,6 +257,7 @@ pub const OperInfo = struct {
 
 /// The one place a token maps to an infix operator.
 pub const oper_table: [Token.tag_count]OperInfo = blk: {
+    @setEvalBranchQuota(8000);
     var table: [Token.tag_count]OperInfo = @splat(.{});
     for (.{
         .{ Token.Tag.kw_or, 1, Assoc.left, BinaryOp.bool_or },
@@ -255,16 +268,22 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
         .{ Token.Tag.lt_eq, 3, Assoc.none, BinaryOp.less_or_equal },
         .{ Token.Tag.gt, 3, Assoc.none, BinaryOp.greater_than },
         .{ Token.Tag.gt_eq, 3, Assoc.none, BinaryOp.greater_or_equal },
-        .{ Token.Tag.plus, 5, Assoc.left, BinaryOp.add },
-        .{ Token.Tag.minus, 5, Assoc.left, BinaryOp.sub },
-        .{ Token.Tag.star, 6, Assoc.left, BinaryOp.mul },
-        .{ Token.Tag.slash, 6, Assoc.left, BinaryOp.div },
-        .{ Token.Tag.percent, 6, Assoc.left, BinaryOp.mod },
+        .{ Token.Tag.pipe, 5, Assoc.left, BinaryOp.bit_or },
+        .{ Token.Tag.caret, 6, Assoc.left, BinaryOp.bit_xor },
+        .{ Token.Tag.ampersand, 7, Assoc.left, BinaryOp.bit_and },
+        .{ Token.Tag.lt_lt, 8, Assoc.left, BinaryOp.shift_left },
+        .{ Token.Tag.gt_gt, 8, Assoc.left, BinaryOp.shift_right },
+        .{ Token.Tag.plus, 9, Assoc.left, BinaryOp.add },
+        .{ Token.Tag.minus, 9, Assoc.left, BinaryOp.sub },
+        .{ Token.Tag.star, 10, Assoc.left, BinaryOp.mul },
+        .{ Token.Tag.slash, 10, Assoc.left, BinaryOp.div },
+        .{ Token.Tag.percent, 10, Assoc.left, BinaryOp.mod },
     }) |entry| table[@intFromEnum(entry[0])] = .{
         .prec = entry[1],
         .assoc = entry[2],
         .op = entry[3],
     };
+
     // right nesting, so `a orelse b orelse c` tries each in turn
     for (.{ Token.Tag.kw_orelse, Token.Tag.kw_catch }) |tag| {
         table[@intFromEnum(tag)] = .{ .prec = 4, .assoc = .right };
@@ -277,9 +296,49 @@ pub const unary_table: [Token.tag_count]?UnaryOp = blk: {
     var table: [Token.tag_count]?UnaryOp = @splat(null);
     table[@intFromEnum(Token.Tag.minus)] = .negate;
     table[@intFromEnum(Token.Tag.bang)] = .bool_not;
+    table[@intFromEnum(Token.Tag.tilde)] = .bit_not;
     table[@intFromEnum(Token.Tag.ampersand)] = .address_of;
     break :blk table;
 };
+
+/// The operator a compound assignment folds in. A plain `=` has none, so
+/// `assigns` is what tells an assignment from a token that is not one.
+pub const assign_table: [Token.tag_count]?BinaryOp = blk: {
+    @setEvalBranchQuota(8000);
+    var table: [Token.tag_count]?BinaryOp = @splat(null);
+    for (.{
+        .{ Token.Tag.plus_eq, BinaryOp.add },
+        .{ Token.Tag.minus_eq, BinaryOp.sub },
+        .{ Token.Tag.star_eq, BinaryOp.mul },
+        .{ Token.Tag.slash_eq, BinaryOp.div },
+        .{ Token.Tag.percent_eq, BinaryOp.mod },
+        .{ Token.Tag.ampersand_eq, BinaryOp.bit_and },
+        .{ Token.Tag.pipe_eq, BinaryOp.bit_or },
+        .{ Token.Tag.caret_eq, BinaryOp.bit_xor },
+        .{ Token.Tag.lt_lt_eq, BinaryOp.shift_left },
+        .{ Token.Tag.gt_gt_eq, BinaryOp.shift_right },
+    }) |entry| table[@intFromEnum(entry[0])] = entry[1];
+    break :blk table;
+};
+
+pub fn assigns(tag: Token.Tag) bool {
+    return tag == .eq or assign_table[@intFromEnum(tag)] != null;
+}
+
+comptime {
+    @setEvalBranchQuota(20000);
+    for (std.enums.values(Token.Tag)) |tag| {
+        // `unpack` reads the op of every `.binary`, and only these two build a
+        // node of their own
+        const info = oper_table[@intFromEnum(tag)];
+        if (info.prec > 0 and info.op == null) {
+            assert(tag == .kw_orelse or tag == .kw_catch);
+        }
+        // an assignment never also sits between two values, so a statement can
+        // tell where the expression on its left ends
+        if (assigns(tag)) assert(info.prec == 0);
+    }
+}
 
 pub const View = union(enum) {
     root: []const Node.Index,
@@ -294,7 +353,7 @@ pub const View = union(enum) {
     field: TypedName,
 
     block: []const Node.Index,
-    assign: Pair,
+    assign: Assign,
     defer_stmt: Node.Index,
     if_expr: If,
     while_stmt: While,
@@ -310,7 +369,8 @@ pub const View = union(enum) {
     null_literal: Token.Index,
 
     field_access: FieldAccess,
-    instance: Instance,
+    deref: Node.Index,
+    bracket: Bracket,
     call: Call,
     struct_literal: []const Node.Index,
     struct_field_init: NamedValue,
@@ -359,6 +419,12 @@ pub const View = union(enum) {
     pub const TypedName = struct { name_token: Token.Index, type_expr: Node.Index };
     pub const NamedValue = struct { name_token: Token.Index, value: Node.Index };
     pub const Pair = struct { lhs: Node.Index, rhs: Node.Index };
+    pub const Assign = struct {
+        op: ?BinaryOp,
+        op_token: Token.Index,
+        lhs: Node.Index,
+        rhs: Node.Index,
+    };
     /// `else_node` is a block, or another `if_expr` for `else if`.
     pub const If = struct {
         cond: Node.Index,
@@ -372,7 +438,7 @@ pub const View = union(enum) {
         capture: Node.OptionalIndex,
         body: Node.Index,
     };
-    pub const Instance = struct { base: Node.Index, args: []const Node.Index };
+    pub const Bracket = struct { base: Node.Index, args: []const Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     /// `rhs` is a value, or the block of `a catch |err| { }`.
     pub const Catch = struct { lhs: Node.Index, capture: Node.OptionalIndex, rhs: Node.Index };
@@ -444,10 +510,14 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         .field => .{ .field = .{ .name_token = main, .type_expr = data.node } },
 
         .block => .{ .block = tree.listAt(data.extra) },
-        .assign => .{ .assign = .{
-            .lhs = data.node_and_node[0],
-            .rhs = data.node_and_node[1],
-        } },
+        .assign => .{
+            .assign = .{
+                .op = assign_table[@intFromEnum(tree.tokenTag(main))],
+                .op_token = main,
+                .lhs = data.node_and_node[0],
+                .rhs = data.node_and_node[1],
+            },
+        },
         .defer_stmt => .{ .defer_stmt = data.node },
         .if_expr => blk: {
             var payload = tree.fields(data.extra);
@@ -481,9 +551,10 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         .null_literal => .{ .null_literal = main },
 
         .field_access => .{ .field_access = .{ .lhs = data.node, .name_token = main.after(1) } },
-        .instance => blk: {
+        .deref => .{ .deref = data.node },
+        .bracket => blk: {
             var payload = tree.fields(data.extra);
-            break :blk .{ .instance = .{ .base = payload.node(), .args = payload.list() } };
+            break :blk .{ .bracket = .{ .base = payload.node(), .args = payload.list() } };
         },
         .call => blk: {
             var payload = tree.fields(data.extra);
@@ -698,7 +769,10 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                     } else return main.after(1);
                 },
             },
-            .assign, .orelse_expr => |it| {
+            .assign => |it| {
+                current = if (side == .leftmost) it.lhs else it.rhs;
+            },
+            .orelse_expr => |it| {
                 current = if (side == .leftmost) it.lhs else it.rhs;
             },
             .defer_stmt, .try_expr => |child| switch (side) {
@@ -721,12 +795,16 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => current = it.lhs,
                 .rightmost => return it.name_token,
             },
-            .instance => |it| switch (side) {
+            .deref => |operand| switch (side) {
+                .leftmost => current = operand,
+                .rightmost => return main,
+            },
+            .bracket => |it| switch (side) {
                 .leftmost => current = it.base,
                 .rightmost => {
                     if (it.args.len > 0) {
                         current = it.args[it.args.len - 1];
-                    } else return main;
+                    } else return main.after(1);
                 },
             },
             .call => |it| switch (side) {

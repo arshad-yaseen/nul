@@ -1,0 +1,80 @@
+//! Every production in GRAMMAR.md, once.
+
+use std.mem
+
+pub error Broken
+error Quiet
+
+pub type Alias = i64
+type Pointer = *var i64
+type Nested = Box[Box[?i64]]
+
+pub struct Box[T,] {
+    item: T
+
+    fn read(self: *Box[T]) T {
+        return self.item
+    }
+
+    pub fn write(self: *var Box[T], value: T) {
+        self.item = value
+    }
+}
+
+struct Empty {}
+
+let top_level: i64 = 1 + 2 * 3
+pub let exported = 0xff_ff
+
+fn no_return_type(a: i64,) {
+    var slot: i64 = a
+    slot = a
+    slot += a
+    slot <<= 1
+    defer slot = 0
+
+    while slot > 0 {
+        slot -= 1
+        if slot == 3 { continue }
+        if slot == 2 { break }
+    }
+    while { break }
+
+    _ = slot
+}
+
+fn every_expression(m: ?i64, e: !i64, p: *var i64, b: Box[i64]) i64 {
+    let grouped: i64 = (1 + 2) * 3
+    let unary = -1 + ~2 + 1
+    let boolean = !true
+    let address = &grouped
+    let read = address.*
+    no_return_type(1)
+    let literal: Box[i64] = .{ item: 1 }
+    let settled = m orelse 0
+    let block_settled = m orelse { return 0 }
+    let caught = e catch |err| 0
+    let caught_block = e catch |err| { return 0 }
+    let tried = try_it(e) catch 0
+    let captured = if m |v| { v } else { 0 }
+    let chained = b
+        .read()
+    _ = literal
+    _ = read
+    _ = unary
+    _ = boolean
+    _ = tried
+    p.* = grouped
+    return settled + block_settled + caught + caught_block + captured + chained
+}
+
+fn try_it(e: !i64) !i64 {
+    return try e
+}
+
+fn while_capture(m: ?i64) i64 {
+    while m |v| {
+        return v
+    }
+    return 0
+}

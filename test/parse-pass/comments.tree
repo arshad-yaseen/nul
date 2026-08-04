@@ -14,7 +14,7 @@ root
       doc /// A documented method.
       param self
         type: pointer_type
-          child: instance
+          child: bracket
             base: ident Pair
             arg: ident A
             arg: ident B
@@ -33,7 +33,7 @@ root
     ret: ident i64
     body: block
       var_decl p let
-        type: instance
+        type: bracket
           base: ident Pair
           arg: ident i64
           arg: ident i64
@@ -47,7 +47,7 @@ root
           callee: field_access sum
             lhs: ident p
           arg: ident a
-      assign
+      assign =
         lhs: ident _
         rhs: ident doubled
       return_expr

@@ -1,4 +1,4 @@
-error[E0207]: 'add' mixes i32 and i64
+error[E0207]: '+' mixes i32 and i64
  --> test/fail/mixed_types.zol:2:14
   |
 2 |     return a + b

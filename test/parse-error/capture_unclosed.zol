@@ -1,0 +1,6 @@
+fn f(maybe: ?i64) i64 {
+    if maybe |value {
+        return value
+    }
+    return 0
+}

@@ -11,13 +11,13 @@ root
     field value
       type: ident V
   type_decl IntBox pub
-    type: instance
+    type: bracket
       base: ident Box
       arg: ident i64
   type_decl Nested pub
-    type: instance
+    type: bracket
       base: ident Box
-      arg: instance
+      arg: bracket
         base: ident Box
         arg: ident i64
   fn_decl make pub
@@ -27,16 +27,16 @@ root
     param v
       type: ident T
     ret: pointer_type var
-      child: instance
+      child: bracket
         base: ident Box
         arg: ident T
     body: block
       var_decl b let
         init: call
-          callee: instance
+          callee: bracket
             base: field_access make
               lhs: ident store
-            arg: instance
+            arg: bracket
               base: ident Box
               arg: ident T
       return_expr
@@ -45,21 +45,21 @@ root
     param store
       type: ident Store
     body: block
-      assign
+      assign =
         lhs: ident _
         rhs: call
-          callee: instance
+          callee: bracket
             base: ident make
             arg: ident i64
           arg: ident store
           arg: number_literal 1
-      assign
+      assign =
         lhs: ident _
         rhs: call
-          callee: instance
+          callee: bracket
             base: field_access make
               lhs: ident store
-            arg: instance
+            arg: bracket
               base: ident Pair
               arg: ident i64
               arg: ident bool

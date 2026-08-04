@@ -1,0 +1,8 @@
+error[E0207]: '<<' mixes u32 and u8
+ --> test/fail/shift_mixed_types.zol:2:18
+  |
+2 |     return value << shift
+  |                  ^^ two different types
+  |
+  = help: nothing converts on its own, so give both sides one type
+

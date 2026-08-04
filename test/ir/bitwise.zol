@@ -1,0 +1,28 @@
+fn masks(value: u32, mask: u32, shift: u32) u32 {
+    let anded = value & mask
+    let ored = value | mask
+    let xored = value ^ mask
+    let left = value << shift
+    let right = value >> shift
+    return anded + ored + xored + left + right
+}
+
+fn complemented(value: u8) u8 {
+    return ~value
+}
+
+fn folded() u8 {
+    let all = 0xf0 | 0x0f
+    let low = all & 0x0f
+    let flipped = all ^ 0xff
+    let up = 1 << 6
+    let down = 128 >> 3
+    return low + flipped + up + down
+}
+
+fn folded_complement() i64 {
+    let mask: u8 = 0x0f
+    let narrow = ~mask
+    let wide = ~0
+    return wide + 1 - 1
+}

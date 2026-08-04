@@ -1,0 +1,40 @@
+fn on_a_var(n: i64) i64
+b0:
+  %0 = param n : i64
+  %1 = local total : *var i64
+  %2 = store %1, 0:i64
+  %3 = load %1 : i64
+  %4 = add %3, %0 : i64
+  %5 = store %1, %4
+  %6 = load %1 : i64
+  %7 = mul %6, 2:i64 : i64
+  %8 = store %1, %7
+  %9 = load %1 : i64
+  %10 = sub %9, 1:i64 : i64
+  %11 = store %1, %10
+  %12 = load %1 : i64
+  return %12
+
+fn on_a_field(holder: *var Holder, n: i64) i64
+b0:
+  %0 = param holder : *var Holder
+  %1 = param n : i64
+  %2 = field_ptr %0, .count : *var i64
+  %3 = load %2 : i64
+  %4 = add %3, %1 : i64
+  %5 = store %2, %4
+  %6 = field_ptr %0, .count : *var i64
+  %7 = load %6 : i64
+  return %7
+
+fn through_a_pointer(p: *var i64) i64
+b0:
+  %0 = param p : *var i64
+  %1 = load %0 : i64
+  %2 = shift_left %1, 1:i64 : i64
+  %3 = store %0, %2
+  %4 = load %0 : i64
+  %5 = bit_or %4, 1:i64 : i64
+  %6 = store %0, %5
+  %7 = load %0 : i64
+  return %7

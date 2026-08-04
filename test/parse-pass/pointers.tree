@@ -1,0 +1,56 @@
+root
+  fn_decl read
+    param p
+      type: pointer_type
+        child: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: deref
+          child: ident p
+  fn_decl write
+    param p
+      type: pointer_type var
+        child: ident i64
+    param value
+      type: ident i64
+    body: block
+      assign =
+        lhs: deref
+          child: ident p
+        rhs: ident value
+  fn_decl through_a_field
+    param p
+      type: pointer_type var
+        child: ident Holder
+    ret: ident i64
+    body: block
+      assign =
+        lhs: field_access field
+          lhs: ident p
+        rhs: number_literal 1
+      return_expr
+        value: field_access field
+          lhs: ident p
+  fn_decl address_then_read
+    param value
+      type: ident i64
+    ret: ident i64
+    body: block
+      var_decl p let
+        init: unary address_of
+          operand: ident value
+      return_expr
+        value: deref
+          child: ident p
+  fn_decl chained_deref
+    param pp
+      type: pointer_type
+        child: pointer_type
+          child: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: deref
+          child: deref
+            child: ident pp

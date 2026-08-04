@@ -1,0 +1,30 @@
+fn read(p: *i64) i64
+b0:
+  %0 = param p : *i64
+  %1 = load %0 : i64
+  return %1
+
+fn write(p: *var i64, value: i64)
+b0:
+  %0 = param p : *var i64
+  %1 = param value : i64
+  %2 = store %0, %1
+  return
+
+fn round_trip(value: i64) i64
+b0:
+  %0 = param value : i64
+  %1 = local slot : *var i64
+  %2 = store %1, %0
+  %3 = load %1 : i64
+  %4 = add %3, 1:i64 : i64
+  %5 = store %1, %4
+  %6 = load %1 : i64
+  return %6
+
+fn twice(pp: **i64) i64
+b0:
+  %0 = param pp : **i64
+  %1 = load %0 : *i64
+  %2 = load %1 : i64
+  return %2

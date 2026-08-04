@@ -43,14 +43,14 @@ root
         cond: ident opt
         capture: capture v
         then: block
-          assign
+          assign =
             lhs: ident _
             rhs: ident v
       var_decl nothing let
         type: optional_type
           child: ident i64
         init: null_literal
-      assign
+      assign =
         lhs: ident _
         rhs: ident nothing
   fn_decl walk
@@ -68,13 +68,13 @@ root
         cond: ident next
         capture: capture cell
         body: block
-          assign
+          assign =
             lhs: ident total
             rhs: binary add
               lhs: ident total
               rhs: field_access value
                 lhs: ident cell
-          assign
+          assign =
             lhs: ident next
             rhs: field_access next
               lhs: ident cell

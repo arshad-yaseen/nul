@@ -63,28 +63,28 @@ root
           rhs: ident grouped
   fn_decl literals
     body: block
-      assign
+      assign =
         lhs: ident _
         rhs: number_literal 123
-      assign
+      assign =
         lhs: ident _
         rhs: number_literal 1.5
-      assign
+      assign =
         lhs: ident _
         rhs: number_literal 0xFF
-      assign
+      assign =
         lhs: ident _
         rhs: number_literal 1_000_000
-      assign
+      assign =
         lhs: ident _
         rhs: number_literal 1e10
-      assign
+      assign =
         lhs: ident _
         rhs: bool_literal true
-      assign
+      assign =
         lhs: ident _
         rhs: bool_literal false
-      assign
+      assign =
         lhs: ident _
         rhs: null_literal
   fn_decl calls
@@ -93,39 +93,39 @@ root
     param value
       type: ident Node
     body: block
-      assign
+      assign =
         lhs: ident _
         rhs: call
           callee: ident f
-      assign
-        lhs: ident _
-        rhs: call
-          callee: ident f
-          arg: number_literal 1
-          arg: number_literal 2
-      assign
+      assign =
         lhs: ident _
         rhs: call
           callee: ident f
           arg: number_literal 1
           arg: number_literal 2
-      assign
+      assign =
+        lhs: ident _
+        rhs: call
+          callee: ident f
+          arg: number_literal 1
+          arg: number_literal 2
+      assign =
         lhs: ident _
         rhs: field_access field
           lhs: ident value
-      assign
+      assign =
         lhs: ident _
         rhs: call
           callee: field_access method
             lhs: ident value
           arg: number_literal 1
-      assign
+      assign =
         lhs: ident _
         rhs: call
           callee: field_access method
             lhs: ident Node
           arg: ident value
-      assign
+      assign =
         lhs: ident _
         rhs: field_access c
           lhs: field_access b

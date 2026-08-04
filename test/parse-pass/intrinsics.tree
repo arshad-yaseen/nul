@@ -8,7 +8,7 @@ root
     body: block
       return_expr
         value: call
-          callee: instance
+          callee: bracket
             base: field_access ptr_cast
               lhs: intrinsic
             arg: ident i64
@@ -22,12 +22,12 @@ root
     body: block
       return_expr
         value: call
-          callee: instance
+          callee: bracket
             base: field_access ptr_cast
               lhs: intrinsic
             arg: ident i64
           arg: call
-            callee: instance
+            callee: bracket
               base: field_access ptr_cast
                 lhs: intrinsic
               arg: ident u8
@@ -42,7 +42,7 @@ root
         value: call
           callee: ident take
           arg: call
-            callee: instance
+            callee: bracket
               base: field_access ptr_cast
                 lhs: intrinsic
               arg: ident i64

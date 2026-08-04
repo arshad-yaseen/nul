@@ -31,6 +31,18 @@ fn first(maybe: ?i64) i64 {
     return 0
 }
 
+fn packed_flags(low: u32, high: u32) u32 {
+    var bits: u32 = low & 0xffff
+    bits |= high << 16
+    bits ^= ~low
+    return bits >> 1
+}
+
+fn bump_through(slot: *var i64) i64 {
+    slot.* += 1
+    return slot.*
+}
+
 pub fn main() i64 {
     var counter: Counter = .{ hits: 0, label: 7 }
     defer counter.bump()
@@ -44,7 +56,13 @@ pub fn main() i64 {
         counter.bump()
     }
 
-    let boxed: Box[i64] = .{ item: counter.read() }
+    let boxed: Box[i64] = .{ item: counter
+        .read() }
     let safe = checked(boxed.item) catch 0
-    return safe + first(null) + first(41)
+
+    var slot: i64 = 0
+    _ = bump_through(&slot)
+    _ = packed_flags(1, 2)
+
+    return safe + first(null) + first(41) + slot
 }

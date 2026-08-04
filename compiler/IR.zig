@@ -123,6 +123,12 @@ pub const Inst = struct {
         mul,
         div,
         mod,
+        bit_and,
+        bit_or,
+        bit_xor,
+        shift_left,
+        /// Arithmetic, so a negative value keeps its sign.
+        shift_right,
         cmp_eq,
         cmp_ne,
         cmp_lt,
@@ -130,9 +136,10 @@ pub const Inst = struct {
         cmp_gt,
         cmp_ge,
 
-        // both `un`
+        // all `un`
         negate,
         not,
+        bit_not,
 
         /// Uses `un`. Retypes a pointer and emits nothing.
         ptr_cast,

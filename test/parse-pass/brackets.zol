@@ -1,0 +1,20 @@
+fn instantiated(box: Box[i64], pair: Pair[bool, i64]) Box[i64] {
+    return box
+}
+
+fn nested(box: Box[Box[i64]], pointers: Box[*var i64], maybe: Box[?i64]) i64 {
+    return 0
+}
+
+fn indexed(row: Row, at: i64) i64 {
+    return row[at] + row[at + 1]
+}
+
+fn explicit_type_arguments(value: i64) i64 {
+    return identity[i64](value)
+}
+
+fn assigned_into(row: Row, at: i64) {
+    row[at] = 1
+    row[at] += 1
+}

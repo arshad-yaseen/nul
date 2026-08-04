@@ -1,0 +1,2 @@
+let too_far = 1 << 200
+let backwards = 1 << -1

@@ -7,8 +7,14 @@ const Token = @import("Token.zig");
 
 source: [:0]const u8,
 cursor: u32,
-/// The last tag returned, for the newline rule.
+/// The last tag returned. A comment never lands here, so a line ends where it
+/// would have without one.
 previous: Token.Tag,
+/// The line break that ended a statement, held back until the next token says
+/// whether a selector continues the line.
+pending: u32,
+
+const no_pending = std.math.maxInt(u32);
 
 pub const TokenList = std.MultiArrayList(Token);
 
@@ -29,7 +35,7 @@ pub fn init(source: [:0]const u8) Tokenizer {
     assert(source.len <= Source.bytes_max);
 
     const bom: u32 = if (std.mem.startsWith(u8, source, "\xEF\xBB\xBF")) 3 else 0;
-    return .{ .source = source, .cursor = bom, .previous = .semi };
+    return .{ .source = source, .cursor = bom, .previous = .semi, .pending = no_pending };
 }
 
 /// Comments are set aside, so the parser never meets one.
@@ -69,61 +75,79 @@ fn commentKind(tag: Token.Tag) ?Comment.Kind {
     };
 }
 
-/// The next token, cursor left just past it.
+/// The next token, with the `;` a line break stands for put in front of the
+/// token that proved the statement had ended.
 pub fn next(tokenizer: *Tokenizer) Token {
+    const token = tokenizer.scan();
+    switch (token.tag) {
+        .comment, .doc_comment, .file_doc_comment => return token,
+        // a line that opens with a selector continues the line above
+        .dot, .dot_star => {},
+        else => if (tokenizer.insertedSemi(token)) |semi| return semi,
+    }
+
+    tokenizer.pending = no_pending;
+    tokenizer.previous = token.tag;
+    return token;
+}
+
+fn insertedSemi(tokenizer: *Tokenizer, token: Token) ?Token {
+    var start = tokenizer.pending;
+    if (start == no_pending) {
+        // a file with no trailing newline still ends its last statement
+        if (token.tag != .eof) return null;
+        if (Token.endsStatement(tokenizer.previous) == false) return null;
+        start = token.start;
+    }
+    assert(start <= token.start);
+
+    tokenizer.pending = no_pending;
+    tokenizer.previous = .semi;
+    // the token that follows is scanned again on the next call
+    tokenizer.cursor = token.start;
+    return .{ .tag = .semi, .start = start };
+}
+
+/// One token as it is written, cursor left just past it.
+fn scan(tokenizer: *Tokenizer) Token {
     assert(tokenizer.cursor <= tokenizer.source.len);
 
     const source = tokenizer.source;
     var cursor = tokenizer.cursor;
-    var start = cursor;
 
+    while (true) {
+        switch (source[cursor]) {
+            ' ', '\t', '\r' => cursor += 1,
+            '\n' => {
+                const ends = Token.endsStatement(tokenizer.previous);
+                if (ends and tokenizer.pending == no_pending) tokenizer.pending = cursor;
+                cursor += 1;
+            },
+            else => break,
+        }
+    }
+
+    const start = cursor;
     const tag: Token.Tag = state: switch (State.start) {
         .start => switch (source[cursor]) {
-            ' ', '\t', '\r' => {
-                while (is_blank[source[cursor]]) cursor += 1;
-                start = cursor;
-                continue :state .start;
-            },
             0 => {
                 if (cursor != source.len) continue :state .invalid;
-                // a file with no trailing newline still ends its last statement
-                if (Token.endsStatement(tokenizer.previous)) break :state .semi;
                 break :state .eof;
             },
-            '\n' => {
-                cursor += 1;
-                if (Token.endsStatement(tokenizer.previous)) break :state .semi;
-                start = cursor;
-                continue :state .start;
-            },
-
-            '(' => break :state step(&cursor, .l_paren),
-            ')' => break :state step(&cursor, .r_paren),
-            '{' => break :state step(&cursor, .l_brace),
-            '}' => break :state step(&cursor, .r_brace),
-            '[' => break :state step(&cursor, .l_bracket),
-            ']' => break :state step(&cursor, .r_bracket),
-            ',' => break :state step(&cursor, .comma),
-            '.' => break :state step(&cursor, .dot),
-            ':' => break :state step(&cursor, .colon),
-            ';' => break :state step(&cursor, .semi),
-            '|' => break :state step(&cursor, .pipe),
-            '&' => break :state step(&cursor, .ampersand),
-            '?' => break :state step(&cursor, .question),
-            '+' => break :state step(&cursor, .plus),
-            '-' => break :state step(&cursor, .minus),
-            '*' => break :state step(&cursor, .star),
-            '%' => break :state step(&cursor, .percent),
-
             'a'...'z', 'A'...'Z', '_' => continue :state .ident,
             '0'...'9' => continue :state .number,
-            '=' => break :state pair(source, &cursor, '=', .eq_eq, .eq),
-            '!' => break :state pair(source, &cursor, '=', .bang_eq, .bang),
-            '<' => break :state pair(source, &cursor, '=', .lt_eq, .lt),
-            '>' => break :state pair(source, &cursor, '=', .gt_eq, .gt),
+            // `//` opens a comment, so `/` cannot go through the table below
             '/' => continue :state .slash,
-
-            else => continue :state .invalid,
+            else => {
+                for (Token.punctuation[source[cursor]].candidates()) |candidate| {
+                    const text = candidate.lexeme().?;
+                    if (std.mem.startsWith(u8, source[cursor..], text)) {
+                        cursor += @intCast(text.len);
+                        break :state candidate;
+                    }
+                }
+                continue :state .invalid;
+            },
         },
 
         .ident => {
@@ -159,6 +183,10 @@ pub fn next(tokenizer: *Tokenizer) Token {
             assert(source[cursor] == '/');
             cursor += 1;
             if (source[cursor] == '/') continue :state .comment_start;
+            if (source[cursor] == '=') {
+                cursor += 1;
+                break :state .slash_eq;
+            }
             break :state .slash;
         },
 
@@ -174,7 +202,6 @@ pub fn next(tokenizer: *Tokenizer) Token {
             continue :state .line_comment;
         },
 
-        // restart so the newline rules see the pre-comment `previous`
         .line_comment => {
             cursor = endOfLine(source, cursor);
             break :state .comment;
@@ -203,19 +230,9 @@ pub fn next(tokenizer: *Tokenizer) Token {
 
     assert(cursor <= source.len);
     assert(start <= cursor);
-
-    // every token consumes input, except a `.semi` inserted at end of file
-    if (cursor == tokenizer.cursor) {
-        assert(tag == .semi or tag == .eof);
-        assert(cursor == source.len);
-    }
+    if (cursor == start) assert(tag == .eof);
 
     tokenizer.cursor = cursor;
-    // a comment is transparent, so a line ends where it would have without one
-    switch (tag) {
-        .comment, .doc_comment, .file_doc_comment => {},
-        else => tokenizer.previous = tag,
-    }
     return .{ .tag = tag, .start = start };
 }
 
@@ -226,9 +243,14 @@ pub fn tokenEnd(source: [:0]const u8, tag: Token.Tag, start: u32) u32 {
     if (tag.lexeme()) |text| return start + @as(u32, @intCast(text.len));
     if (tag == .eof) return start;
 
-    var tokenizer: Tokenizer = .{ .source = source, .cursor = start, .previous = .semi };
-    _ = tokenizer.next();
-
+    var tokenizer: Tokenizer = .{
+        .source = source,
+        .cursor = start,
+        .previous = .semi,
+        .pending = no_pending,
+    };
+    const token = tokenizer.next();
+    assert(token.tag == tag);
     assert(tokenizer.cursor >= start);
     return tokenizer.cursor;
 }
@@ -246,31 +268,6 @@ const State = enum {
     invalid,
 };
 
-/// A one byte token.
-fn step(cursor: *u32, tag: Token.Tag) Token.Tag {
-    assert(tag.lexeme() != null);
-    assert(tag.lexeme().?.len == 1);
-    cursor.* += 1;
-    return tag;
-}
-
-/// One byte, or two when `second` follows.
-fn pair(
-    source: [:0]const u8,
-    cursor: *u32,
-    second: u8,
-    if_paired: Token.Tag,
-    if_alone: Token.Tag,
-) Token.Tag {
-    assert(if_paired.lexeme().?.len == 2);
-    assert(if_alone.lexeme().?.len == 1);
-
-    cursor.* += 1;
-    if (source[cursor.*] != second) return if_alone;
-    cursor.* += 1;
-    return if_paired;
-}
-
 /// Bounded by `Source.bytes_max`, which keeps every offset a `u32`.
 pub fn endOfLine(source: [:0]const u8, from: u32) u32 {
     assert(from <= source.len);
@@ -279,10 +276,16 @@ pub fn endOfLine(source: [:0]const u8, from: u32) u32 {
     return @intCast(newline);
 }
 
-const is_blank = classOf(" \t\r");
 const is_ident = classOf("_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
-const is_token_start = classOf(" \t\r\n_0123456789abcdefghijklmnopqrstuvwxyz" ++
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ(){}[],.:;|&?=!<>+-*/%");
+
+/// Where a run of invalid bytes stops. Derived, so a new operator joins it.
+const is_token_start = build: {
+    var table = classOf(" \t\r\n_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    for (Token.punctuation, 0..) |group, byte| {
+        if (group.count > 0) table[byte] = true;
+    }
+    break :build table;
+};
 
 fn classOf(comptime members: []const u8) [256]bool {
     comptime assert(members.len > 0);

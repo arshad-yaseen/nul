@@ -1,0 +1,2 @@
+let edge: i8 = -128
+let flipped = -edge

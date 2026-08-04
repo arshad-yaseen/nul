@@ -11,6 +11,25 @@
   anywhere else.
 - `intrinsic.ptr_cast[T](pointer)` retypes a pointer. It keeps what the
   pointer may do, so a read-only pointer cannot become one that writes.
+- Bitwise operators `&`, `|`, `^`, `~`, `<<`, and `>>`, for integers. `&` is
+  address-of before a value and bitwise and between two, told apart by where
+  it sits, the way `-` already was.
+- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>=`, which reads its place
+  once.
+- `p.*` reads what a pointer points at, and is a place when the pointer is
+  `*var T`.
+- `a[i]` indexes, and carries type arguments where the base is generic.
+- `defer` takes what a statement takes: a call, an assignment, or a block.
+- A line that opens with `.` continues the line above, so a method chain may
+  wrap across lines.
+- Bitwise operators bind tighter than comparison, so `flags & mask == 0` groups
+  as `(flags & mask) == 0`.
+- A message names an operator the way source writes it. `'-' cannot be applied
+  to bool`, not `'sub'`.
+- A method without `pub` is private to its file, the way every other
+  declaration already was.
+- `-x` on the smallest value of a signed type reports that it does not fit,
+  where it used to crash the compiler.
 
 ## [0.1.0] - 2026-08-04
 

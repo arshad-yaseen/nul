@@ -1,0 +1,18 @@
+fn read(p: *i64) i64 {
+    return p.*
+}
+
+fn write(p: *var i64, value: i64) {
+    p.* = value
+}
+
+fn round_trip(value: i64) i64 {
+    var slot: i64 = value
+    let p = &slot
+    p.* = p.* + 1
+    return slot
+}
+
+fn twice(pp: **i64) i64 {
+    return pp.*.*
+}

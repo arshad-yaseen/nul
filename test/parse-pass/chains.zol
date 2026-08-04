@@ -1,0 +1,22 @@
+fn wrapped(value: Builder) i64 {
+    return value
+        .first()
+        .second()
+        .third
+}
+
+fn across_blank_lines(value: Builder) i64 {
+    return value
+
+        .first()
+}
+
+fn across_comments(value: Builder) i64 {
+    return value
+        // the chain carries on
+        .first()
+}
+
+fn on_one_line(value: Builder) i64 {
+    return value.first().second().third
+}

@@ -1,0 +1,43 @@
+root
+  fn_decl wrapped
+    param value
+      type: ident Builder
+    ret: ident i64
+    body: block
+      return_expr
+        value: field_access third
+          lhs: call
+            callee: field_access second
+              lhs: call
+                callee: field_access first
+                  lhs: ident value
+  fn_decl across_blank_lines
+    param value
+      type: ident Builder
+    ret: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: field_access first
+            lhs: ident value
+  fn_decl across_comments
+    param value
+      type: ident Builder
+    ret: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: field_access first
+            lhs: ident value
+  fn_decl on_one_line
+    param value
+      type: ident Builder
+    ret: ident i64
+    body: block
+      return_expr
+        value: field_access third
+          lhs: call
+            callee: field_access second
+              lhs: call
+                callee: field_access first
+                  lhs: ident value

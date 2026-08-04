@@ -1,0 +1,6 @@
+error[E0208]: 128 does not fit in i8
+ --> test/fail/negate_edge.zol:2:15
+  |
+2 | let flipped = -edge
+  |               ^ past the type's edge
+

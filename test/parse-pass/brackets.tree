@@ -1,0 +1,82 @@
+root
+  fn_decl instantiated
+    param box
+      type: bracket
+        base: ident Box
+        arg: ident i64
+    param pair
+      type: bracket
+        base: ident Pair
+        arg: ident bool
+        arg: ident i64
+    ret: bracket
+      base: ident Box
+      arg: ident i64
+    body: block
+      return_expr
+        value: ident box
+  fn_decl nested
+    param box
+      type: bracket
+        base: ident Box
+        arg: bracket
+          base: ident Box
+          arg: ident i64
+    param pointers
+      type: bracket
+        base: ident Box
+        arg: pointer_type var
+          child: ident i64
+    param maybe
+      type: bracket
+        base: ident Box
+        arg: optional_type
+          child: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: number_literal 0
+  fn_decl indexed
+    param row
+      type: ident Row
+    param at
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: binary add
+          lhs: bracket
+            base: ident row
+            arg: ident at
+          rhs: bracket
+            base: ident row
+            arg: binary add
+              lhs: ident at
+              rhs: number_literal 1
+  fn_decl explicit_type_arguments
+    param value
+      type: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: bracket
+            base: ident identity
+            arg: ident i64
+          arg: ident value
+  fn_decl assigned_into
+    param row
+      type: ident Row
+    param at
+      type: ident i64
+    body: block
+      assign =
+        lhs: bracket
+          base: ident row
+          arg: ident at
+        rhs: number_literal 1
+      assign +=
+        lhs: bracket
+          base: ident row
+          arg: ident at
+        rhs: number_literal 1

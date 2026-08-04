@@ -1,0 +1,23 @@
+fn every_form(n: i64) i64 {
+    var total: i64 = n
+    defer total = 0
+    defer total += 1
+    defer {
+        total *= 2
+        total -= 1
+    }
+    return total
+}
+
+struct Counter {
+    hits: i64
+
+    fn bump(self: *var Counter) {
+        self.hits += 1
+    }
+}
+
+fn a_call(counter: *var Counter) i64 {
+    defer counter.bump()
+    return counter.hits
+}

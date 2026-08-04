@@ -329,7 +329,7 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
                 },
             }
         },
-        .instance => return check.resolveTypeInstance(node),
+        .bracket => return check.resolveBracketType(node),
         .pointer_type => |pointer| {
             const child = try check.resolveType(pointer.child);
             if (child == .poison) return .poison;
@@ -367,8 +367,15 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
             return comp.pool.intern(comp.gpa, .{ .type_error_union = child });
         },
         .err => return .poison,
-        // the parser builds only type nodes in type positions
-        else => unreachable,
+        // a bracket item arrives as an expression until its base says otherwise
+        else => {
+            try check.fail(node, .{
+                .code = .not_a_type,
+                .message = "this is a value, and a type belongs here",
+                .label = "not a type",
+            });
+            return .poison;
+        },
     }
 }
 
@@ -451,9 +458,10 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
     }
 }
 
-fn resolveTypeInstance(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
+/// Needs the base to name a generic struct.
+fn resolveBracketType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
-    const view = check.tree.viewOf(node).instance;
+    const view = check.tree.viewOf(node).bracket;
 
     const base = try check.checkExpr(view.base, null);
     const decl_index = switch (base) {
@@ -816,12 +824,11 @@ fn unwindScopesTo(check: *Check, target: u32) Allocator.Error!void {
 
 fn emitDefer(check: *Check, node: Node.Index) Allocator.Error!void {
     const builder = check.builder.?;
-    assert(builder.in_defer == false);
+    const outer = builder.in_defer;
 
     builder.in_defer = true;
-    defer builder.in_defer = false;
-    const value = try check.checkExpr(node, null);
-    try check.expectNothing(node, value);
+    defer builder.in_defer = outer;
+    try check.checkStatement(node);
 }
 
 fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator.Error!void {
@@ -947,7 +954,7 @@ fn checkStatement(check: *Check, node: Node.Index) Allocator.Error!void {
         .var_decl => try check.checkVarDecl(node),
         .assign => |assign| try check.checkAssign(assign),
         .while_stmt => |view| try check.checkWhile(view),
-        .defer_stmt => |expr| try check.checkDefer(expr),
+        .defer_stmt => |body| try check.checkDefer(body),
         .err => {},
         // a void hint tells an `if` or a `catch` to drop its value
         else => {
@@ -1103,32 +1110,10 @@ fn declarePoisoned(check: *Check, name: Pool.String, node: Node.Index) Allocator
     }, node);
 }
 
-fn checkAssign(check: *Check, assign: AST.View.Pair) Allocator.Error!void {
-    if (check.tree.nodeTag(assign.lhs) == .ident) {
+fn checkAssign(check: *Check, assign: AST.View.Assign) Allocator.Error!void {
+    if (assign.op == null and check.tree.nodeTag(assign.lhs) == .ident) {
         const text = check.tree.tokenSlice(check.tree.nodeMainToken(assign.lhs));
-        if (std.mem.eql(u8, text, "_")) {
-            // `_ = e` drops the value, and a failure is not a value
-            const value = try check.checkExpr(assign.rhs, null);
-            switch (value) {
-                .constant, .runtime, .poison, .diverged => {},
-                else => {
-                    try check.reportNotValue(assign.rhs, value);
-                    return;
-                },
-            }
-            const found = check.typeOf(value);
-            if (found == .poison) return;
-            if (check.comp.pool.keyOf(found) == .type_error_union) {
-                try check.fail(assign.rhs, .{
-                    .code = .error_ignored,
-                    .message = "this can fail, and '_ =' drops only the value",
-                    .label = "the failure is still unhandled",
-                    .help = "'try' passes it up, and 'catch' settles it here, " ++
-                        "as in '_ = f() catch 0'",
-                });
-            }
-            return;
-        }
+        if (std.mem.eql(u8, text, "_")) return check.checkDiscard(assign.rhs);
     }
 
     const place = try check.checkPlace(assign.lhs) orelse {
@@ -1140,12 +1125,51 @@ fn checkAssign(check: *Check, assign: AST.View.Pair) Allocator.Error!void {
         _ = try check.checkExpr(assign.rhs, place.type);
         return;
     }
-
     assert(place.kind == .address);
-    const value = try check.checkExpr(assign.rhs, place.type);
+    if (place.type == .poison) return;
+
+    const value: Value = if (assign.op) |op| folded: {
+        // the place is read once, worked on, and written back
+        const held = try check.placeValue(place);
+        const rhs = try check.checkExpr(assign.rhs, place.type);
+        if (rhs == .diverged) return;
+        if (try check.valueOnly(assign.rhs, rhs) == false) return;
+
+        break :folded try check.combine(.{
+            .op = op,
+            .op_token = assign.op_token,
+            .lhs = runtimeValue(held, place.type),
+            .lhs_node = assign.lhs,
+            .rhs = rhs,
+            .rhs_node = assign.rhs,
+        });
+    } else try check.checkExpr(assign.rhs, place.type);
+
     const met = try check.coerce(value, place.type, assign.rhs);
     if (met == .poison) return;
     try check.emitStore(place.ref, refOf(met));
+}
+
+/// `_ = e` drops a value on purpose.
+fn checkDiscard(check: *Check, rhs: Node.Index) Allocator.Error!void {
+    const value = try check.checkExpr(rhs, null);
+    switch (value) {
+        .constant, .runtime, .poison, .diverged => {},
+        else => return check.reportNotValue(rhs, value),
+    }
+    const found = check.typeOf(value);
+    if (found == .poison) return;
+
+    // a failure is not a value, so dropping the value leaves it unhandled
+    if (check.comp.pool.keyOf(found) == .type_error_union) {
+        try check.fail(rhs, .{
+            .code = .error_ignored,
+            .message = "this can fail, and '_ =' drops only the value",
+            .label = "the failure is still unhandled",
+            .help = "'try' passes it up, and 'catch' settles it here, " ++
+                "as in '_ = f() catch 0'",
+        });
+    }
 }
 
 fn checkIf(
@@ -1545,8 +1569,8 @@ fn checkLoopJump(check: *Check, node: Node.Index, jump: LoopJump) Allocator.Erro
     return .diverged;
 }
 
-fn checkDefer(check: *Check, expr: Node.Index) Allocator.Error!void {
-    try check.builder.?.defer_nodes.append(check.comp.gpa, expr);
+fn checkDefer(check: *Check, body: Node.Index) Allocator.Error!void {
+    try check.builder.?.defer_nodes.append(check.comp.gpa, body);
 }
 
 /// A statement expression must amount to nothing.
@@ -1628,8 +1652,9 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .binary => |view| return check.checkBinary(view),
         .unary => |view| return check.checkUnary(view),
         .field_access => |view| return check.checkFieldAccess(node, view),
+        .deref => return check.checkDeref(node),
         .call => return check.checkCall(node),
-        .instance => |view| return check.checkInstanceExpr(node, view),
+        .bracket => |view| return check.checkBracketExpr(node, view),
         .struct_literal => return check.checkStructLiteral(node, hint),
         .try_expr => |operand| return check.checkTry(node, operand),
         .orelse_expr => |view| return check.checkOrelse(node, view, hint),
@@ -1775,6 +1800,16 @@ fn reportBadNumber(check: *Check, node: Node.Index, text: []const u8) Allocator.
     });
 }
 
+/// Two checked operands and the operator between them.
+const Operation = struct {
+    op: AST.BinaryOp,
+    op_token: Token.Index,
+    lhs: Value,
+    lhs_node: Node.Index,
+    rhs: Value,
+    rhs_node: Node.Index,
+};
+
 fn checkBinary(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
     if (view.op == .bool_and or view.op == .bool_or) {
         return check.checkShortCircuit(view);
@@ -1787,92 +1822,101 @@ fn checkBinary(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
     if (try check.valueOnly(view.lhs, lhs) == false) return .poison;
     if (try check.valueOnly(view.rhs, rhs) == false) return .poison;
 
-    if (lhs == .constant and rhs == .constant) {
-        return check.foldBinary(view, lhs.constant, rhs.constant);
-    }
-    return check.emitBinary(view, lhs, rhs);
+    return check.combine(.{
+        .op = view.op,
+        .op_token = view.op_token,
+        .lhs = lhs,
+        .lhs_node = view.lhs,
+        .rhs = rhs,
+        .rhs_node = view.rhs,
+    });
 }
 
-/// Every edge is reported at the operator.
-fn foldBinary(
-    check: *Check,
-    view: AST.View.Binary,
-    lhs: Pool.Index,
-    rhs: Pool.Index,
-) Allocator.Error!Value {
+/// Folded when both sides are constants, emitted otherwise.
+fn combine(check: *Check, it: Operation) Allocator.Error!Value {
     const comp = check.comp;
-    const folded = try comp.pool.fold(comp.gpa, view.op, lhs, rhs);
-    switch (folded) {
+    assert(it.op != .bool_and);
+    assert(it.op != .bool_or);
+
+    if (it.lhs == .constant and it.rhs == .constant) {
+        const folded = try comp.pool.fold(comp.gpa, it.op, it.lhs.constant, it.rhs.constant);
+        return check.settleFold(it.op_token, folded);
+    }
+    return check.emitBinary(it);
+}
+
+/// Every edge of a fold reports at the operator.
+fn settleFold(check: *Check, op_token: Token.Index, folded: Pool.Fold) Allocator.Error!Value {
+    const comp = check.comp;
+    const spelling = check.tree.tokenSlice(op_token);
+    const report: Compilation.Report = switch (folded) {
         .value => |value| return .{ .constant = value },
-        .overflow => {
-            try check.failToken(view.op_token, .{
-                .code = .overflow,
-                .message = "this overflows the 128 bits constants fold in",
-                .label = "too large",
-            });
-            return .poison;
+        .overflow => .{
+            .code = .overflow,
+            .message = "this overflows the 128 bits constants fold in",
+            .label = "too large",
         },
-        .division_by_zero => {
-            try check.failToken(view.op_token, .{
-                .code = .division_by_zero,
-                .message = "this divides by zero",
-                .label = "the divisor is zero",
-            });
-            return .poison;
+        .division_by_zero => .{
+            .code = .division_by_zero,
+            .message = "this divides by zero",
+            .label = "the divisor is zero",
         },
-        .does_not_fit => |missed| {
-            try check.failToken(view.op_token, .{
-                .code = .does_not_fit,
-                .message = try comp.fmt("{d} does not fit in {s}", .{
-                    missed.value,
-                    try comp.typeName(missed.type),
-                }),
-                .label = "past the type's edge",
-            });
-            return .poison;
+        .bad_shift => |amount| .{
+            .code = .bad_shift,
+            .message = try comp.fmt("a shift counts from 0 to {d}, and this shifts by {d}", .{
+                Pool.fold_bits - 1,
+                amount,
+            }),
+            .label = "not a shift count",
         },
-        .mismatch => |pair| {
-            try check.failToken(view.op_token, .{
-                .code = .mixed_types,
-                .message = try comp.fmt("'{t}' mixes {s} and {s}", .{
-                    view.op,
-                    try comp.typeName(pair.left),
-                    try comp.typeName(pair.right),
-                }),
-                .label = "two different types",
-                .help = "nothing converts on its own, so give both sides one type",
-            });
-            return .poison;
+        .does_not_fit => |missed| .{
+            .code = .does_not_fit,
+            .message = try comp.fmt("{d} does not fit in {s}", .{
+                missed.value,
+                try comp.typeName(missed.type),
+            }),
+            .label = "past the type's edge",
         },
-        .bad_operand => |operand_type| {
-            try check.reportBadOperand(view.op_token, view.op, operand_type);
-            return .poison;
+        .mismatch => |pair| .{
+            .code = .mixed_types,
+            .message = try comp.fmt("'{s}' mixes {s} and {s}", .{
+                spelling,
+                try comp.typeName(pair.left),
+                try comp.typeName(pair.right),
+            }),
+            .label = "two different types",
+            .help = "nothing converts on its own, so give both sides one type",
         },
-    }
+        .bad_operand => |operand_type| .{
+            .code = .bad_operand,
+            .message = try comp.fmt("'{s}' cannot be applied to {s}", .{
+                spelling,
+                try comp.typeName(operand_type),
+            }),
+            .label = "wrong operand type",
+        },
+    };
+    try check.failToken(op_token, report);
+    return .poison;
 }
 
-fn emitBinary(
-    check: *Check,
-    view: AST.View.Binary,
-    lhs_in: Value,
-    rhs_in: Value,
-) Allocator.Error!Value {
+fn emitBinary(check: *Check, it: Operation) Allocator.Error!Value {
     const comp = check.comp;
-    var lhs = lhs_in;
-    var rhs = rhs_in;
+    var lhs = it.lhs;
+    var rhs = it.rhs;
 
     // a constant takes the runtime side's type
-    if (lhs == .constant) lhs = try check.coerce(lhs, check.typeOf(rhs), view.lhs);
-    if (rhs == .constant) rhs = try check.coerce(rhs, check.typeOf(lhs), view.rhs);
+    if (lhs == .constant) lhs = try check.coerce(lhs, check.typeOf(rhs), it.lhs_node);
+    if (rhs == .constant) rhs = try check.coerce(rhs, check.typeOf(lhs), it.rhs_node);
     if (lhs == .poison or rhs == .poison) return .poison;
 
     const left = check.typeOf(lhs);
     const right = check.typeOf(rhs);
     if (left != right) {
-        try check.failToken(view.op_token, .{
+        try check.failToken(it.op_token, .{
             .code = .mixed_types,
-            .message = try comp.fmt("'{t}' mixes {s} and {s}", .{
-                view.op,
+            .message = try comp.fmt("'{s}' mixes {s} and {s}", .{
+                check.tree.tokenSlice(it.op_token),
                 try comp.typeName(left),
                 try comp.typeName(right),
             }),
@@ -1882,25 +1926,32 @@ fn emitBinary(
         return .poison;
     }
 
-    const admissible = switch (view.op) {
+    const admissible = switch (it.op) {
         .add, .sub, .mul, .div => Pool.isNumeric(left),
         .mod => Pool.isInteger(left),
+        .bit_and, .bit_or, .bit_xor => Pool.isInteger(left),
+        .shift_left, .shift_right => Pool.isInteger(left),
         .less_than, .less_or_equal, .greater_than, .greater_or_equal => Pool.isNumeric(left),
         .equal, .not_equal => Pool.isNumeric(left) or left == .bool_type or
             left == .error_type,
         .bool_and, .bool_or => unreachable,
     };
     if (admissible == false) {
-        try check.reportBadOperand(view.op_token, view.op, left);
+        try check.reportBadOperand(it.op_token, left);
         return .poison;
     }
 
-    const tag: IR.Inst.Tag = switch (view.op) {
+    const tag: IR.Inst.Tag = switch (it.op) {
         .add => .add,
         .sub => .sub,
         .mul => .mul,
         .div => .div,
         .mod => .mod,
+        .bit_and => .bit_and,
+        .bit_or => .bit_or,
+        .bit_xor => .bit_xor,
+        .shift_left => .shift_left,
+        .shift_right => .shift_right,
         .equal => .cmp_eq,
         .not_equal => .cmp_ne,
         .less_than => .cmp_lt,
@@ -1909,8 +1960,9 @@ fn emitBinary(
         .greater_or_equal => .cmp_ge,
         .bool_and, .bool_or => unreachable,
     };
-    const result_type: Pool.Index = switch (view.op) {
+    const result_type: Pool.Index = switch (it.op) {
         .add, .sub, .mul, .div, .mod => left,
+        .bit_and, .bit_or, .bit_xor, .shift_left, .shift_right => left,
         else => .bool_type,
     };
     const result = try check.emit(tag, result_type, .{
@@ -1971,93 +2023,89 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
 
 fn checkUnary(check: *Check, view: AST.View.Unary) Allocator.Error!Value {
     const comp = check.comp;
-    switch (view.op) {
-        .address_of => {
-            const place = try check.checkPlace(view.operand) orelse return .poison;
-            if (check.typeCanHold(place.type) == false) {
-                try check.failToken(view.op_token, .{
-                    .code = .type_mismatch,
-                    .message = try comp.fmt("'&' needs a value with a type, and this is {s}", .{
-                        try comp.typeName(place.type),
-                    }),
-                    .label = "nothing to point at",
-                    .help = "give the value a type first, as in 'let n: i64 = 10'",
-                });
-                return .poison;
-            }
-            const addressed = try check.placeAddress(place) orelse return .poison;
-            const type_pointer = try check.pointerTo(addressed.type, addressed.mutable);
-            return runtimeValue(addressed.ref, type_pointer);
-        },
-        .negate => {
-            const operand = try check.checkExpr(view.operand, null);
-            if (operand == .diverged) return .diverged;
-            if (operand == .poison) return .poison;
-            if (try check.valueOnly(view.operand, operand) == false) return .poison;
+    if (view.op == .address_of) return check.checkAddressOf(view);
 
-            if (operand == .constant) {
-                const folded = try comp.pool.foldNegate(comp.gpa, operand.constant);
-                return check.foldUnaryResult(view.op_token, folded);
-            }
-            const found = check.typeOf(operand);
+    const operand = try check.checkExpr(view.operand, null);
+    if (operand == .diverged) return .diverged;
+    if (operand == .poison) return .poison;
+    if (try check.valueOnly(view.operand, operand) == false) return .poison;
+
+    if (operand == .constant) {
+        const folded = switch (view.op) {
+            .negate => try comp.pool.foldNegate(comp.gpa, operand.constant),
+            .bool_not => comp.pool.foldNot(operand.constant),
+            .bit_not => try comp.pool.foldBitNot(comp.gpa, operand.constant),
+            .address_of => unreachable,
+        };
+        return check.settleFold(view.op_token, folded);
+    }
+
+    const found = check.typeOf(operand);
+    switch (view.op) {
+        .address_of => unreachable,
+        .negate => {
             const signed = switch (found) {
                 .i8_type, .i16_type, .i32_type, .i64_type => true,
                 .f32_type, .f64_type => true,
                 else => false,
             };
             if (signed == false) {
-                try check.failToken(view.op_token, .{
-                    .code = .bad_operand,
-                    .message = try comp.fmt("'-' needs a signed number, and this is {s}", .{
-                        try comp.typeName(found),
-                    }),
-                    .label = "cannot be negated",
-                });
-                return .poison;
+                return check.reportBadUnary(view, found, "needs a signed number");
             }
             const result = try check.emitOne(.negate, found, refOf(operand));
             return runtimeValue(result, found);
         },
         .bool_not => {
-            const operand = try check.checkExpr(view.operand, null);
-            if (operand == .diverged) return .diverged;
-            if (operand == .poison) return .poison;
-            if (try check.valueOnly(view.operand, operand) == false) return .poison;
-
-            if (operand == .constant) {
-                return check.foldUnaryResult(view.op_token, comp.pool.foldNot(operand.constant));
-            }
             const met = try check.coerce(operand, .bool_type, view.operand);
             if (met == .poison) return .poison;
             const result = try check.emitOne(.not, .bool_type, refOf(met));
             return runtimeValue(result, .bool_type);
         },
+        .bit_not => {
+            if (Pool.isInteger(found) == false) {
+                return check.reportBadUnary(view, found, "needs an integer");
+            }
+            const result = try check.emitOne(.bit_not, found, refOf(operand));
+            return runtimeValue(result, found);
+        },
     }
 }
 
-fn foldUnaryResult(check: *Check, op_token: Token.Index, folded: Pool.Fold) Allocator.Error!Value {
-    switch (folded) {
-        .value => |value| return .{ .constant = value },
-        .overflow => {
-            try check.failToken(op_token, .{
-                .code = .overflow,
-                .message = "this overflows the 128 bits constants fold in",
-                .label = "too large",
-            });
-            return .poison;
-        },
-        .bad_operand => |operand_type| {
-            try check.failToken(op_token, .{
-                .code = .bad_operand,
-                .message = try check.comp.fmt("this cannot be applied to {s}", .{
-                    try check.comp.typeName(operand_type),
-                }),
-                .label = "wrong operand",
-            });
-            return .poison;
-        },
-        .division_by_zero, .does_not_fit, .mismatch => unreachable,
+fn reportBadUnary(
+    check: *Check,
+    view: AST.View.Unary,
+    found: Pool.Index,
+    wants: []const u8,
+) Allocator.Error!Value {
+    try check.failToken(view.op_token, .{
+        .code = .bad_operand,
+        .message = try check.comp.fmt("'{s}' {s}, and this is {s}", .{
+            check.tree.tokenSlice(view.op_token),
+            wants,
+            try check.comp.typeName(found),
+        }),
+        .label = "wrong operand type",
+    });
+    return .poison;
+}
+
+/// `&x`, which spills to a temporary when `x` has no address of its own.
+fn checkAddressOf(check: *Check, view: AST.View.Unary) Allocator.Error!Value {
+    const comp = check.comp;
+    const place = try check.checkPlace(view.operand) orelse return .poison;
+    if (check.typeCanHold(place.type) == false) {
+        try check.failToken(view.op_token, .{
+            .code = .type_mismatch,
+            .message = try comp.fmt("'&' needs a value with a type, and this is {s}", .{
+                try comp.typeName(place.type),
+            }),
+            .label = "nothing to point at",
+            .help = "give the value a type first, as in 'let n: i64 = 10'",
+        });
+        return .poison;
     }
+    const addressed = try check.placeAddress(place) orelse return .poison;
+    return runtimeValue(addressed.ref, try check.pointerTo(addressed.type, addressed.mutable));
 }
 
 fn checkTry(check: *Check, node: Node.Index, operand: Node.Index) Allocator.Error!Value {
@@ -2505,6 +2553,26 @@ fn fieldRow(check: *Check, instance: Pool.Instance, name_text: []const u8) Alloc
     return null;
 }
 
+/// Whether this file may reach a member of another one.
+fn memberIsVisible(check: *Check, member: Decl.Index, at: Token.Index) Allocator.Error!bool {
+    const decl = check.comp.declAt(member);
+    if (decl.module == check.module_index) return true;
+    if (Module.declIsPub(check.comp, member)) return true;
+
+    try check.failToken(at, .{
+        .code = .private,
+        .message = try check.comp.fmt("'{s}' is private to its file", .{
+            check.comp.pool.stringText(decl.name),
+        }),
+        .label = "not public",
+        .help = "mark it 'pub' to reach it from another file",
+        .notes = try check.comp.notes(&.{
+            check.comp.noteAt(decl.module, decl.node, "declared here"),
+        }),
+    });
+    return false;
+}
+
 fn findMember(comp: *const Compilation, decl_index: Decl.Index, name_text: []const u8) ?Decl.Index {
     const decl = comp.declAt(decl_index);
     assert(decl.kind == .struct_decl);
@@ -2537,15 +2605,23 @@ fn suggestField(
     return try comp.fmt("did you mean '{s}'?", .{found});
 }
 
-fn checkInstanceExpr(
+fn checkDeref(check: *Check, node: Node.Index) Allocator.Error!Value {
+    const place = try check.checkPlace(node) orelse return .poison;
+    const loaded = try check.placeValue(place);
+    return runtimeValue(loaded, place.type);
+}
+
+/// Type arguments when the base is generic, an index otherwise.
+fn checkBracketExpr(
     check: *Check,
     node: Node.Index,
-    view: AST.View.Instance,
+    view: AST.View.Bracket,
 ) Allocator.Error!Value {
+    const comp = check.comp;
     const base = try check.checkExpr(view.base, null);
     switch (base) {
         .named_generic => {
-            const resolved = try check.resolveTypeInstance(node);
+            const resolved = try check.resolveBracketType(node);
             if (resolved == .poison) return .poison;
             return .{ .named_type = resolved };
         },
@@ -2557,7 +2633,19 @@ fn checkInstanceExpr(
             });
             return .poison;
         },
+        .diverged => return .diverged,
         .poison => return .poison,
+        .constant, .runtime => {
+            try check.fail(node, .{
+                .code = .not_indexable,
+                .message = try comp.fmt("{s} cannot be indexed", .{
+                    try comp.typeName(check.typeOf(base)),
+                }),
+                .label = "not something to index",
+                .help = "no type holds more than one value yet, so nothing can be indexed",
+            });
+            return .poison;
+        },
         else => {
             try check.fail(node, .{
                 .code = .generic_arguments,
@@ -2759,20 +2847,20 @@ const Callee = struct {
 fn resolveCallee(check: *Check, callee_node: Node.Index) Allocator.Error!?Callee {
     switch (check.tree.viewOf(callee_node)) {
         .field_access => |access| return check.resolveCalleeMember(callee_node, access),
-        .instance => |instance_view| {
-            var callee = switch (check.tree.nodeTag(instance_view.base)) {
+        .bracket => |bracket| {
+            var callee = switch (check.tree.nodeTag(bracket.base)) {
                 .field_access => try check.resolveCalleeMember(
-                    instance_view.base,
-                    check.tree.viewOf(instance_view.base).field_access,
+                    bracket.base,
+                    check.tree.viewOf(bracket.base).field_access,
                 ) orelse return null,
                 else => callee: {
-                    const value = try check.checkExpr(instance_view.base, null);
-                    break :callee try check.calleeOfValue(instance_view.base, value) orelse
+                    const value = try check.checkExpr(bracket.base, null);
+                    break :callee try check.calleeOfValue(bracket.base, value) orelse
                         return null;
                 },
             };
 
-            if (instance_view.args.len > type_params_max) {
+            if (bracket.args.len > type_params_max) {
                 try check.fail(callee_node, .{
                     .code = .generic_arguments,
                     .message = try check.comp.fmt(
@@ -2782,7 +2870,7 @@ fn resolveCallee(check: *Check, callee_node: Node.Index) Allocator.Error!?Callee
                 });
                 return null;
             }
-            callee.explicit = instance_view.args;
+            callee.explicit = bracket.args;
             return callee;
         },
         else => {
@@ -2820,6 +2908,9 @@ fn resolveCalleeMember(
                             _ = try check.findField(owner, access.name_token);
                             return null;
                         };
+                        if (try check.memberIsVisible(member, access.name_token) == false) {
+                            return null;
+                        }
                         return .{
                             .kind = .{ .static = .{ .decl = member, .owner = owner } },
                             .explicit = null,
@@ -2889,7 +2980,7 @@ fn baseIsNamespace(check: *const Check, node: Node.Index) bool {
             },
             .intrinsic => return true,
             .field_access => current = check.tree.viewOf(current).field_access.lhs,
-            .instance => current = check.tree.viewOf(current).instance.base,
+            .bracket => current = check.tree.viewOf(current).bracket.base,
             else => return false,
         }
     }
@@ -2973,6 +3064,9 @@ fn checkCallResolved(
                         _ = try check.findField(owner, method.name_token);
                         return .poison;
                     };
+                    if (try check.memberIsVisible(member, method.name_token) == false) {
+                        return .poison;
+                    }
                     owner_args = comp.instanceArgs(owner);
                     break :method member;
                 },
@@ -3541,6 +3635,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
             const base = try check.checkPlace(access.lhs) orelse return null;
             return check.placeField(node, base, access.name_token);
         },
+        .deref => |operand| return check.placeThroughPointer(node, operand),
         .err => return null,
         else => {
             const value = try check.checkExpr(node, null);
@@ -3577,6 +3672,51 @@ fn placeOfValue(
             return null;
         },
     }
+}
+
+/// The place `p.*` names, as mutable as `p` is.
+fn placeThroughPointer(
+    check: *Check,
+    node: Node.Index,
+    operand: Node.Index,
+) Allocator.Error!?Place {
+    const comp = check.comp;
+    const value = try check.checkExpr(operand, null);
+    switch (value) {
+        .constant, .runtime => {},
+        .poison, .diverged => return null,
+        else => {
+            try check.reportNotValue(operand, value);
+            return null;
+        },
+    }
+
+    const found = check.typeOf(value);
+    if (found == .poison) return null;
+
+    const pointer = switch (comp.pool.keyOf(found)) {
+        .type_pointer => |it| it,
+        else => {
+            try check.fail(node, .{
+                .code = .type_mismatch,
+                .message = try comp.fmt("'.*' needs a pointer, and this is {s}", .{
+                    try comp.typeName(found),
+                }),
+                .label = "not a pointer",
+                .help = "'.*' reads what a pointer points at, and a field is reached with '.name'",
+            });
+            return null;
+        },
+    };
+    return .{
+        .kind = .address,
+        .ref = refOf(value),
+        .type = pointer.child,
+        .mutable = pointer.mutable,
+        .reason = if (pointer.mutable) .mutable else .{ .const_pointer = found },
+        .root_name = "this pointer",
+        .root_node = operand,
+    };
 }
 
 /// One field step. Crossing a pointer resets mutability to the pointer's own.
@@ -4051,6 +4191,7 @@ fn runtimeOnly(tag: Node.Tag) ?[]const u8 {
         .try_expr => "'try'",
         .call => "a call",
         .struct_literal => "a struct literal",
+        .deref => "reading through a pointer",
         else => null,
     };
 }
@@ -4098,13 +4239,12 @@ fn reportNotValue(check: *Check, node: Node.Index, value: Value) Allocator.Error
 fn reportBadOperand(
     check: *Check,
     op_token: Token.Index,
-    op: AST.BinaryOp,
     operand_type: Pool.Index,
 ) Allocator.Error!void {
     try check.failToken(op_token, .{
         .code = .bad_operand,
-        .message = try check.comp.fmt("'{t}' cannot be applied to {s}", .{
-            op,
+        .message = try check.comp.fmt("'{s}' cannot be applied to {s}", .{
+            check.tree.tokenSlice(op_token),
             try check.comp.typeName(operand_type),
         }),
         .label = "wrong operand type",

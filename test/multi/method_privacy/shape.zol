@@ -1,0 +1,11 @@
+pub struct Box {
+    item: i64
+
+    fn hidden(self: *Box) i64 {
+        return self.item
+    }
+
+    pub fn shown(self: *Box) i64 {
+        return self.item
+    }
+}

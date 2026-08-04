@@ -1,0 +1,57 @@
+root
+  fn_decl every_form
+    param n
+      type: ident i64
+    param p
+      type: pointer_type var
+        child: ident i64
+    param holder
+      type: ident Holder
+    body: block
+      var_decl x var
+        type: ident i64
+        init: number_literal 0
+      assign =
+        lhs: ident x
+        rhs: ident n
+      assign +=
+        lhs: ident x
+        rhs: ident n
+      assign -=
+        lhs: ident x
+        rhs: ident n
+      assign *=
+        lhs: ident x
+        rhs: ident n
+      assign /=
+        lhs: ident x
+        rhs: ident n
+      assign %=
+        lhs: ident x
+        rhs: ident n
+      assign &=
+        lhs: ident x
+        rhs: ident n
+      assign |=
+        lhs: ident x
+        rhs: ident n
+      assign ^=
+        lhs: ident x
+        rhs: ident n
+      assign <<=
+        lhs: ident x
+        rhs: ident n
+      assign >>=
+        lhs: ident x
+        rhs: ident n
+      assign +=
+        lhs: field_access field
+          lhs: ident holder
+        rhs: ident n
+      assign +=
+        lhs: deref
+          child: ident p
+        rhs: ident n
+      assign =
+        lhs: ident _
+        rhs: ident x
