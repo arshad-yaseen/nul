@@ -9,6 +9,8 @@ const Compilation = @import("Compilation.zig");
 const IR = @import("IR.zig");
 const Module = @import("Module.zig");
 const Pool = @import("Pool.zig");
+const Intrinsic = @import("Intrinsic.zig").Intrinsic;
+const intrinsic_limits = @import("Intrinsic.zig");
 const Token = @import("Token.zig");
 const edit_distance = @import("util/edit_distance.zig");
 
@@ -52,6 +54,8 @@ const Value = union(enum) {
     named_fn: Decl.Index,
     /// `std` in `std.mem`.
     named_module: Module.Index,
+    /// `intrinsic` in `intrinsic.ptr_cast[T](p)`.
+    named_intrinsic,
 
     const Runtime = struct { ref: Ref, type: Pool.Index };
 
@@ -1597,6 +1601,18 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
     }
 
     switch (check.tree.viewOf(node)) {
+        .intrinsic => {
+            if (check.module.space != .std) {
+                try check.fail(node, .{
+                    .code = .intrinsic_outside_std,
+                    .message = "only the standard library reaches 'intrinsic'",
+                    .label = "not available here",
+                    .help = "std wraps each one in an ordinary declaration, so call that instead",
+                });
+                return .poison;
+            }
+            return .named_intrinsic;
+        },
         .ident => return check.checkIdent(node),
         .number_literal => return check.checkNumber(node),
         .bool_literal => |view| {
@@ -2343,6 +2359,10 @@ fn checkFieldAccess(
             });
             return .poison;
         },
+        .named_intrinsic => {
+            try check.failIntrinsicNotValue(node);
+            return .poison;
+        },
         .constant, .runtime => {
             const found = check.typeOf(base);
             return check.valueField(node, view, base, found);
@@ -2708,7 +2728,12 @@ fn checkCall(check: *Check, node: Node.Index) Allocator.Error!Value {
         for (view.args) |argument| _ = try check.checkExpr(argument, null);
         return .poison;
     };
-    return check.checkCallResolved(node, callee, view.args);
+    switch (callee.kind) {
+        .intrinsic => |which| {
+            return check.checkIntrinsic(node, which, callee.explicit orelse &.{}, view.args);
+        },
+        else => return check.checkCallResolved(node, callee, view.args),
+    }
 }
 
 /// A method waits for its receiver type, so the receiver is walked once.
@@ -2725,6 +2750,8 @@ const Callee = struct {
         static: struct { decl: Decl.Index, owner: Pool.Instance },
         /// `value.f(...)`, where the value is the receiver.
         method: struct { receiver: Node.Index, name_token: Token.Index },
+        /// An operation the compiler performs itself.
+        intrinsic: Intrinsic,
     };
 };
 
@@ -2826,6 +2853,18 @@ fn resolveCalleeMember(
                 });
                 return null;
             },
+            .named_intrinsic => {
+                const which = Intrinsic.fromName(name_text) orelse {
+                    try check.failToken(access.name_token, .{
+                        .code = .no_such_member,
+                        .message = try comp.fmt("there is no intrinsic named '{s}'", .{name_text}),
+                        .label = "no such intrinsic",
+                        .help = try check.suggestIntrinsic(name_text),
+                    });
+                    return null;
+                };
+                return .{ .kind = .{ .intrinsic = which }, .explicit = null };
+            },
             // a pure name resolved to a constant is still a receiver
             .constant, .runtime => {},
         }
@@ -2848,6 +2887,7 @@ fn baseIsNamespace(check: *const Check, node: Node.Index) bool {
                 if (check.findLocal(text) != null) return false;
                 return true;
             },
+            .intrinsic => return true,
             .field_access => current = check.tree.viewOf(current).field_access.lhs,
             .instance => current = check.tree.viewOf(current).instance.base,
             else => return false,
@@ -2890,6 +2930,10 @@ fn calleeOfValue(check: *Check, node: Node.Index, value: Value) Allocator.Error!
             });
             return null;
         },
+        .named_intrinsic => {
+            try check.failIntrinsicNotValue(node);
+            return null;
+        },
     }
 }
 
@@ -2908,6 +2952,7 @@ fn checkCallResolved(
     var receiver_node: ?Node.Index = null;
     var owner_args: []const Pool.Index = &.{};
     const decl_index: Decl.Index = switch (callee.kind) {
+        .intrinsic => unreachable,
         .direct => |direct| direct,
         .static => |static| static: {
             owner_args = comp.instanceArgs(static.owner);
@@ -3057,6 +3102,109 @@ fn checkCallResolved(
 
     const result = try check.emit(.call, return_type, .{ .payload = payload });
     return runtimeValue(result, return_type);
+}
+
+/// Arity from the table, then the one case that knows what this intrinsic
+/// means. A new intrinsic adds a row to `Intrinsic.shape` and an arm here.
+fn checkIntrinsic(
+    check: *Check,
+    node: Node.Index,
+    which: Intrinsic,
+    type_args: []const Node.Index,
+    args: []const Node.Index,
+) Allocator.Error!Value {
+    const comp = check.comp;
+    const shape = which.shape();
+    const name = @tagName(which);
+
+    if (type_args.len != shape.type_params) {
+        try check.fail(node, .{
+            .code = .generic_arguments,
+            .message = try comp.fmt("'{s}' takes {d} type argument{s}, and this writes {d}", .{
+                name, shape.type_params, plural(shape.type_params), type_args.len,
+            }),
+            .label = "wrong number of type arguments",
+        });
+        return .poison;
+    }
+    if (args.len != shape.params) {
+        try check.fail(node, .{
+            .code = .wrong_arity,
+            .message = try comp.fmt("'{s}' takes {d} argument{s}, and this call has {d}", .{
+                name, shape.params, plural(shape.params), args.len,
+            }),
+            .label = "wrong number of arguments",
+        });
+        return .poison;
+    }
+
+    var types: [intrinsic_limits.type_params_max]Pool.Index = undefined;
+    for (type_args, 0..) |type_arg, position| {
+        const resolved = try check.resolveWrittenType(type_arg);
+        if (resolved == .poison) return .poison;
+        types[position] = resolved;
+    }
+
+    var values: [intrinsic_limits.params_max]Value = undefined;
+    for (args, 0..) |argument, position| {
+        const value = try check.checkExpr(argument, null);
+        if (value == .diverged) return .diverged;
+        if (try check.valueOnly(argument, value) == false) return .poison;
+        if (value == .poison) return .poison;
+        values[position] = value;
+    }
+
+    switch (which) {
+        .ptr_cast => return check.intrinsicPtrCast(args[0], types[0], values[0]),
+    }
+}
+
+/// Retypes what a pointer points at, and keeps what the pointer may do, so a
+/// read-only pointer cannot be laundered into one that writes.
+fn intrinsicPtrCast(
+    check: *Check,
+    node: Node.Index,
+    wanted: Pool.Index,
+    operand: Value,
+) Allocator.Error!Value {
+    const comp = check.comp;
+    const found = check.typeOf(operand);
+
+    const pointer = switch (comp.pool.keyOf(found)) {
+        .type_pointer => |it| it,
+        else => {
+            try check.fail(node, .{
+                .code = .type_mismatch,
+                .message = try comp.fmt("'ptr_cast' needs a pointer, and this is {s}", .{
+                    try comp.typeName(found),
+                }),
+                .label = "not a pointer",
+            });
+            return .poison;
+        },
+    };
+
+    const result = try check.pointerTo(wanted, pointer.mutable);
+    const ref = try check.emitOne(.ptr_cast, result, refOf(operand));
+    return runtimeValue(ref, result);
+}
+
+fn failIntrinsicNotValue(check: *Check, node: Node.Index) Allocator.Error!void {
+    try check.fail(node, .{
+        .code = .intrinsic_outside_std,
+        .message = "an intrinsic is not a value, so call it",
+        .label = "missing the call",
+        .help = "write 'intrinsic.name(...)', with its type arguments if it takes any",
+    });
+}
+
+fn suggestIntrinsic(check: *Check, text: []const u8) Allocator.Error!?[]const u8 {
+    var best: ?[]const u8 = null;
+    var best_distance: u32 = 3;
+
+    for (Intrinsic.names) |candidate| considerName(candidate, text, &best, &best_distance);
+    const found = best orelse return null;
+    return try check.comp.fmt("did you mean '{s}'?", .{found});
 }
 
 fn plural(count: u32) []const u8 {
@@ -3607,7 +3755,7 @@ fn typeOf(check: *const Check, value: Value) Pool.Index {
         .constant => |constant| check.comp.pool.typeOfValue(constant),
         .runtime => |runtime| runtime.type,
         .poison, .diverged => .poison,
-        .named_type, .named_generic, .named_fn, .named_module => .poison,
+        .named_type, .named_generic, .named_fn, .named_module, .named_intrinsic => .poison,
     };
 }
 
@@ -3622,6 +3770,7 @@ fn refOf(value: Value) Ref {
         .runtime => |runtime| runtime.ref,
         .diverged, .poison => .fromConstant(.poison),
         .named_type, .named_generic, .named_fn, .named_module => .fromConstant(.poison),
+        .named_intrinsic => .fromConstant(.poison),
     };
 }
 
@@ -3939,6 +4088,7 @@ fn reportNotValue(check: *Check, node: Node.Index, value: Value) Allocator.Error
             .message = "a module is not a value",
             .label = "a module, where a value belongs",
         },
+        .named_intrinsic => return check.failIntrinsicNotValue(node),
         // a value that never arrives is never complained about
         .constant, .runtime, .poison, .diverged => unreachable,
     };

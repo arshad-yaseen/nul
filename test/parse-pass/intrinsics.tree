@@ -1,0 +1,57 @@
+root
+  fn_decl cast
+    param p
+      type: pointer_type var
+        child: ident u8
+    ret: pointer_type var
+      child: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: instance
+            base: field_access ptr_cast
+              lhs: intrinsic
+            arg: ident i64
+          arg: ident p
+  fn_decl nested
+    param p
+      type: pointer_type var
+        child: ident u8
+    ret: pointer_type var
+      child: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: instance
+            base: field_access ptr_cast
+              lhs: intrinsic
+            arg: ident i64
+          arg: call
+            callee: instance
+              base: field_access ptr_cast
+                lhs: intrinsic
+              arg: ident u8
+            arg: ident p
+  fn_decl as_an_argument
+    param p
+      type: pointer_type var
+        child: ident u8
+    ret: ident i64
+    body: block
+      return_expr
+        value: call
+          callee: ident take
+          arg: call
+            callee: instance
+              base: field_access ptr_cast
+                lhs: intrinsic
+              arg: ident i64
+            arg: ident p
+  fn_decl take
+    param p
+      type: pointer_type var
+        child: ident i64
+    ret: ident i64
+    body: block
+      return_expr
+        value: number_literal 0

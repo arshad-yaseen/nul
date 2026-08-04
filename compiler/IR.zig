@@ -134,6 +134,9 @@ pub const Inst = struct {
         negate,
         not,
 
+        /// Uses `un`. Retypes a pointer and emits nothing.
+        ptr_cast,
+
         /// Uses `payload`, an `IR.Call`.
         call,
 

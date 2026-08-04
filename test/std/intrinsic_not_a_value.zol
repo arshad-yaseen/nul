@@ -1,0 +1,8 @@
+struct Cell {
+    value: i64
+}
+
+fn uncalled(cell: *var Cell) i64 {
+    let f = intrinsic.ptr_cast
+    return cell.value
+}

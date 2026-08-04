@@ -29,6 +29,7 @@ pub const Tag = enum(u8) {
     kw_false,
     kw_fn,
     kw_if,
+    kw_intrinsic,
     kw_let,
     kw_null,
     kw_or,
@@ -89,6 +90,7 @@ pub const Tag = enum(u8) {
             .kw_false => "false",
             .kw_fn => "fn",
             .kw_if => "if",
+            .kw_intrinsic => "intrinsic",
             .kw_let => "let",
             .kw_null => "null",
             .kw_or => "or",
@@ -182,6 +184,7 @@ comptime {
 pub fn endsStatement(tag: Tag) bool {
     return switch (tag) {
         .ident, .number, .invalid => true,
+        .kw_intrinsic => true,
         .r_paren, .r_brace, .r_bracket => true,
         .kw_true, .kw_false, .kw_null => true,
         .kw_return, .kw_break, .kw_continue => true,

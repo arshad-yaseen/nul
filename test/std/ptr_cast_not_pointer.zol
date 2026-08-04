@@ -1,0 +1,7 @@
+struct Cell {
+    value: i64
+}
+
+fn from_a_number(n: i64) *var Cell {
+    return intrinsic.ptr_cast[Cell](n)
+}

@@ -13,11 +13,13 @@ const Kind = enum {
     fail,
     /// A directory of modules entered at `main.zol`.
     multi,
+    /// Compiled as though it were the standard library, so `intrinsic` resolves.
+    std,
 
     fn extension(kind: Kind) []const u8 {
         return switch (kind) {
             .@"parse-pass" => ".tree",
-            .@"parse-error", .fail, .multi => ".expected",
+            .@"parse-error", .fail, .multi, .std => ".expected",
             .ir => ".ir",
         };
     }
@@ -25,7 +27,15 @@ const Kind = enum {
     fn analyzes(kind: Kind) bool {
         return switch (kind) {
             .@"parse-pass", .@"parse-error" => false,
-            .ir, .fail, .multi => true,
+            .ir, .fail, .multi, .std => true,
+        };
+    }
+
+    /// Where `std.` resolves. A std case is its own standard library.
+    fn stdDir(kind: Kind) []const u8 {
+        return switch (kind) {
+            .std => "test/std",
+            else => "lib/std",
         };
     }
 };
@@ -162,7 +172,7 @@ fn runCompile(
     const source: compiler.Source = try .load(gpa, io, .cwd(), path);
 
     var comp: compiler.Compilation = undefined;
-    try comp.init(gpa, io, .{ .root_path = path, .std_dir = "lib/std" });
+    try comp.init(gpa, io, .{ .root_path = path, .std_dir = kind.stdDir() });
     defer comp.deinit();
     try comp.compile(source);
 
@@ -183,7 +193,7 @@ fn runCompile(
             }
             try comp.renderAll(actual, .off);
         },
-        .multi => if (failed) {
+        .multi, .std => if (failed) {
             try comp.renderAll(actual, .off);
         } else {
             try comp.dumpIR(actual);

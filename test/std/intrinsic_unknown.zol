@@ -1,0 +1,7 @@
+struct Cell {
+    value: i64
+}
+
+fn typo(cell: *var Cell) *var Cell {
+    return intrinsic.ptr_cost[Cell](cell)
+}

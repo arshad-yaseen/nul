@@ -6,6 +6,11 @@
   `E0118` instead of crashing the compiler. A generic method inside a generic
   struct may hold 16 of its own on top of the struct's.
 - A function body is always a block. The `fn f() T = expr` form is gone.
+- `intrinsic` is a keyword. The standard library reaches the operations the
+  compiler performs itself as `intrinsic.name[T](...)`, and `E0251` refuses it
+  anywhere else.
+- `intrinsic.ptr_cast[T](pointer)` retypes a pointer. It keeps what the
+  pointer may do, so a read-only pointer cannot become one that writes.
 
 ## [0.1.0] - 2026-08-04
 

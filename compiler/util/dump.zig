@@ -113,7 +113,7 @@ fn node(
             if (it.capture.unwrap()) |capture| try node(ast, writer, capture, below, "capture");
             try node(ast, writer, it.body, below, "body");
         },
-        .break_expr, .continue_expr, .null_literal, .err => {
+        .intrinsic, .break_expr, .continue_expr, .null_literal, .err => {
             try writer.writeByte('\n');
         },
         .return_expr => |operand| {
@@ -226,6 +226,7 @@ fn inst(
             if (data.name != .empty) try writer.print(" {s}", .{comp.pool.stringText(data.name)});
         },
         .load,
+        .ptr_cast,
         .negate,
         .not,
         .wrap_optional,

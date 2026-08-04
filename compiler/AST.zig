@@ -130,6 +130,8 @@ pub const Node = struct {
         /// The `v` of `|v|`, on an `if` or a `catch`.
         capture,
 
+        /// The `intrinsic` keyword, which only a `.name` call may follow.
+        intrinsic,
         ident,
         number_literal,
         bool_literal,
@@ -301,6 +303,7 @@ pub const View = union(enum) {
     return_expr: Node.OptionalIndex,
     capture: Token.Index,
 
+    intrinsic: Token.Index,
     ident: Token.Index,
     number_literal: Token.Index,
     bool_literal: Bool,
@@ -468,6 +471,7 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         .return_expr => .{ .return_expr = data.opt_node },
         .capture => .{ .capture = main },
 
+        .intrinsic => .{ .intrinsic = main },
         .ident => .{ .ident = main },
         .number_literal => .{ .number_literal = main },
         .bool_literal => .{ .bool_literal = .{
@@ -652,7 +656,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
         switch (tree.viewOf(current)) {
             .root => return if (side == .leftmost) .first else main,
             .err, .type_param, .capture, .break_expr, .continue_expr => return main,
-            .ident, .number_literal, .null_literal => return main,
+            .intrinsic, .ident, .number_literal, .null_literal => return main,
             .bool_literal => |it| return it.token,
             .error_decl => |it| switch (side) {
                 .leftmost => return if (it.is_pub) main.before(1) else main,

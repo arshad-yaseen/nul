@@ -88,6 +88,7 @@ pub const Code = enum(u16) {
     not_a_number = 248,
     analysis_too_deep = 249,
     unreachable_code = 250,
+    intrinsic_outside_std = 251,
 };
 
 pub const Color = enum { off, on };
