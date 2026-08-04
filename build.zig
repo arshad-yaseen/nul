@@ -14,12 +14,26 @@ const test_dirs = [_][]const u8{
 /// for room for the deepest source the parser allows.
 const analysis_stack_bytes = 256 << 20;
 
+/// What a release ships. Linux is musl, so one binary runs on every
+/// distribution rather than on the glibc it happened to be built against.
+const release_targets = [_][]const u8{
+    "aarch64-macos",
+    "x86_64-macos",
+    "aarch64-linux-musl",
+    "x86_64-linux-musl",
+    "x86_64-windows",
+};
+
+const release_docs = [_][]const u8{ "README.md", "LICENSE" };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const version = resolveVersion(b);
+
     const options = b.addOptions();
-    options.addOption([]const u8, "version", zon.version);
+    options.addOption([]const u8, "version", version);
 
     const compiler = b.addModule("compiler", .{
         .root_source_file = b.path("compiler/root.zig"),
@@ -30,7 +44,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "nul",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("cli/main.zig"),
+            .root_source_file = b.path("tools/nul/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -85,6 +99,98 @@ pub fn build(b: *std.Build) void {
     update.addArg("--update");
     addTestFiles(b, update);
     b.step("test-update", "Rewrite what the file tests expect").dependOn(&update.step);
+
+    addRelease(b, version, options);
+}
+
+/// One tree per target under `zig-out/release`, each holding the binary, the
+/// standard library it reads, and the terms it ships under. Archiving is the
+/// packaging step's job, so nothing here shells out.
+fn addRelease(b: *std.Build, version: []const u8, options: *std.Build.Step.Options) void {
+    const release_step = b.step("release", "Cross-compile a release tree for every target");
+
+    for (release_targets) |triple| {
+        const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch
+            std.debug.panic("release target '{s}' is not a target triple", .{triple});
+        const exe = addNul(b, b.resolveTargetQuery(query), .ReleaseFast, options);
+
+        const tree = b.fmt("release/nul-{s}-{s}", .{ version, triple });
+        const binary = b.addInstallArtifact(exe, .{
+            .dest_dir = .{ .override = .{ .custom = b.fmt("{s}/bin", .{tree}) } },
+        });
+        release_step.dependOn(&binary.step);
+
+        const library = b.addInstallDirectory(.{
+            .source_dir = b.path("lib"),
+            .install_dir = .{ .custom = tree },
+            .install_subdir = "lib",
+        });
+        release_step.dependOn(&library.step);
+
+        for (release_docs) |doc| {
+            const copied = b.addInstallFile(b.path(doc), b.fmt("{s}/{s}", .{ tree, doc }));
+            release_step.dependOn(&copied.step);
+        }
+    }
+}
+
+/// The binary, and the compiler module it is built over.
+fn addNul(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    options: *std.Build.Step.Options,
+) *std.Build.Step.Compile {
+    const compiler = b.createModule(.{
+        .root_source_file = b.path("compiler/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const exe = b.addExecutable(.{
+        .name = "nul",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/nul/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "compiler", .module = compiler },
+                .{ .name = "build_options", .module = options.createModule() },
+            },
+        }),
+    });
+    exe.stack_size = analysis_stack_bytes;
+    return exe;
+}
+
+/// The manifest carries the next, unreleased version. A build standing on the
+/// matching tag is that release, and every other build says which commit it
+/// came from, so a report names one revision rather than a branch.
+fn resolveVersion(b: *std.Build) []const u8 {
+    const manifest = zon.version;
+
+    var code: u8 = undefined;
+    const stdout = b.runAllowFail(&.{
+        "git",                        "-C",
+        b.build_root.path orelse ".", "describe",
+        "--match",                    "*.*.*",
+        "--tags",                     "--abbrev=9",
+    }, &code, .ignore) catch return manifest;
+    const described = std.mem.trim(u8, stdout, " \n\r");
+
+    // no trailing distance means the commit carries the tag itself
+    if (std.mem.indexOfScalar(u8, described, '-') == null) {
+        if (std.mem.eql(u8, described, manifest)) return manifest;
+        std.debug.panic(
+            "tag '{s}' and build.zig.zon version '{s}' disagree",
+            .{ described, manifest },
+        );
+    }
+
+    // `0.1.0-47-g7f3a91c9a` is 47 commits past 0.1.0, so the next one is brewing
+    var fields = std.mem.splitBackwardsScalar(u8, described, '-');
+    const hash = fields.next() orelse return manifest;
+    const distance = fields.next() orelse return manifest;
+    return b.fmt("{s}-dev.{s}+{s}", .{ manifest, distance, hash[1..] });
 }
 
 fn addTestFiles(b: *std.Build, run: *std.Build.Step.Run) void {

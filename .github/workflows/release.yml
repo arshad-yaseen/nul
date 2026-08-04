@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the version is derived from `git describe`, which needs the tags
+          fetch-depth: 0
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Test
+        run: zig build test --summary all
+
+      - name: Cross-compile every target
+        run: zig build release
+
+      - name: Archive
+        run: |
+          set -euo pipefail
+          cd zig-out/release
+          for tree in */; do
+            name="${tree%/}"
+            case "$name" in
+              *windows*) zip -qr "../../$name.zip" "$name" ;;
+              *) XZ_OPT=-9 tar -cJf "../../$name.tar.xz" "$name" ;;
+            esac
+          done
+          cd ../..
+          sha256sum nul-*.tar.xz nul-*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Take the notes from the changelog
+        run: |
+          set -euo pipefail
+          awk -v want="## [${GITHUB_REF_NAME}]" '
+            index($0, want) == 1     { inside = 1; next }
+            inside && /^## \[/       { exit }
+            inside && /^\[[^]]+\]: / { exit }   # the link definitions at the foot
+            inside                   { print }
+          ' CHANGELOG.md > NOTES.md
+          test -s NOTES.md || {
+            echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME}" >&2
+            exit 1
+          }
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Nul ${GITHUB_REF_NAME}" \
+            --notes-file NOTES.md \
+            nul-*.tar.xz nul-*.zip SHA256SUMS

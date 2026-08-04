@@ -1,4 +1,10 @@
 .zig-cache/
 zig-out/
 
+# what the release workflow leaves in the working tree
+/nul-*.tar.xz
+/nul-*.zip
+/SHA256SUMS
+/NOTES.md
+
 .DS_Store

@@ -23,7 +23,9 @@ commands:
   ir    <entry>   print the typed IR
 
 options:
-  --std <dir>   where the standard library lives
+  --std <dir>           where the standard library lives
+  --color auto|on|off   colour the output (default: auto)
+  --version             print the version
 ```
 
 ## Status
