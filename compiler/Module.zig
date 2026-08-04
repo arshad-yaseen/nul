@@ -438,10 +438,8 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
         .root => comp.root_dir,
         .std => comp.std_dir orelse return .no_std,
     };
-    const path = try std.fs.path.join(comp.arena.allocator(), &.{
-        base,
-        try comp.fmt("{s}.zol", .{sub}),
-    });
+
+    const path = try comp.fmt("{s}/{s}.zol", .{ std.mem.trimEnd(u8, base, "/\\"), sub });
 
     const source = Source.load(comp.gpa, comp.io, .cwd(), path) catch |err| switch (err) {
         error.ReadFailed, error.SourceTooLarge => return .not_found,
