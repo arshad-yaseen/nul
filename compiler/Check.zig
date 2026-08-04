@@ -29,7 +29,8 @@ demand_sizes: bool,
 
 const Check = @This();
 
-const type_params_max = 16;
+const type_params_max = AST.type_params_max;
+const bindings_max = type_params_max * 2;
 const call_args_max = 255;
 const type_depth_max = AST.nest_max;
 
@@ -100,8 +101,8 @@ pub fn topLevelLet(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!b
 /// Fields into rows, with the type parameters bound to this instantiation.
 pub fn structRows(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
     const decl_index = comp.instanceDecl(instance);
-    var buffer: [type_params_max]Binding = undefined;
-    const bindings = try bindTypeParams(comp, instance, &buffer) orelse return false;
+    var buffer: [bindings_max]Binding = undefined;
+    const bindings = try bindTypeParams(comp, instance, &buffer);
     var check = context(comp, decl_index, bindings);
     check.demand_sizes = false;
 
@@ -172,8 +173,8 @@ fn sizeWalkType(
 
 pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
     const decl_index = comp.instanceDecl(instance);
-    var buffer: [type_params_max]Binding = undefined;
-    const bindings = try bindTypeParams(comp, instance, &buffer) orelse return false;
+    var buffer: [bindings_max]Binding = undefined;
+    const bindings = try bindTypeParams(comp, instance, &buffer);
     var check = context(comp, decl_index, bindings);
 
     const view = check.tree.viewOf(check.declNode(decl_index)).fn_decl;
@@ -229,8 +230,8 @@ pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!
 fn bindTypeParams(
     comp: *Compilation,
     instance: Pool.Instance,
-    buffer: *[type_params_max]Binding,
-) Allocator.Error!?[]const Binding {
+    buffer: *[bindings_max]Binding,
+) Allocator.Error![]const Binding {
     const decl_index = comp.instanceDecl(instance);
     const decl = comp.declAt(decl_index);
     const args = comp.instanceArgs(instance);
@@ -240,8 +241,9 @@ fn bindTypeParams(
     if (decl.owner.unwrap()) |owner_index| {
         const owner = comp.declAt(owner_index);
         const owner_view = tree.viewOf(owner.node).struct_decl;
+        assert(owner_view.type_params.len <= type_params_max);
         for (owner_view.type_params) |param| {
-            if (count == type_params_max) return tooManyTypeParams(comp, decl, param);
+            assert(count < buffer.len);
             buffer[count] = .{
                 .name = try comp.pool.string(comp.gpa, tree.tokenSlice(tree.nodeMainToken(param))),
                 .type = args[count],
@@ -255,8 +257,9 @@ fn bindTypeParams(
         .fn_decl => |view| view.type_params,
         else => unreachable,
     };
+    assert(own.len <= type_params_max);
     for (own) |param| {
-        if (count == type_params_max) return tooManyTypeParams(comp, decl, param);
+        assert(count < buffer.len);
         buffer[count] = .{
             .name = try comp.pool.string(comp.gpa, tree.tokenSlice(tree.nodeMainToken(param))),
             .type = args[count],
@@ -266,20 +269,6 @@ fn bindTypeParams(
 
     assert(count == args.len);
     return buffer[0..count];
-}
-
-fn tooManyTypeParams(
-    comp: *Compilation,
-    decl: Decl,
-    param: Node.Index,
-) Allocator.Error!?[]const Binding {
-    try comp.reportNode(decl.module, param, .{
-        .code = .generic_arguments,
-        .message = try comp.fmt("a declaration takes at most {d} type parameters", .{
-            type_params_max,
-        }),
-    });
-    return null;
 }
 
 fn context(comp: *Compilation, decl_index: Decl.Index, bindings: []const Binding) Check {
@@ -507,6 +496,7 @@ fn resolveTypeInstance(check: *Check, node: Node.Index) Allocator.Error!Pool.Ind
     }
 
     var args_buffer: [type_params_max]Pool.Index = undefined;
+    assert(view.args.len <= args_buffer.len);
     for (view.args, 0..) |arg, position| {
         const resolved = try check.resolveType(arg);
         if (resolved == .poison) return .poison;
@@ -637,8 +627,8 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
     if (decl.builtin() != null) return true;
     if (comp.instanceAt(instance).rows_state != .done) return false;
 
-    var buffer: [type_params_max]Binding = undefined;
-    const bindings = try bindTypeParams(comp, instance, &buffer) orelse return false;
+    var buffer: [bindings_max]Binding = undefined;
+    const bindings = try bindTypeParams(comp, instance, &buffer);
     var check = context(comp, decl_index, bindings);
 
     var builder: Builder = .{
@@ -3005,7 +2995,9 @@ fn checkCallResolved(
     const own_count = comp.typeParamCount(decl_index);
 
     // the owner's arguments move under instantiation
-    var full_args: [type_params_max * 2]Pool.Index = undefined;
+    var full_args: [bindings_max]Pool.Index = undefined;
+    assert(owner_args.len <= type_params_max);
+    assert(own_count <= type_params_max);
     assert(owner_args.len + own_count <= full_args.len);
     @memcpy(full_args[0..owner_args.len], owner_args);
     const owner_count: u32 = @intCast(owner_args.len);

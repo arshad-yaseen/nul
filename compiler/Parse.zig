@@ -13,6 +13,7 @@ const Node = AST.Node;
 const Parse = @This();
 
 pub const depth_max = 128;
+pub const type_params_max = 16;
 const errors_max = 64;
 
 gpa: Allocator,
@@ -675,6 +676,8 @@ fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {
 fn parseTypeParams(self: *Parse) Allocator.Error!void {
     assert(self.scratch.items.len < self.nodes.len + 1);
     const lbracket = self.eatToken(.l_bracket) orelse return;
+
+    const top = self.scratch.items.len;
     try self.parseList(.{
         .item = parseTypeParam,
         .starts = starts_name,
@@ -683,6 +686,24 @@ fn parseTypeParams(self: *Parse) Allocator.Error!void {
         .code = .expected_parameter,
         .expected = "a type parameter",
     });
+
+    assert(self.scratch.items.len >= top);
+    if (self.scratch.items.len - top > type_params_max) try self.errTypeParams(lbracket, top);
+    assert(self.scratch.items.len - top <= type_params_max);
+}
+
+fn errTypeParams(self: *Parse, lbracket: Token.Index, top: usize) Allocator.Error!void {
+    @branchHint(.cold);
+    assert(self.scratch.items.len - top > type_params_max);
+
+    try self.err(.{
+        .code = .too_many_type_params,
+        .span = self.spanOf(lbracket),
+        .message = try self.fmt("this declares more than {d} type parameters", .{type_params_max}),
+        .label = "too many",
+        .help = "a declaration this generic is asking for a struct of its own",
+    });
+    self.scratch.shrinkRetainingCapacity(top + type_params_max);
 }
 
 fn parseTypeParam(self: *Parse) Allocator.Error!Node.Index {

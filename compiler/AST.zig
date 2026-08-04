@@ -27,6 +27,7 @@ errors: []const Diagnostic,
 error_text: std.heap.ArenaAllocator.State,
 
 pub const nest_max = Parse.depth_max;
+pub const type_params_max = Parse.type_params_max;
 
 pub const Comment = Tokenizer.Comment;
 
