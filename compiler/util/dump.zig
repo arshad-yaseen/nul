@@ -5,7 +5,6 @@ const Writer = std.Io.Writer;
 const AST = @import("../AST.zig");
 const Compilation = @import("../Compilation.zig");
 const IR = @import("../IR.zig");
-const Pool = @import("../Pool.zig");
 const spell = @import("spell.zig");
 
 const Node = AST.Node;

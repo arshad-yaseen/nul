@@ -183,7 +183,6 @@ pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!
     defer comp.rows_scratch.shrinkRetainingCapacity(mark);
 
     var clean = true;
-    var arena_param: ?Node.Index = null;
     for (view.params) |param_node| {
         if (check.tree.nodeTag(param_node) != .param) continue;
         const param = check.tree.viewOf(param_node).param;
@@ -191,24 +190,6 @@ pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!
 
         const param_type = try check.resolveWrittenType(param.type_expr);
         if (param_type == .poison) clean = false;
-
-        if (check.typeIsRegion(param_type)) {
-            if (arena_param == null) {
-                arena_param = param_node;
-            } else {
-                try check.fail(param_node, .{
-                    .code = .two_arenas,
-                    .message = "a function allocates from exactly one arena, and this is a second",
-                    .label = "one too many",
-                    .help = "make a child inside for scratch local to this call, or store the arena " ++
-                        "in the collection it fills for scratch shared across calls",
-                    .notes = try comp.notes(&.{
-                        comp.noteAt(check.module_index, arena_param.?, "the first arena is here"),
-                    }),
-                });
-                clean = false;
-            }
-        }
 
         for (comp.rows_scratch.items[mark..]) |earlier| {
             if (std.mem.eql(u8, comp.pool.stringText(earlier.name), name_text)) {
@@ -534,18 +515,6 @@ fn resolveTypeInstance(check: *Check, node: Node.Index) Allocator.Error!Pool.Ind
 
     const instance = try comp.instantiate(decl_index, args_buffer[0..view.args.len]);
     return comp.instanceType(instance);
-}
-
-/// A struct with a bound arena operation is the region type.
-fn typeIsRegion(check: *const Check, type_index: Pool.Index) bool {
-    const comp = check.comp;
-    switch (comp.pool.keyOf(type_index)) {
-        .type_struct => |instance| {
-            const decl_index = comp.instanceDecl(instance);
-            return comp.declAt(decl_index).is_region;
-        },
-        else => return false,
-    }
 }
 
 /// Everything a body build carries. Blocks are contiguous runs.
@@ -3140,12 +3109,7 @@ fn checkCallResolved(
     assert(builder.operands.items.len == start + receiver_count + args.len);
 
     if (decl.builtin()) |bound| {
-        // for `Type.f(x)` the first argument is the receiver
-        const self_node = receiver_node orelse if (args.len > 0) args[0] else null;
-        return check.emitBuiltin(node, .{
-            .bound = bound,
-            .receiver_node = self_node,
-        }, builder.operands.items[start..], return_type);
+        return check.emitBuiltin(bound, builder.operands.items[start..], return_type);
     }
 
     // on its own `Builder`, so the operands staged here cannot move
@@ -3429,21 +3393,14 @@ fn reportReceiverMismatch(
     return null;
 }
 
-const BuiltinCall = struct {
-    bound: Compilation.Builtin,
-    /// As written, for the rules that judge shape.
-    receiver_node: ?Node.Index,
-};
-
-/// A bound primitive becomes its instruction, with the rules attached to it.
+/// A bound primitive becomes its instruction.
 fn emitBuiltin(
     check: *Check,
-    node: Node.Index,
-    call: BuiltinCall,
+    bound: Compilation.Builtin,
     operands: []const Builder.Operand,
     return_type: Pool.Index,
 ) Allocator.Error!Value {
-    switch (call.bound) {
+    switch (bound) {
         .arena_init => {
             assert(operands.len == 0);
             const result = try check.emit(.arena_init, return_type, .{ .none = {} });
@@ -3451,7 +3408,7 @@ fn emitBuiltin(
         },
         .arena_child, .arena_create => {
             assert(operands.len == 1);
-            const tag: IR.Inst.Tag = if (call.bound == .arena_child) .arena_child else .arena_create;
+            const tag: IR.Inst.Tag = if (bound == .arena_child) .arena_child else .arena_create;
             const result = try check.emitOne(tag, return_type, refOf(operands[0].value));
             return runtimeValue(result, return_type);
         },
@@ -3462,54 +3419,14 @@ fn emitBuiltin(
             });
             return runtimeValue(result, return_type);
         },
+        // a release produces nothing, whatever the declaration wrote
         .arena_reset, .arena_destroy => {
             assert(operands.len == 1);
-            if (try check.checkReleaseName(node, call) == false) return .poison;
-            if (call.bound == .arena_destroy) try check.checkDestroyInDefer(node);
-            const tag: IR.Inst.Tag = if (call.bound == .arena_reset)
-                .arena_reset
-            else
-                .arena_destroy;
+            const tag: IR.Inst.Tag = if (bound == .arena_reset) .arena_reset else .arena_destroy;
             const result = try check.emitOne(tag, .void_type, refOf(operands[0].value));
             return runtimeValue(result, .void_type);
         },
     }
-}
-
-/// `reset` and `destroy` demand a name, judged before any load flattens it.
-fn checkReleaseName(check: *Check, node: Node.Index, call: BuiltinCall) Allocator.Error!bool {
-    const receiver_node = call.receiver_node orelse node;
-
-    if (check.tree.nodeTag(receiver_node) == .ident) {
-        const text = check.tree.tokenSlice(check.tree.nodeMainToken(receiver_node));
-        if (check.findLocal(text)) |local| {
-            if (check.typeIsRegion(local.type)) return true;
-        }
-    }
-
-    const verb: []const u8 = if (call.bound == .arena_reset) "reset" else "destroy";
-    try check.fail(receiver_node, .{
-        .code = .release_needs_name,
-        .message = try check.comp.fmt(
-            "'{s}' needs the arena's name, and this is a path to one",
-            .{verb},
-        ),
-        .label = "not a name",
-        .help = "every value in the arena dies at this instant, and only the function " ++
-            "that created the arena can see them, so release it there, by name",
-    });
-    return false;
-}
-
-/// A `destroy` in a `defer` fires exactly where the scope was ending anyway.
-fn checkDestroyInDefer(check: *Check, node: Node.Index) Allocator.Error!void {
-    if (check.builder.?.in_defer == false) return;
-    try check.fail(node, .{
-        .code = .redundant_destroy,
-        .message = "an arena dies at the end of its scope already",
-        .label = "'defer' fires at scope exit, when this happens anyway",
-        .help = "delete this line, because 'destroy' ends an arena earlier than its scope",
-    });
 }
 
 /// A location a chain of names reached. A `value` never had an address, and

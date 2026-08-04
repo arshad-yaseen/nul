@@ -10,8 +10,7 @@ pub struct Arena {
     /// One value of type T, uninitialized, living in this arena.
     pub fn create[T](self: Arena) *var T = builtin.arena_create
 
-    /// A copy of a value into this arena. Refused for any type that reaches
-    /// other memory, because the copy would relabel what its pointers reach.
+    /// A copy of a value into this arena.
     pub fn copy[T](self: Arena, value: T) T = builtin.arena_copy
 
     /// Discard everything in the arena and keep it usable.

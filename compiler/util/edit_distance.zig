@@ -1,7 +1,5 @@
 //! Levenshtein distance, for a "did you mean" suggestion.
 
-const std = @import("std");
-
 /// Both names are cut to forty bytes.
 pub fn between(a: []const u8, b: []const u8) u32 {
     const cap = 40;

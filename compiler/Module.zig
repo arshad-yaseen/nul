@@ -57,8 +57,6 @@ pub const Decl = struct {
     aux: u32,
     kind: Kind,
     state: State,
-    /// A struct with a bound arena operation, set at registration.
-    is_region: bool,
 
     pub const Kind = enum(u8) { use, struct_decl, type_alias, error_decl, let, fn_decl };
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
@@ -257,7 +255,6 @@ fn registerMembers(
                 if (binds_builtin) {
                     if (boundBuiltin(tree, fn_view.body)) |bound| {
                         comp.declPtr(member_index).aux = @intFromEnum(bound) + 1;
-                        comp.declPtr(struct_index).is_region = true;
                     }
                 }
             },
@@ -386,7 +383,6 @@ fn appendDecl(
         .aux = 0,
         .kind = new.kind,
         .state = .unanalyzed,
-        .is_region = false,
     });
     return index;
 }

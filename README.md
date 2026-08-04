@@ -32,5 +32,6 @@ Design first, implementation second. The front end is real: parsing with recover
 modules, generics instantiated on demand, and a typed control flow graph. It ends
 there: `nul` checks a program and prints its IR, and nothing runs.
 
-The region checker is not written either, so memory safety is the model rather than
-the implementation. Read this as a set of ideas, not a toolchain.
+Nothing about memory is checked either. Arenas type check and lower like any other
+value, so memory safety is the model rather than the implementation. Read this as a
+set of ideas, not a toolchain.

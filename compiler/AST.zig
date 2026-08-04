@@ -639,15 +639,6 @@ pub fn nodeSpan(tree: AST, node: Node.Index) Diagnostic.Span {
     return .{ .start = start, .end = end };
 }
 
-/// A node's outermost tokens, which its span is measured between.
-pub fn nodeFirstToken(tree: AST, node: Node.Index) Token.Index {
-    return edgeToken(tree, node, .leftmost);
-}
-
-pub fn nodeLastToken(tree: AST, node: Node.Index) Token.Index {
-    return edgeToken(tree, node, .rightmost);
-}
-
 const Edgewise = enum { leftmost, rightmost };
 
 /// Down one side of a node to the token that bounds it.
