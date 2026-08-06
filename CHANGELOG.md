@@ -51,6 +51,8 @@ than retrofitted. `demo.zol` is the design it is heading for.
   declaration already was.
 - `-x` on the smallest value of a signed type reports that it does not fit,
   where it used to crash the compiler.
+- The help for a size cycle suggests breaking it with `*T`, and no longer
+  with `?*T`, which stopped being syntax when optionals left.
 - Every commit on `main` that passes CI is now cross-compiled and published as
   a dev build, under the version it reports, at the `dev` tag. Numbered
   releases stay the only supported builds. Both channels ship an `index.json`
