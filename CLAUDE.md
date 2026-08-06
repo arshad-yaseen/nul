@@ -37,7 +37,8 @@ regression you just recorded as expected.
 3. Add one line under `## [Unreleased]` in `CHANGELOG.md`, **only if a user
    would notice**: the language, a diagnostic code, the standard library, or the
    command line. Refactors, internals, tests, and CI changes get no entry.
-4. Commit, push, and wait for CI.
+4. Commit and push **only when asked**, and then wait for CI. This holds
+   every time: work stays in the tree until the commit is requested.
 
 ## Commit messages
 
