@@ -54,6 +54,11 @@ area: imperative summary
   assistant attribution. A commit is authored by whoever committed it, and the
   message is for the next reader of `git blame`, not a record of who typed it.
 
+  This holds for everything the repository publishes, not just the commit
+  message: pull request titles and descriptions, issue comments, review
+  comments, and release notes carry no attribution either. The rule is about
+  what the project says, so it does not stop at the commit.
+
 ```
 check: remove the two-arena rule
 
