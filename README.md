@@ -13,7 +13,7 @@ No garbage collector. No hidden allocations. No lifetime annotations.
 
 Every release, and every commit that reaches `main`, is cross-compiled for macOS,
 Linux, and Windows and published on the [releases page][releases]. Numbered
-releases are the only ones that are supported; `dev` is the tip of `main`, and
+releases are the only ones that are supported. `dev` is the tip of `main`, and
 the next commit overwrites it.
 
 Each set ships `SHA256SUMS` and an `index.json` naming the version, the commit,
