@@ -6,7 +6,7 @@ The language is being redesigned around union types. A type may be several
 types, and a branch that settles which one narrows the value to it, so
 optionals, errors, and sum types stop being three features and become one.
 This release strips what that design replaces, so the rest is built rather
-than retrofitted. `demo.zol` is the design it is heading for.
+than retrofitted.
 
 - Optionals `?T` and error unions `!T` are gone, along with the one universal
   error set and the `error Name` declaration. `T | none` is the first and
