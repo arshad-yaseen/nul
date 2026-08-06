@@ -349,7 +349,7 @@ pub const View = union(enum) {
     deref: Node.Index,
     bracket: Bracket,
     call: Call,
-    struct_literal: []const Node.Index,
+    struct_literal: StructLiteral,
     struct_field_init: NamedValue,
 
     binary: Binary,
@@ -398,6 +398,10 @@ pub const View = union(enum) {
         cond: Node.Index,
         then_block: Node.Index,
         else_node: Node.OptionalIndex,
+    };
+    pub const StructLiteral = struct {
+        type_expr: Node.Index,
+        fields: []const Node.Index,
     };
     pub const Bracket = struct { base: Node.Index, args: []const Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
@@ -503,7 +507,13 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             var payload = tree.fields(data.extra);
             break :blk .{ .call = .{ .callee = payload.node(), .args = payload.list() } };
         },
-        .struct_literal => .{ .struct_literal = tree.listAt(data.extra) },
+        .struct_literal => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .struct_literal = .{
+                .type_expr = payload.node(),
+                .fields = payload.list(),
+            } };
+        },
         .struct_field_init => .{ .struct_field_init = .{ .name_token = main, .value = data.node } },
 
         .binary => .{
@@ -732,11 +742,11 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                     } else return main.after(1);
                 },
             },
-            .struct_literal => |children| switch (side) {
-                .leftmost => return main,
+            .struct_literal => |it| switch (side) {
+                .leftmost => current = it.type_expr,
                 .rightmost => {
-                    if (children.len > 0) {
-                        current = children[children.len - 1];
+                    if (it.fields.len > 0) {
+                        current = it.fields[it.fields.len - 1];
                     } else return main.after(2);
                 },
             },

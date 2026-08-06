@@ -17,6 +17,9 @@ than retrofitted. `demo.zol` is the design it is heading for.
 - `struct X { }` is now `type X = { }`. One keyword declares a type, and what
   stands after the `=` says which kind it is. A generic still writes its
   parameters before the `=`, as `type Box[T] = { }`.
+- A struct literal names the type it builds, as `Point.{ x: 1 }`. The bare
+  `.{ }` is gone, and with it the rule that a union in a type annotation could
+  not say which member a literal meant. `E0216` retires.
 - `use` is now `import`.
 - `!` before a value is now `not`. `!=` is unchanged.
 - `E0217`, and `E0224` through `E0228`, retire.

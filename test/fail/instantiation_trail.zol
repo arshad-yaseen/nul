@@ -7,6 +7,6 @@ pub type Box[T] = {
 }
 
 fn drive() i64 {
-    let box: Box[i64] = .{ item: 4 }
+    let box = Box[i64].{ item: 4 }
     return box.broken()
 }

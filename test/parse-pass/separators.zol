@@ -31,19 +31,19 @@ fn spread(
 }
 
 fn call(a: i64) i64 {
-    let inline_literal: Inline = .{ x: 1, y: 2 }
-    let spread_literal: Inline = .{
+    let inline_literal = Inline.{ x: 1, y: 2 }
+    let spread_literal = Inline.{
         x: 1
         y: 2
     }
-    let trailing: Inline = .{
+    let trailing = Inline.{
         x: 1,
         y: 2,
     }
-    let pair: Pair[
+    let pair = Pair[
         i64
         i64
-    ] = .{ first: 1, second: 2 }
+    ].{ first: 1, second: 2 }
 
     _ = inline_literal
     _ = spread_literal

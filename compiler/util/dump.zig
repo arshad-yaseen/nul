@@ -36,7 +36,7 @@ fn node(
 
     const below = depth + 1;
     switch (view) {
-        .root, .block, .struct_literal => |children| {
+        .root, .block => |children| {
             try writer.writeByte('\n');
             for (children) |child| try node(ast, writer, child, below, "");
         },
@@ -127,6 +127,11 @@ fn node(
             try writer.writeByte('\n');
             try node(ast, writer, it.callee, below, "callee");
             for (it.args) |arg| try node(ast, writer, arg, below, "arg");
+        },
+        .struct_literal => |it| {
+            try writer.writeByte('\n');
+            try node(ast, writer, it.type_expr, below, "type");
+            for (it.fields) |field| try node(ast, writer, field, below, "");
         },
         .struct_field_init => |it| {
             try writer.print(" {s}\n", .{ast.tokenSlice(it.name_token)});

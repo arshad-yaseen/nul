@@ -25,7 +25,7 @@ type Pair[
 }
 
 pub fn build(a: i64) i64 { // after the brace
-    let p: Pair[i64, i64] = .{ // inside a literal
+    let p = Pair[i64, i64].{ // inside a literal
         first: a, // after a field value
         second: 2
     }

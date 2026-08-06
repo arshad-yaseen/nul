@@ -1428,7 +1428,7 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .deref => return check.checkDeref(node),
         .call => return check.checkCall(node),
         .bracket => |view| return check.checkBracketExpr(node, view),
-        .struct_literal => return check.checkStructLiteral(node, hint),
+        .struct_literal => return check.checkStructLiteral(node),
         .err => return .poison,
         // the parser keeps statements out of expression position
         else => unreachable,
@@ -2131,26 +2131,25 @@ fn checkBracketExpr(
     }
 }
 
-/// Type from context. Every field named, every field present.
-fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
+/// The literal names its type, so nothing infers it. Every field named, every
+/// field present.
+fn checkStructLiteral(check: *Check, node: Node.Index) Allocator.Error!Value {
     const comp = check.comp;
-    const inits = check.tree.viewOf(node).struct_literal;
+    const view = check.tree.viewOf(node).struct_literal;
 
-    // the context may be ?T or !T around the struct, which `coerce` wraps
-    const wanted = hint orelse {
-        try check.reportLiteralContext(node, null);
-        return .poison;
-    };
-    if (wanted == .void_type) {
-        try check.reportLiteralContext(node, null);
-        return .poison;
-    }
+    const wanted = try check.resolveType(view.type_expr);
     if (wanted == .poison) return .poison;
 
     const instance = switch (comp.pool.keyOf(wanted)) {
         .type_struct => |instance| instance,
         else => {
-            try check.reportLiteralContext(node, hint);
+            try check.fail(view.type_expr, .{
+                .code = .not_a_type,
+                .message = try comp.fmt("{s} has no fields to give", .{
+                    try comp.typeName(wanted),
+                }),
+                .label = "not a struct",
+            });
             return .poison;
         },
     };
@@ -2165,7 +2164,7 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     try builder.operands.appendNTimes(comp.gpa, .{ .value = .poison, .initializer = .none }, rows.len);
 
     var clean = true;
-    for (inits) |init_node| {
+    for (view.fields) |init_node| {
         if (check.tree.nodeTag(init_node) != .struct_field_init) continue;
         const field_init = check.tree.viewOf(init_node).struct_field_init;
 
@@ -2224,25 +2223,6 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     const payload = try check.emitExtra(&.{@intCast(fields.len)}, fields);
     const result = try check.emit(.struct_init, wanted, .{ .payload = payload });
     return runtimeValue(result, wanted);
-}
-
-fn reportLiteralContext(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!void {
-    if (hint) |wanted| {
-        try check.fail(node, .{
-            .code = .type_mismatch,
-            .message = try check.comp.fmt("expected {s}, and '.{{ }}' only builds a struct", .{
-                try check.comp.typeName(wanted),
-            }),
-            .label = "not a struct here",
-        });
-        return;
-    }
-    try check.fail(node, .{
-        .code = .no_literal_context,
-        .message = "nothing here says which struct this literal is",
-        .label = "no type in sight",
-        .help = "annotate the binding, or use the literal where a struct type is known",
-    });
 }
 
 /// A header, then one ref per operand, as `Func.callAt` reads it back.

@@ -7,7 +7,7 @@ type Counter = {
 }
 
 fn tidy(early: bool) i64 {
-    var counter: Counter = .{ hits: 0 }
+    var counter = Counter.{ hits: 0 }
     defer counter.bump()
     if early {
         return 1
@@ -16,10 +16,10 @@ fn tidy(early: bool) i64 {
 }
 
 fn nested_scopes(deep: bool) i64 {
-    var counter: Counter = .{ hits: 0 }
+    var counter = Counter.{ hits: 0 }
     defer counter.bump()
     if deep {
-        var inner: Counter = .{ hits: 0 }
+        var inner = Counter.{ hits: 0 }
         defer inner.bump()
         return inner.hits
     }

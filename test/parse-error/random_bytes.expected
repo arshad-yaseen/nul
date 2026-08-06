@@ -4,7 +4,7 @@ error[E0104]: expected a declaration, found invalid bytes
 1 |   ÿ AÃ( þ \`$#@
   | ^^^^^ expected a declaration
   |
-  = help: a file holds 'import', 'struct', 'type', 'fn', and 'let'
+  = help: a file holds 'import', 'type', 'fn', and 'let'
 
 error[E0104]: expected a declaration, found invalid bytes
  --> test/parse-error/random_bytes.zol:2:1
@@ -12,5 +12,5 @@ error[E0104]: expected a declaration, found invalid bytes
 2 | Ø€.?~ ÿ
   | ^^ expected a declaration
   |
-  = help: a file holds 'import', 'struct', 'type', 'fn', and 'let'
+  = help: a file holds 'import', 'type', 'fn', and 'let'
 

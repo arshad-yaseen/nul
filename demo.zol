@@ -53,8 +53,7 @@ type bool = true | false
 
 42   3.14   0xff   0b1010   1_000_000   'c'   "text"   true   none
 
-.{ x: 1.0, y: 2.0 }                     // struct, type from context
-Point.{ x: 1.0, y: 2.0 }                // struct, named where context is absent
+Point.{ x: 1.0, y: 2.0 }                // struct. a literal always names its type
 [1, 2, 3]                               // array
 (a, b)                                  // tuple
 0..n    0..=n                           // range, exclusive and inclusive

@@ -12,7 +12,7 @@ pub type Pair[K, V] = {
 pub type Named = Pair[bool, i64]
 
 fn make() Named {
-    let pair: Pair[bool, i64] = .{ key: true, value: 41 }
+    let pair = Pair[bool, i64].{ key: true, value: 41 }
     return pair
 }
 

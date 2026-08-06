@@ -5,11 +5,11 @@ error[E0241]: this instantiates more than 64 levels deep
   |     ^^^^^^^^^^^^^^^ the limit is here
   |
   = help: a type or function that instantiates itself never bottoms out
-note: while checking 'Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]', needed here
- --> test/fail/instantiation_depth.zol:6:16
+note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]', needed here
+ --> test/fail/instantiation_depth.zol:7:12
   |
-6 |     var boxed: Box[*var T] = .{ item: value }
-  |                ^^^^^^^^^^
+7 |     return dig(&boxed)
+  |            ^^^^^^^^^^
 note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]', needed here
  --> test/fail/instantiation_depth.zol:7:12
   |
@@ -47,11 +47,16 @@ note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var 
   |            ^^^^^^^^^^
 note: and 56 more instantiation levels
 
-error[E0219]: 'Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' has no field named 'item'
- --> test/fail/instantiation_depth.zol:6:33
+error[E0219]: 'Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' has no field named 'item'
+ --> test/fail/instantiation_depth.zol:6:31
   |
-6 |     var boxed: Box[*var T] = .{ item: value }
-  |                                 ^^^^ no such field
+6 |     var boxed = Box[*var T].{ item: value }
+  |                               ^^^^ no such field
+note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]', needed here
+ --> test/fail/instantiation_depth.zol:7:12
+  |
+7 |     return dig(&boxed)
+  |            ^^^^^^^^^^
 note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]', needed here
  --> test/fail/instantiation_depth.zol:7:12
   |
@@ -87,10 +92,5 @@ note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var 
   |
 7 |     return dig(&boxed)
   |            ^^^^^^^^^^
-note: while checking 'dig[Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var Box[*var i64]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]', needed here
- --> test/fail/instantiation_depth.zol:7:12
-  |
-7 |     return dig(&boxed)
-  |            ^^^^^^^^^^
-note: and 55 more instantiation levels
+note: and 56 more instantiation levels
 

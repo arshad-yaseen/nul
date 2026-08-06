@@ -38,7 +38,7 @@ fn every_expression(p: *var i64, b: Box[i64], flag: bool) i64 {
     let address = &grouped
     let read = address.*
     no_return_type(1)
-    let literal: Box[i64] = .{ item: 1 }
+    let literal = Box[i64].{ item: 1 }
     let branched: i64 = if flag { 1 } else { 2 }
     let chained = b
         .read()

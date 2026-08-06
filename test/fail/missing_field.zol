@@ -4,5 +4,5 @@ type Point = {
 }
 
 fn drive() Point {
-    return .{ x: 1 }
+    return Point.{ x: 1 }
 }

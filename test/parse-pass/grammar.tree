@@ -114,10 +114,10 @@ root
         callee: ident no_return_type
         arg: number_literal 1
       var_decl literal let
-        type: bracket
-          base: ident Box
-          arg: ident i64
         init: struct_literal
+          type: bracket
+            base: ident Box
+            arg: ident i64
           struct_field_init item
             value: number_literal 1
       var_decl branched let

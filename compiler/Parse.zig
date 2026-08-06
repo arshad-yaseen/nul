@@ -96,18 +96,12 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
 
 // the cursor
 
-/// Or `.eof` past the end. One ahead is what a struct literal needs to see the
-/// `{` after its `.`, and nothing looks further.
-fn peek(self: *const Parse, ahead: u32) Token.Tag {
-    assert(ahead <= 1);
-    const index = self.token_index.after(ahead).int();
+/// Or `.eof` past the end. Nothing in the grammar looks further than the token
+/// the cursor is on.
+fn current(self: *const Parse) Token.Tag {
+    const index = self.token_index.int();
     if (index < self.tags.len) return self.tags[index];
     return .eof;
-}
-
-fn current(self: *const Parse) Token.Tag {
-    assert(self.token_index.int() < self.tags.len);
-    return self.peek(0);
 }
 
 fn at(self: *const Parse, expected: Token.Tag) bool {
@@ -557,7 +551,7 @@ fn parseRoot(self: *Parse) Allocator.Error!void {
         .opener = null,
         .code = .expected_declaration,
         .expected = "a declaration",
-        .help = "a file holds 'import', 'struct', 'type', 'fn', and 'let'",
+        .help = "a file holds 'import', 'type', 'fn', and 'let'",
         .bails = TokenSet.initEmpty(),
     });
 
@@ -1004,6 +998,7 @@ fn parseSelector(self: *Parse, base: Node.Index) Allocator.Error!?Node.Index {
     assert(self.at(.dot));
     const dot = self.nextToken();
     if (self.eatToken(.ident) != null) return try self.addUnary(.field_access, dot, base);
+    if (self.at(.l_brace)) return try self.parseStructLiteral(base, dot);
 
     try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
     // an operator cannot follow a `.`, so it is the mistake itself
@@ -1080,7 +1075,20 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .ident => return self.addLeaf(.ident),
         .number => return self.addLeaf(.number_literal),
         .kw_true, .kw_false => return self.addLeaf(.bool_literal),
-        .dot => return self.parseStructLiteral(),
+        // the old spelling, where the type came from context
+        .dot => {
+            try self.err(.{
+                .code = .expected_expression,
+                .span = self.here(),
+                .message = "a struct literal names the type it builds",
+                .label = "nothing here says which struct",
+                .help = "write it as 'Point.{ field: value }'",
+            });
+            const dot = self.nextToken();
+            if (self.at(.l_brace) == false) return self.hole();
+            // read the body anyway, so the mistake reports once
+            return self.parseStructLiteral(try self.hole(), dot);
+        },
         // parentheses group, and the tree already holds the grouping
         .l_paren => {
             const lparen = self.nextToken();
@@ -1104,22 +1112,16 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.dot));
-
-    if (self.peek(1) != .l_brace) {
-        try self.err(.{
-            .code = .expected_expression,
-            .span = self.here(),
-            .message = "a '.' here begins a struct literal",
-            .label = "expected '{' after this",
-            .help = "a struct literal is written '.{ field: value }'",
-        });
-        return self.skip();
-    }
-
-    const dot = self.nextToken();
+/// `Point.{ x: 1 }`. The type is written, so nothing has to infer it and a
+/// union member names which one it is.
+fn parseStructLiteral(
+    self: *Parse,
+    type_expr: Node.Index,
+    dot: Token.Index,
+) Allocator.Error!Node.Index {
+    assert(self.at(.l_brace));
     const lbrace = self.nextToken();
+
     const top = self.scratch.items.len;
     defer self.scratch.shrinkRetainingCapacity(top);
 
@@ -1133,6 +1135,7 @@ fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
     });
 
     const start = self.extraStart();
+    try self.extraNode(type_expr);
     try self.extraList(self.scratch.items[top..]);
     return self.addNode(.{
         .tag = .struct_literal,

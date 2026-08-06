@@ -60,7 +60,6 @@ pub const Code = enum(u16) {
     wrong_arity = 213,
     not_constant = 214,
     var_needs_type = 215,
-    no_literal_context = 216,
     missing_field = 218,
     no_such_member = 219,
     private = 220,

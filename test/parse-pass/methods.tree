@@ -29,6 +29,7 @@ root
       body: block
         return_expr
           value: struct_literal
+            type: ident Counter
             struct_field_init hits
               value: number_literal 0
   fn_decl use_counter

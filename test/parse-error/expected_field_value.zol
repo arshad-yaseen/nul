@@ -3,6 +3,6 @@ type Point = {
 }
 
 fn drive() {
-    let p: Point = .{ 1 }
+    let p = Point.{ 1 }
     _ = p
 }

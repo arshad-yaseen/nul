@@ -3,7 +3,7 @@ pub type Box[T] = {
 }
 
 fn dig[T](value: *var T) i64 {
-    var boxed: Box[*var T] = .{ item: value }
+    var boxed = Box[*var T].{ item: value }
     return dig(&boxed)
 }
 

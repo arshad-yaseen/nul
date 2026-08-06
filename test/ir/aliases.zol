@@ -7,7 +7,7 @@ pub type Boxed = Box[Number]
 pub type Same = Boxed
 
 fn fill(value: Number) Same {
-    var box: Same = .{ item: value }
+    var box = Same.{ item: value }
     box.item = value
     return box
 }
