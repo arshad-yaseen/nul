@@ -188,7 +188,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
                 }) orelse continue;
                 try registerMembers(comp, module, index, struct_index, decl);
             },
-            .type_decl => |decl| _ = try addDecl(comp, module, index, .{
+            .alias_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .type_alias,
                 .node = node,
                 .name_token = decl.name_token,
@@ -583,7 +583,7 @@ pub fn declIsPub(comp: *const Compilation, decl_index: Decl.Index) bool {
     return switch (tree.viewOf(decl.node)) {
         .import_decl => |view| view.is_pub,
         .struct_decl => |view| view.is_pub,
-        .type_decl => |view| view.is_pub,
+        .alias_decl => |view| view.is_pub,
         .fn_decl => |view| view.is_pub,
         .var_decl => |view| view.is_pub,
         else => false,

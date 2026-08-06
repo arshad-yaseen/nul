@@ -1,4 +1,4 @@
-struct Point {
+type Point = {
     x: i64
 }
 

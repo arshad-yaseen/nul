@@ -1,7 +1,7 @@
 error[E0241]: this instantiates more than 64 levels deep
  --> test/fail/instantiation_depth.zol:1:5
   |
-1 | pub struct Box[T] {
+1 | pub type Box[T] = {
   |     ^^^^^^^^^^^^^^^ the limit is here
   |
   = help: a type or function that instantiates itself never bottoms out

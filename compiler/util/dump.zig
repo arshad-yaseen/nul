@@ -54,7 +54,7 @@ fn node(
             for (it.type_params) |param| try node(ast, writer, param, below, "");
             for (it.members) |member| try node(ast, writer, member, below, "");
         },
-        .type_decl => |it| {
+        .alias_decl => |it| {
             try writer.print(" {s}", .{ast.tokenSlice(it.name_token)});
             try flag(writer, it.is_pub, "pub");
             try writer.writeByte('\n');

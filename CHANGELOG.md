@@ -14,6 +14,9 @@ than retrofitted. `demo.zol` is the design it is heading for.
 - `try`, `catch`, `orelse`, `null`, and the `|v|` capture go with them. One
   operator, `or`, takes over from the first three.
 - `while` is gone. `loop` replaces it.
+- `struct X { }` is now `type X = { }`. One keyword declares a type, and what
+  stands after the `=` says which kind it is. A generic still writes its
+  parameters before the `=`, as `type Box[T] = { }`.
 - `use` is now `import`.
 - `!` before a value is now `not`. `!=` is unchanged.
 - `E0217`, and `E0224` through `E0228`, retire.

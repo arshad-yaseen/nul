@@ -8,7 +8,7 @@ root
     doc /// The largest thing anyone should ask for.
     doc /// Two lines, both kept.
     init: number_literal 1024
-  type_decl Count pub
+  alias_decl Count pub
     doc /// A name for a number.
     type: ident i64
   struct_decl Point pub

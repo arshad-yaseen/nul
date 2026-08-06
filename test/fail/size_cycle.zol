@@ -1,4 +1,4 @@
-struct Tree {
+type Tree = {
     label: i64
     left: Tree
 }

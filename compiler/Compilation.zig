@@ -781,7 +781,7 @@ test "instantiation identity is index equality" {
     defer comp.deinit();
 
     try comp.compile(try testSource(gpa,
-        \\pub struct Box[T] {
+        \\pub type Box[T] = {
         \\    item: T
         \\}
         \\pub type Boxed = Box[i64]

@@ -1,8 +1,8 @@
-struct Inner {
+type Inner = {
     hits: i64
 }
 
-struct Outer {
+type Outer = {
     inner: Inner
     peer: *var Outer
 }

@@ -5,10 +5,10 @@ import std.text // after an import
 
 /// A documented struct.
 pub // between 'pub' and what it introduces
-struct Pair[
+type Pair[
     A, // after a type parameter
     B
-] {
+] = {
     // above a field
     first: A, // after a field
     second: B

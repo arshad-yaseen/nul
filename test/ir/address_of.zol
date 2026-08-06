@@ -1,4 +1,4 @@
-struct Tally {
+type Tally = {
     hits: i64
 }
 

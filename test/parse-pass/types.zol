@@ -1,6 +1,6 @@
 import std.text
 
-struct Node {
+type Node = {
     plain: i64
     read_only: *Node
     writable: *var Node

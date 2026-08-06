@@ -1,8 +1,8 @@
-struct Header {
+type Header = {
     tag: i64
 }
 
-struct Payload {
+type Payload = {
     value: i64
     extra: i64
 }

@@ -67,7 +67,7 @@ const Value = union(enum) {
 
 pub fn typeAlias(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     var check = context(comp, decl_index, &.{});
-    const view = check.tree.viewOf(check.declNode(decl_index)).type_decl;
+    const view = check.tree.viewOf(check.declNode(decl_index)).alias_decl;
 
     const resolved = try check.resolveWrittenType(view.aliased);
     comp.declPtr(decl_index).result = resolved.int();

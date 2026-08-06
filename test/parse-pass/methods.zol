@@ -1,4 +1,4 @@
-pub struct Counter {
+pub type Counter = {
     hits: i64
 
     pub fn total(self: Counter) i64 {

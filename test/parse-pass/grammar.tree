@@ -2,12 +2,12 @@ root
   import_decl
     path: field_access mem
       lhs: ident std
-  type_decl Alias pub
+  alias_decl Alias pub
     type: ident i64
-  type_decl Pointer
+  alias_decl Pointer
     type: pointer_type var
       child: ident i64
-  type_decl Nested
+  alias_decl Nested
     type: bracket
       base: ident Box
       arg: bracket

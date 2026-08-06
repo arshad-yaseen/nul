@@ -1,8 +1,8 @@
 error[E0205]: 'bool' is already the name of a type every file can see
- --> test/fail/shadow.zol:3:8
+ --> test/fail/shadow.zol:3:6
   |
-3 | struct bool {
-  |        ^^^^ already taken
+3 | type bool = {
+  |      ^^^^ already taken
   |
   = help: pick another name, and alias it with 'type' if you want a synonym
 

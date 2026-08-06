@@ -1,4 +1,4 @@
-struct Counter {
+type Counter = {
     hits: i64
 
     fn bump(self: *var Counter) {

@@ -1,4 +1,4 @@
-struct Holder {
+type Holder = {
     count: i64
 }
 

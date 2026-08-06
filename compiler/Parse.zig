@@ -468,7 +468,7 @@ const starts_bracket_item = starts_expr.unionWith(TokenSet.initOne(.star));
 const starts_name = TokenSet.initOne(.ident);
 
 const starts_decl = TokenSet.initMany(&.{
-    .kw_pub, .kw_import, .kw_struct, .kw_type,
+    .kw_pub, .kw_import, .kw_type,
     .kw_fn,  .kw_let,    .kw_var,
 });
 
@@ -572,7 +572,6 @@ fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
     _ = self.eatToken(.kw_pub);
     switch (self.current()) {
         .kw_import => return self.parseImportDecl(),
-        .kw_struct => return self.parseStructDecl(),
         .kw_type => return self.parseTypeDecl(),
         .kw_fn => return self.parseFnDecl(),
         .kw_let => return self.parseVarDecl(),
@@ -619,9 +618,11 @@ fn parsePath(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
-fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_struct));
-    const struct_token = self.nextToken();
+/// `type Name = { ... }` a struct
+/// `type Name = T` an alias
+fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_type));
+    const type_token = self.nextToken();
     try self.expectToken(.ident);
 
     const top = self.scratch.items.len;
@@ -629,6 +630,13 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
 
     try self.parseTypeParams();
     const members_start = self.scratch.items.len;
+    try self.expectToken(.eq);
+
+    // only a struct body carries type parameters, until a union can
+    if (self.at(.l_brace) == false and members_start == top) {
+        const aliased = try self.parseType();
+        return self.addUnary(.alias_decl, type_token, aliased);
+    }
 
     const lbrace = self.eatToken(.l_brace);
     if (lbrace == null) try self.errExpected(.expected_token, Token.Tag.l_brace.symbol(), null);
@@ -647,18 +655,9 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
     try self.extraList(self.scratch.items[members_start..]);
     return self.addNode(.{
         .tag = .struct_decl,
-        .main_token = struct_token,
+        .main_token = type_token,
         .data = .{ .extra = start },
     });
-}
-
-fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_type));
-    const type_token = self.nextToken();
-    try self.expectToken(.ident);
-    try self.expectToken(.eq);
-    const aliased = try self.parseType();
-    return self.addUnary(.type_decl, type_token, aliased);
 }
 
 fn parseFnDecl(self: *Parse) Allocator.Error!Node.Index {

@@ -1,6 +1,6 @@
 let outer = 1
 
-struct bool {
+type bool = {
     byte: u8
 }
 

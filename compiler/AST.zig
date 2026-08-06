@@ -108,7 +108,7 @@ pub const Node = struct {
         root,
         import_decl,
         struct_decl,
-        type_decl,
+        alias_decl,
         fn_decl,
         /// Both `let` and `var`, told apart by `main_token`.
         var_decl,
@@ -325,7 +325,7 @@ pub const View = union(enum) {
     root: []const Node.Index,
     import_decl: Import,
     struct_decl: StructDecl,
-    type_decl: TypeDecl,
+    alias_decl: AliasDecl,
     fn_decl: FnDecl,
     var_decl: VarDecl,
     type_param: Token.Index,
@@ -366,7 +366,7 @@ pub const View = union(enum) {
         type_params: []const Node.Index,
         members: []const Node.Index,
     };
-    pub const TypeDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
+    pub const AliasDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
     pub const FnDecl = struct {
         name_token: Token.Index,
         is_pub: bool,
@@ -437,7 +437,7 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
                 .members = payload.list(),
             } };
         },
-        .type_decl => .{ .type_decl = .{
+        .alias_decl => .{ .alias_decl = .{
             .name_token = main.after(1),
             .is_pub = tree.isPub(main),
             .aliased = data.node,
@@ -669,7 +669,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                     } else return main.after(1);
                 },
             },
-            .type_decl => |it| switch (side) {
+            .alias_decl => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.aliased,
             },

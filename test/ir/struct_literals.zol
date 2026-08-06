@@ -1,9 +1,9 @@
-struct Point {
+type Point = {
     x: i64
     y: i64
 }
 
-struct Frame {
+type Frame = {
     origin: Point
     size: Point
     label: u32

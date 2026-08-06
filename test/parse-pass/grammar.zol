@@ -4,7 +4,7 @@ pub type Alias = i64
 type Pointer = *var i64
 type Nested = Box[Box[i64]]
 
-pub struct Box[T,] {
+pub type Box[T,] = {
     item: T
 
     fn read(self: *Box[T]) T {
@@ -16,7 +16,7 @@ pub struct Box[T,] {
     }
 }
 
-struct Empty {}
+type Empty = {}
 
 let top_level: i64 = 1 + 2 * 3
 pub let exported = 0xff_ff

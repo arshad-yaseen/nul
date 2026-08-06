@@ -9,7 +9,7 @@ pub let limit = 1024
 pub type Count = i64
 
 /// A point in the plane.
-pub struct Point {
+pub type Point = {
     /// How far across.
     x: i64
     /// How far up.

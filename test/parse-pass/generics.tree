@@ -10,11 +10,11 @@ root
       type: ident K
     field value
       type: ident V
-  type_decl IntBox pub
+  alias_decl IntBox pub
     type: bracket
       base: ident Box
       arg: ident i64
-  type_decl Nested pub
+  alias_decl Nested pub
     type: bracket
       base: ident Box
       arg: bracket
