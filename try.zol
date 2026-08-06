@@ -1,0 +1,149 @@
+pub type Channel = u32
+type Cursor = *var Channel
+
+pub let opaque_alpha: Channel = 0xff
+let mid_point = 0x80
+let bright = mid_point < mid_point * 2 and mid_point != 0
+
+pub type Rgba = {
+    r: Channel
+    g: Channel
+    b: Channel
+    a: Channel
+
+    pub fn plain(red: Channel, green: Channel, blue: Channel) Rgba {
+        return Rgba.{
+            r: red,
+            g: green,
+            b: blue,
+            a: opaque_alpha,
+        }
+    }
+
+    pub fn word(self: Rgba) Channel {
+        return self.r << 24 | self.g << 16 | self.b << 8 | self.a & 0xff
+    }
+
+    fn luma(self: *Rgba) Channel {
+        let weighted = self.r * 54 + self.g * 183 + self.b * 19
+        return weighted >> 8 ^ self.a
+    }
+
+    pub fn fade(self: *var Rgba, by: Channel) {
+        if by == 0 {
+            return
+        }
+        self.r -= by
+        self.g -= by
+        self.b -= by
+    }
+}
+
+pub type Slot[T] = {
+    value: T
+    full: bool
+
+    pub fn swap(self: *var Slot[T], next: T) T {
+        let previous = self.value
+        self.value = next
+        self.full = true
+        return previous
+    }
+
+    fn peek(self: *Slot[T]) T {
+        return self.value
+    }
+
+    fn echo[U](self: Slot[T], other: U) U {
+        return other
+    }
+}
+
+pub type Frame = Slot[Rgba]
+type Same = Frame
+
+fn identity[T](value: T) T {
+    return value
+}
+
+fn shade(level: Channel) i64 {
+    if level >= 200 {
+        return 3
+    } else if level > 100 {
+        return 2
+    } else if level == 0 {
+        return 0
+    } else {
+        return 1
+    }
+}
+
+fn clamped(value: Channel, limit: Channel) Channel {
+    return if value <= limit { value } else { limit }
+}
+
+fn masked(bits: u8, keep: bool) u8 {
+    let dropped = not keep or bits == 0
+    return if dropped { ~bits } else { bits }
+}
+
+fn ratio(total: f64, count: f64) f64 {
+    return total / count + 0.5
+}
+
+fn offset(from: i64) i64 {
+    let back = -from
+    return back % 7
+}
+
+fn churn(seed: Cursor, by: Channel) {
+    seed.* += by
+    seed.* -= 1
+    seed.* *= 3
+    seed.* /= 2
+    seed.* %= 251
+    seed.* &= 0xff
+    seed.* |= 1
+    seed.* ^= 0x10
+    seed.* <<= 2
+    seed.* >>= 1
+}
+
+fn twice(handle: **var Channel) Channel {
+    return handle.*.*
+}
+
+fn drive() Channel {
+    var pixel = Rgba.plain(16, 32, 64)
+    var tally: Channel = mid_point
+    defer tally = 0
+    defer tally += 1
+    defer {
+        pixel.a = opaque_alpha
+        tally *= 2
+    }
+    defer pixel.fade(1)
+
+    var frame = Same.{ value: pixel, full: false }
+    let previous = frame.swap(Rgba.plain(1, 2, 3))
+    let seen = frame
+        .peek()
+        .word()
+
+    let echoed = frame.echo[bool](bright)
+    let copied = identity(pixel)
+
+    let cursor = &tally
+    let handle = &cursor
+    churn(cursor, 7)
+    let deep = twice(handle)
+
+    _ = shade(previous.luma())
+    _ = masked(0x0f, echoed)
+    _ = ratio(1.5, 0.25)
+    _ = offset(9)
+    _ = copied.a
+    _ = Frame.{ value: Rgba.{ r: 1, g: 2, b: 3, a: 4 }, full: true }
+
+    return clamped(seen + deep, 0xff_ff)
+}
