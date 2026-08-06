@@ -9,24 +9,29 @@ No garbage collector. No hidden allocations. No lifetime annotations.
 
 > How much of memory safety can be proven from the allocator you were already passing down, without a borrow checker to learn?
 
-## Try it
+## Builds
+
+Every release, and every commit that reaches `main`, is cross-compiled for macOS,
+Linux, and Windows and published on the [releases page][releases]. Numbered
+releases are the only ones that are supported; `dev` is the tip of `main`, and
+the next commit overwrites it.
+
+Each set ships `SHA256SUMS` and an `index.json` naming the version, the commit,
+and every archive. Two URLs never move:
+
+```
+https://github.com/arshad-yaseen/zol/releases/latest/download/index.json
+https://github.com/arshad-yaseen/zol/releases/download/dev/index.json
+```
+
+Archives carry a build provenance attestation, so a download can be traced back
+to the commit and the workflow run that produced it:
 
 ```console
-$ zig build
-$ ./zig-out/bin/zol check demo.zol
-$ ./zig-out/bin/zol ir demo.zol
+$ gh attestation verify zol-*.tar.xz --repo arshad-yaseen/zol
 ```
 
-```
-commands:
-  check <entry>   check the program and report what is wrong
-  ir    <entry>   print the typed IR
-
-options:
-  --std <dir>           where the standard library lives
-  --color auto|on|off   colour the output (default: auto)
-  --version             print the version
-```
+[releases]: https://github.com/arshad-yaseen/zol/releases
 
 ## Status
 

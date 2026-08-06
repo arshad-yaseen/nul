@@ -1,10 +1,11 @@
 .zig-cache/
 zig-out/
 
-# what the release workflow leaves in the working tree
+# what the publishing workflows leave in the working tree
 /zol-*.tar.xz
 /zol-*.zip
 /SHA256SUMS
+/index.json
 /NOTES.md
 
 .DS_Store

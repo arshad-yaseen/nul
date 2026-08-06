@@ -1,0 +1,89 @@
+name: dev
+
+on:
+  push:
+    branches: [main]
+
+# one publish at a time, so `dev` holds one commit's archives and its index
+concurrency:
+  group: dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the version is derived from `git describe`, which needs the tags
+          fetch-depth: 0
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Package
+        id: package
+        uses: ./.github/actions/package
+        with:
+          tag: dev
+
+      - name: Attest what built them
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            zol-*.tar.xz
+            zol-*.zip
+
+      - name: Move the dev pointer
+        run: |
+          git tag -f dev
+          git push -f origin dev
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat > NOTES.md <<EOF
+          \`${VERSION}\`, built from ${GITHUB_SHA}.
+
+          The tip of \`main\`, rebuilt and replaced on every commit. It is not a
+          release: it has had the testing CI gives every commit and no more, the
+          next push overwrites it, and none of it is supported. Depend on a
+          numbered release instead.
+
+          \`index.json\` names the current build and where each archive is, and
+          stays at one URL:
+
+              ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/dev/index.json
+
+          Check a download against \`SHA256SUMS\`, or against what built it:
+
+              gh attestation verify <archive> --repo ${GITHUB_REPOSITORY}
+          EOF
+
+          if gh release view dev >/dev/null 2>&1; then
+            # an asset name carries a version, so the last commit's is not overwritten
+            stale=$(gh release view dev --json assets --jq '.assets[].name')
+            for asset in $stale; do gh release delete-asset dev "$asset" --yes; done
+            gh release edit dev --notes-file NOTES.md
+          else
+            gh release create dev --prerelease --title "Zol dev" --notes-file NOTES.md
+          fi
+
+          gh release upload dev zol-*.tar.xz zol-*.zip SHA256SUMS index.json

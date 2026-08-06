@@ -80,6 +80,30 @@ would cost the area name and buy nothing.
 Versions are `0.MINOR.PATCH`. Before 1.0 a minor release may change the language
 in ways that break programs that used to compile, and a patch release only fixes.
 
+### Two channels
+
+Everything published comes out of one pipeline through two doors.
+
+- **Numbered releases**, at `X.Y.Z`. Cut by hand, immutable once pushed, and the
+  only thing anyone should build against. This is what a bug report should name
+  and what the changelog is written for.
+- **Dev builds**, at the `dev` tag. Every commit that reaches `main` and passes
+  CI is cross-compiled and published there, under the version it reports:
+  `0.2.0-dev.47+7f3a91c9a`. `.github/workflows/dev.yml` replaces the assets each
+  time, so `dev` holds the tip of `main` and nothing else.
+
+Dev builds exist so that a report names one commit rather than a branch. They
+carry no promise: the next push overwrites them, and they get no notes and no
+support. Say so wherever they are offered.
+
+A downloader reads `index.json`, which names the version, the commit, and every
+archive with its checksum and size. Two URLs never move:
+
+```
+https://github.com/arshad-yaseen/zol/releases/download/dev/index.json
+https://github.com/arshad-yaseen/zol/releases/latest/download/index.json
+```
+
 **When.** `## [Unreleased]` is the trigger. Entries someone could act on means a
 minor. A shipped release that is broken means a patch. Empty means there is
 nothing to release, so do not cut one on a schedule.
@@ -95,17 +119,29 @@ nothing to release, so do not cut one on a schedule.
 6. `git push origin X.Y.Z`, on its own.
 7. Set `.version` to the next minor, so later builds report `X.Y+1.0-dev.N+hash`.
 
-Three rules, each of which has already cost a release:
+Four rules, each of which has already cost a release:
 
-- Tag only a commit CI has passed.
+- Tag only a commit CI has passed. The workflow runs the same matrix again
+  before it publishes, so breaking this now fails loudly rather than quietly,
+  but it still spends a tag you cannot take back.
 - Push the tag by itself. A branch and a tag in one `git push` loses the tag
   event, and the release workflow never runs.
-- Never move a published tag.
+- Never move a version tag, and never touch a published version's assets. The
+  one tag that moves is `dev`, which points at the tip of `main` rather than
+  naming a version, and is the only thing the pipeline may overwrite.
+- Never hand-edit a published archive or index. Both are written by the
+  pipeline, from one commit, and are re-cut rather than repaired.
 
-The tag fires `.github/workflows/release.yml`, which builds every target,
-archives them with checksums, and takes the release notes from the `[X.Y.Z]`
-section of `CHANGELOG.md`. `build.zig` refuses to build when the tag and the
+The tag fires `.github/workflows/release.yml`. It runs CI, then hands off to
+`.github/actions/package`, which builds every target, archives them, writes
+`SHA256SUMS` and `index.json`, and attaches a provenance attestation tying each
+archive to the commit and workflow run that produced it. The notes come from the
+`[X.Y.Z]` section of `CHANGELOG.md`, and a tag with no section fails rather than
+publishing an empty release. `build.zig` refuses to build when the tag and the
 manifest version disagree, so a mistagged release stops before it publishes.
+
+`dev.yml` and `release.yml` share that packaging action, so the two channels
+cannot drift into producing differently shaped downloads.
 
 ## Versions
 

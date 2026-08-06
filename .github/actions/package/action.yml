@@ -1,0 +1,72 @@
+name: package
+description: Cross-compile every target, archive it, and write the download index
+
+inputs:
+  tag:
+    description: The tag the archives will be downloaded from
+    required: true
+
+outputs:
+  version:
+    description: The version the archives report
+    value: ${{ steps.build.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Cross-compile every target
+      id: build
+      shell: bash
+      run: |
+        set -euo pipefail
+        zig build release
+        echo "version=$(cat zig-out/release/version.txt)" >> "$GITHUB_OUTPUT"
+
+    - name: Archive
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd zig-out/release
+        for tree in */; do
+          name="${tree%/}"
+          case "$name" in
+            *windows*) zip -qr "../../$name.zip" "$name" ;;
+            *) XZ_OPT=-9 tar -cJf "../../$name.tar.xz" "$name" ;;
+          esac
+        done
+        cd ../..
+        sha256sum zol-*.tar.xz zol-*.zip > SHA256SUMS
+        cat SHA256SUMS
+
+    - name: Write the download index
+      shell: bash
+      env:
+        VERSION: ${{ steps.build.outputs.version }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        base="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+        # build.zig names each tree `zol-<version>-<triple>`, with `+` as `.`
+        prefix="zol-${VERSION//+/.}-"
+
+        targets=$(
+          for archive in zol-*.tar.xz zol-*.zip; do
+            name="${archive%.tar.xz}"
+            name="${name%.zip}"
+            jq -n \
+              --arg triple "${name#"$prefix"}" \
+              --arg archive "${base}/${archive}" \
+              --arg shasum "$(sha256sum "$archive" | cut -d' ' -f1)" \
+              --argjson size "$(wc -c < "$archive")" \
+              '{($triple): {archive: $archive, shasum: $shasum, size: $size}}'
+          done | jq -s add
+        )
+
+        jq -n \
+          --arg version "$VERSION" \
+          --arg commit "$GITHUB_SHA" \
+          --arg date "$(date -u +%Y-%m-%d)" \
+          --argjson targets "$targets" \
+          '{version: $version, commit: $commit, date: $date} + $targets' > index.json
+        cat index.json

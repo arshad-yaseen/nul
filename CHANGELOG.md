@@ -51,6 +51,10 @@ than retrofitted. `demo.zol` is the design it is heading for.
   declaration already was.
 - `-x` on the smallest value of a signed type reports that it does not fit,
   where it used to crash the compiler.
+- Every commit on `main` that passes CI is now cross-compiled and published as
+  a dev build, under the version it reports, at the `dev` tag. Numbered
+  releases stay the only supported builds. Both channels ship an `index.json`
+  naming the version, the commit, and every archive with its checksum.
 - A build with no history to read reports `X.Y.Z-dev` where it used to report
   `X.Y.Z`, so a source tree unpacked without its `.git` no longer claims to be
   the release it still precedes.

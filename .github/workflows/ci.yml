@@ -1,13 +1,14 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  # `dev` and `release` call this rather than test from a narrower matrix
+  workflow_call:
 
+# cancelling a run that goes on to publish would abandon a half-uploaded release
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

@@ -108,12 +108,20 @@ pub fn build(b: *std.Build) void {
 fn addRelease(b: *std.Build, version: []const u8, options: *std.Build.Step.Options) void {
     const release_step = b.step("release", "Cross-compile a release tree for every target");
 
+    // one version for packaging to name archives and the index by
+    const stamp = b.addWriteFiles().add("version.txt", b.fmt("{s}\n", .{version}));
+    release_step.dependOn(&b.addInstallFile(stamp, "release/version.txt").step);
+
+    // GitHub renames a release asset whose name holds a `+`, so paths avoid one
+    const in_paths = b.allocator.dupe(u8, version) catch @panic("OOM");
+    std.mem.replaceScalar(u8, in_paths, '+', '.');
+
     for (release_targets) |triple| {
         const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch
             std.debug.panic("release target '{s}' is not a target triple", .{triple});
         const exe = addZol(b, b.resolveTargetQuery(query), .ReleaseFast, options);
 
-        const tree = b.fmt("release/zol-{s}-{s}", .{ version, triple });
+        const tree = b.fmt("release/zol-{s}-{s}", .{ in_paths, triple });
         const binary = b.addInstallArtifact(exe, .{
             .dest_dir = .{ .override = .{ .custom = b.fmt("{s}/bin", .{tree}) } },
         });
