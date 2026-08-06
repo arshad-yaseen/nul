@@ -315,8 +315,6 @@ fn resolveWrittenType(check: *Check, node: Node.Index) Allocator.Error!Pool.Inde
 }
 
 fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
-    const comp = check.comp;
-
     switch (check.tree.viewOf(node)) {
         .ident => return check.resolveTypeName(node),
         .field_access => |access| {
@@ -342,9 +340,7 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
         .pointer_type => |pointer| {
             const child = try check.resolveType(pointer.child);
             if (child == .poison) return .poison;
-            return comp.pool.intern(comp.gpa, .{
-                .type_pointer = .{ .child = child, .mutable = pointer.is_mutable },
-            });
+            return check.pointerTo(child, pointer.is_mutable);
         },
         .union_type => |members| return check.resolveUnionType(node, members),
         .err => return .poison,

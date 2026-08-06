@@ -314,7 +314,10 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
                 assert(pool.isType(member));
                 for (members[0..at]) |earlier| assert(member != earlier);
             }
-            break :item .{ .tag = .type_union, .data = try pool.addExtraList(gpa, members) };
+            break :item .{
+                .tag = .type_union,
+                .data = try pool.addExtra(gpa, @intCast(members.len), @ptrCast(members)),
+            };
         },
         .value_unit => |unit_type| item: {
             assert(pool.items.items(.tag)[unit_type.int()] == .type_unit);
@@ -322,11 +325,11 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
         },
         .value_int => |it| .{
             .tag = .value_int,
-            .data = try pool.addExtra(gpa, it.type, &wordsOf(it.value)),
+            .data = try pool.addExtra(gpa, it.type.int(), &wordsOf(it.value)),
         },
         .value_float => |it| .{
             .tag = .value_float,
-            .data = try pool.addExtra(gpa, it.type, &wordsOf(@as(u64, @bitCast(it.value)))),
+            .data = try pool.addExtra(gpa, it.type.int(), &wordsOf(@as(u64, @bitCast(it.value)))),
         },
     };
     try pool.items.append(gpa, item);
@@ -909,43 +912,26 @@ fn internWith(pool: *Pool, gpa: Allocator, value: i128, type_index: Index) Alloc
 
 // storage helpers
 
-fn addExtra(
-    pool: *Pool,
-    gpa: Allocator,
-    type_index: Index,
-    words: []const u32,
-) Allocator.Error!u32 {
+/// One leading word, then the payload. A value leads with its type, and a
+/// union with its member count.
+fn addExtra(pool: *Pool, gpa: Allocator, lead: u32, words: []const u32) Allocator.Error!u32 {
     assert(words.len > 0);
     if (pool.extra.items.len + words.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
 
-    const start: u32 = @intCast(pool.extra.items.len);
-    try pool.extra.ensureUnusedCapacity(gpa, words.len + 1);
-    pool.extra.appendAssumeCapacity(type_index.int());
-    pool.extra.appendSliceAssumeCapacity(words);
-
-    assert(pool.extra.items.len == start + words.len + 1);
-    return start;
-}
-
-/// The count, then the indices, for an item whose payload is a list.
-fn addExtraList(pool: *Pool, gpa: Allocator, list: []const Index) Allocator.Error!u32 {
-    assert(list.len > 0);
-    if (pool.extra.items.len + list.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
-
-    // the reserve may move `extra`, so the list must not point into it
+    // the reserve may move `extra`, so the payload must not point into it
     if (pool.extra.items.len > 0) {
         const extra_start = @intFromPtr(pool.extra.items.ptr);
         const extra_end = extra_start + pool.extra.items.len * @sizeOf(u32);
-        const list_start = @intFromPtr(list.ptr);
-        assert(list_start >= extra_end or list_start + list.len * @sizeOf(Index) <= extra_start);
+        const words_start = @intFromPtr(words.ptr);
+        assert(words_start >= extra_end or words_start + words.len * @sizeOf(u32) <= extra_start);
     }
 
     const start: u32 = @intCast(pool.extra.items.len);
-    try pool.extra.ensureUnusedCapacity(gpa, list.len + 1);
-    pool.extra.appendAssumeCapacity(@intCast(list.len));
-    pool.extra.appendSliceAssumeCapacity(@ptrCast(list));
+    try pool.extra.ensureUnusedCapacity(gpa, words.len + 1);
+    pool.extra.appendAssumeCapacity(lead);
+    pool.extra.appendSliceAssumeCapacity(words);
 
-    assert(pool.extra.items.len == start + list.len + 1);
+    assert(pool.extra.items.len == start + words.len + 1);
     return start;
 }
 
