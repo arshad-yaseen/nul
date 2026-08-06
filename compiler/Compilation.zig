@@ -486,7 +486,6 @@ pub fn moduleAt(comp: *const Compilation, index: Module.Index) *Module {
     return comp.modules.items[index.int()];
 }
 
-/// The tree a declaration was parsed from.
 pub fn treeOf(comp: *const Compilation, index: Module.Index) *const AST {
     return &comp.moduleAt(index).tree;
 }
@@ -496,7 +495,6 @@ pub fn rowAt(comp: *const Compilation, at: u32) Row {
     return comp.rows.items[at];
 }
 
-/// The declaration an instantiation came from.
 pub fn instanceDecl(comp: *const Compilation, index: Pool.Instance) Decl.Index {
     return comp.instanceAt(index).decl;
 }

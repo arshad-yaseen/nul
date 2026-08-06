@@ -1075,7 +1075,7 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .ident => return self.addLeaf(.ident),
         .number => return self.addLeaf(.number_literal),
         .kw_true, .kw_false => return self.addLeaf(.bool_literal),
-        // the old spelling, where the type came from context
+        // a literal with no type in front of it, which the checker cannot place
         .dot => {
             try self.err(.{
                 .code = .expected_expression,

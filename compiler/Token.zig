@@ -163,12 +163,10 @@ pub const Tag = enum(u8) {
     }
 };
 
-/// A position in a token list.
 pub const Index = enum(u32) {
     first = 0,
     _,
 
-    /// The token `count` places later.
     pub fn after(index: Index, count: u32) Index {
         assert(@intFromEnum(index) <= std.math.maxInt(u32) - count);
         return @enumFromInt(@intFromEnum(index) + count);

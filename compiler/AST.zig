@@ -137,7 +137,7 @@ pub const Node = struct {
         /// `a[x, y]`. Type arguments where `a` is generic, an index otherwise.
         bracket,
         call,
-        /// `.{ ... }`, whose type comes from context.
+        /// `Point.{ ... }`, which names the struct it builds.
         struct_literal,
         struct_field_init,
 

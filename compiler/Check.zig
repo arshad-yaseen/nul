@@ -967,7 +967,7 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
         },
         .constant => |constant| {
             const met = if (annotation) |wanted|
-                try check.fitOrWrap(constant, wanted, view.init_expr)
+                try check.fitValue(constant, wanted, view.init_expr)
             else
                 Value{ .constant = constant };
             switch (met) {
@@ -3366,8 +3366,8 @@ fn tagIsStatement(tag: Node.Tag) bool {
     };
 }
 
-/// Constants are checked by value, `*var T` serves as `*T`, and wrapping is
-/// the only code this adds.
+/// Constants are checked by value, and `*var T` serves where `*T` is asked
+/// for. Nothing else converts.
 fn coerce(
     check: *Check,
     value: Value,
@@ -3380,7 +3380,7 @@ fn coerce(
     switch (value) {
         .poison => return .poison,
         .diverged => return .diverged,
-        .constant => |constant| return check.fitOrWrap(constant, wanted, node),
+        .constant => |constant| return check.fitValue(constant, wanted, node),
         .runtime => |runtime| {
             if (runtime.type == wanted) return value;
             if (runtime.type == .poison) return .poison;
@@ -3419,7 +3419,7 @@ fn coerce(
 }
 
 /// A constant meets a type by value.
-fn fitOrWrap(
+fn fitValue(
     check: *Check,
     constant: Pool.Index,
     wanted: Pool.Index,
@@ -3645,7 +3645,6 @@ fn finishFunc(check: *Check) Allocator.Error!void {
     var live = try std.DynamicBitSet.initEmpty(comp.gpa, block_count);
     defer live.deinit();
 
-    // reachability from the entry, over the terminators
     var frontier: std.ArrayList(u32) = .empty;
     defer frontier.deinit(comp.gpa);
     try frontier.ensureTotalCapacity(comp.gpa, block_count);

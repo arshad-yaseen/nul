@@ -358,7 +358,7 @@ fn appendDecl(
     return index;
 }
 
-/// The last component of a `use` path, which is what it binds.
+/// The last component of an import path, which is what it binds.
 pub fn lastPathComponent(tree: *const AST, path: AST.Node.Index) ?Token.Index {
     return switch (tree.nodeTag(path)) {
         .ident => tree.nodeMainToken(path),
