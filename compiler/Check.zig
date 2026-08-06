@@ -167,8 +167,18 @@ fn walkEmbedded(
     if (depth >= type_depth_max) return;
     switch (comp.pool.keyOf(type_index)) {
         .type_struct => |embedded| try comp.ensure(.of(.embedding, embedded), from),
-        .type_simple, .value_simple, .type_pointer => {},
-        .value_int, .value_float => unreachable,
+        .type_union => {
+            // a union holds one member in place, so every member embeds.
+            // by position, because the demand can grow the pool
+            const count = comp.pool.unionMemberCount(type_index);
+            var at: u32 = 0;
+            while (at < count) : (at += 1) {
+                const member = comp.pool.unionMemberAt(type_index, at);
+                try walkEmbedded(comp, member, from, depth + 1);
+            }
+        },
+        .type_simple, .type_unit, .value_simple, .type_pointer => {},
+        .value_int, .value_float, .value_unit => unreachable,
     }
 }
 

@@ -159,10 +159,17 @@ pub const Key = union(enum) {
     type_pointer: Pointer,
     /// A nominal struct, whose identity is the instantiation.
     type_struct: Instance,
+    /// A nominal unit type, whose only value is its name.
+    type_unit: Instance,
+    /// Ordered distinct members, none of them a union. The slice borrows
+    /// from `extra`, so it goes stale at the next intern.
+    type_union: []const Index,
 
     value_simple: SimpleValue,
     value_int: Int,
     value_float: Float,
+    /// The one value of a unit type, named by the type it belongs to.
+    value_unit: Index,
 
     pub const Pointer = struct { child: Index, mutable: bool };
     pub const Int = struct { type: Index, value: i128 };
@@ -178,6 +185,9 @@ pub const Key = union(enum) {
                 hasher.update(std.mem.asBytes(&pointer.mutable));
             },
             .type_struct => |instance| hasher.update(std.mem.asBytes(&instance)),
+            .type_unit => |instance| hasher.update(std.mem.asBytes(&instance)),
+            .type_union => |members| hasher.update(std.mem.sliceAsBytes(members)),
+            .value_unit => |unit_type| hasher.update(std.mem.asBytes(&unit_type)),
             .value_int => |it| {
                 hasher.update(std.mem.asBytes(&it.type));
                 hasher.update(std.mem.asBytes(&it.value));
@@ -199,6 +209,9 @@ pub const Key = union(enum) {
             .type_pointer => |pointer| pointer.child == other.type_pointer.child and
                 pointer.mutable == other.type_pointer.mutable,
             .type_struct => |instance| instance == other.type_struct,
+            .type_unit => |instance| instance == other.type_unit,
+            .type_union => |members| std.mem.eql(Index, members, other.type_union),
+            .value_unit => |unit_type| unit_type == other.value_unit,
             .value_int => |it| it.type == other.value_int.type and it.value == other.value_int.value,
             // by bits, so float equality is never asked
             .value_float => |it| it.type == other.value_float.type and
@@ -216,11 +229,16 @@ const Item = struct {
         type_pointer,
         type_pointer_var,
         type_struct,
+        type_unit,
+        /// `data` points at `extra`: the member count, then the members.
+        type_union,
         value_simple,
         /// `data` points at `extra`.
         value_int,
         /// `data` points at `extra`.
         value_float,
+        /// `data` is the unit type this value belongs to.
+        value_unit,
     };
 };
 
@@ -287,6 +305,21 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
             .data = pointer.child.int(),
         },
         .type_struct => |instance| .{ .tag = .type_struct, .data = instance.int() },
+        .type_unit => |instance| .{ .tag = .type_unit, .data = instance.int() },
+        .type_union => |members| item: {
+            assert(members.len >= 2);
+            assert(members.len <= union_members_max);
+            for (members) |member| assert(pool.isUnion(member) == false);
+            for (members, 0..) |member, at| {
+                assert(pool.isType(member));
+                for (members[0..at]) |earlier| assert(member != earlier);
+            }
+            break :item .{ .tag = .type_union, .data = try pool.addExtraList(gpa, members) };
+        },
+        .value_unit => |unit_type| item: {
+            assert(pool.items.items(.tag)[unit_type.int()] == .type_unit);
+            break :item .{ .tag = .value_unit, .data = unit_type.int() };
+        },
         .value_int => |it| .{
             .tag = .value_int,
             .data = try pool.addExtra(gpa, it.type, &wordsOf(it.value)),
@@ -314,6 +347,11 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
         .type_pointer => .{ .type_pointer = .{ .child = @enumFromInt(data), .mutable = false } },
         .type_pointer_var => .{ .type_pointer = .{ .child = @enumFromInt(data), .mutable = true } },
         .type_struct => .{ .type_struct = @enumFromInt(data) },
+        .type_unit => .{ .type_unit = @enumFromInt(data) },
+        .type_union => .{
+            .type_union = @ptrCast(pool.extra.items[data + 1 ..][0..pool.extra.items[data]]),
+        },
+        .value_unit => .{ .value_unit = @enumFromInt(data) },
         .value_int => .{ .value_int = .{
             .type = @enumFromInt(pool.extra.items[data]),
             .value = @bitCast(pool.extraWords(data + 1, 4).*),
@@ -323,6 +361,73 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
             .value = @bitCast(@as(u64, @bitCast(pool.extraWords(data + 1, 2).*))),
         } },
     };
+}
+
+/// The most members one union may hold, after flattening.
+pub const union_members_max = 255;
+
+/// Everything except `index` is a mistake, reported where the union is written.
+pub const Unite = union(enum) {
+    index: Index,
+    /// A member the flattened list already holds. An alias is not a new
+    /// type, so an alias of an earlier member lands here too.
+    duplicate: Index,
+    too_many,
+};
+
+/// The one way a union is built. Member unions splice in flat, in place,
+/// which is what lets aliases compose. A repeated member is refused.
+pub fn unite(pool: *Pool, gpa: Allocator, members: []const Index) Allocator.Error!Unite {
+    assert(members.len >= 2);
+
+    for (members) |member| {
+        if (member == .poison) return .{ .index = .poison };
+        assert(pool.isType(member));
+    }
+
+    var flat: [union_members_max]Index = undefined;
+    var count: u32 = 0;
+    for (members) |member| {
+        switch (pool.keyOf(member)) {
+            // an interned union is already flat, so one splice stays flat
+            .type_union => |splice| {
+                if (count + splice.len > union_members_max) return .too_many;
+                @memcpy(flat[count..][0..splice.len], splice);
+                count += @intCast(splice.len);
+            },
+            else => {
+                if (count == union_members_max) return .too_many;
+                flat[count] = member;
+                count += 1;
+            },
+        }
+    }
+    assert(count >= members.len);
+
+    for (flat[0..count], 0..) |member, at| {
+        for (flat[0..at]) |earlier| {
+            if (member == earlier) return .{ .duplicate = member };
+        }
+    }
+    return .{ .index = try pool.intern(gpa, .{ .type_union = flat[0..count] }) };
+}
+
+pub fn isUnion(pool: *const Pool, index: Index) bool {
+    assert(index.int() < pool.items.len);
+    return pool.items.items(.tag)[index.int()] == .type_union;
+}
+
+/// With `unionMemberAt`, the way to walk members while interning may move
+/// `extra`. `keyOf` hands out the whole list, but only borrowed.
+pub fn unionMemberCount(pool: *const Pool, index: Index) u32 {
+    assert(pool.isUnion(index));
+    return pool.extra.items[pool.items.items(.data)[index.int()]];
+}
+
+pub fn unionMemberAt(pool: *const Pool, index: Index, at: u32) Index {
+    assert(at < pool.unionMemberCount(index));
+    const data = pool.items.items(.data)[index.int()];
+    return @enumFromInt(pool.extra.items[data + 1 + at]);
 }
 
 pub fn string(pool: *Pool, gpa: Allocator, text: []const u8) Allocator.Error!String {
@@ -366,18 +471,19 @@ pub fn typeOfValue(pool: *const Pool, value: Index) Index {
         },
         .value_int => |it| it.type,
         .value_float => |it| it.type,
+        .value_unit => |unit_type| unit_type,
         .type_simple => |simple| simple: {
             assert(simple == .poison);
             break :simple .poison;
         },
-        .type_pointer, .type_struct => unreachable,
+        .type_pointer, .type_struct, .type_unit, .type_union => unreachable,
     };
 }
 
 pub fn isType(pool: *const Pool, index: Index) bool {
     return switch (pool.keyOf(index)) {
-        .type_simple, .type_pointer, .type_struct => true,
-        .value_simple, .value_int, .value_float => false,
+        .type_simple, .type_pointer, .type_struct, .type_unit, .type_union => true,
+        .value_simple, .value_int, .value_float, .value_unit => false,
     };
 }
 
@@ -544,6 +650,24 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
     if (type_index == .poison) return .{ .value = .poison };
     assert(pool.isType(type_index));
 
+    // a union is met through its members, and the first that fits decides.
+    // fitting a member may intern, so the members are read by position.
+    if (pool.isUnion(type_index)) {
+        const count = pool.unionMemberCount(type_index);
+        var wrong_size = false;
+        var at: u32 = 0;
+        while (at < count) : (at += 1) {
+            const member = pool.unionMemberAt(type_index, at);
+            assert(pool.isUnion(member) == false);
+            switch (try pool.fit(gpa, value, member)) {
+                .value => |fitted| return .{ .value = fitted },
+                .does_not_fit => wrong_size = true,
+                .wrong_kind => {},
+            }
+        }
+        return if (wrong_size) .does_not_fit else .wrong_kind;
+    }
+
     switch (pool.keyOf(value)) {
         .value_int => |it| {
             if (isInteger(type_index)) {
@@ -585,7 +709,10 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
                 return if (type_index == .bool_type) .{ .value = value } else .wrong_kind;
             },
         },
-        .type_simple, .type_pointer, .type_struct => unreachable,
+        .value_unit => |unit_type| {
+            return if (type_index == unit_type) .{ .value = value } else .wrong_kind;
+        },
+        .type_simple, .type_pointer, .type_struct, .type_unit, .type_union => unreachable,
     }
 }
 
@@ -774,6 +901,28 @@ fn addExtra(
     return start;
 }
 
+/// The count, then the indices, for an item whose payload is a list.
+fn addExtraList(pool: *Pool, gpa: Allocator, list: []const Index) Allocator.Error!u32 {
+    assert(list.len > 0);
+    if (pool.extra.items.len + list.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
+
+    // the reserve may move `extra`, so the list must not point into it
+    if (pool.extra.items.len > 0) {
+        const extra_start = @intFromPtr(pool.extra.items.ptr);
+        const extra_end = extra_start + pool.extra.items.len * @sizeOf(u32);
+        const list_start = @intFromPtr(list.ptr);
+        assert(list_start >= extra_end or list_start + list.len * @sizeOf(Index) <= extra_start);
+    }
+
+    const start: u32 = @intCast(pool.extra.items.len);
+    try pool.extra.ensureUnusedCapacity(gpa, list.len + 1);
+    pool.extra.appendAssumeCapacity(@intCast(list.len));
+    pool.extra.appendSliceAssumeCapacity(@ptrCast(list));
+
+    assert(pool.extra.items.len == start + list.len + 1);
+    return start;
+}
+
 fn extraWords(pool: *const Pool, start: u32, comptime count: u32) *const [count]u32 {
     assert(start + count <= pool.extra.items.len);
     return pool.extra.items[start..][0..count];
@@ -913,6 +1062,96 @@ test "a typed operand types the fold, and the type refuses what it cannot hold" 
     const mixed = try pool.fold(gpa, .add, typed, other);
     try testing.expectEqual(Index.u8_type, mixed.mismatch.left);
     try testing.expectEqual(Index.i64_type, mixed.mismatch.right);
+}
+
+test "a union is one item, and order is part of the type" {
+    var pool: Pool = undefined;
+    try pool.init(testing.allocator);
+    defer pool.deinit(testing.allocator);
+    const gpa = testing.allocator;
+
+    const ab = (try pool.unite(gpa, &.{ .i32_type, .bool_type })).index;
+    const again = (try pool.unite(gpa, &.{ .i32_type, .bool_type })).index;
+    try testing.expectEqual(ab, again);
+    try testing.expect(pool.isUnion(ab));
+    try testing.expect(pool.isType(ab));
+
+    const ba = (try pool.unite(gpa, &.{ .bool_type, .i32_type })).index;
+    try testing.expect(ab != ba);
+
+    try testing.expectEqual(2, pool.unionMemberCount(ab));
+    try testing.expectEqual(Index.i32_type, pool.unionMemberAt(ab, 0));
+    try testing.expectEqual(Index.bool_type, pool.unionMemberAt(ab, 1));
+}
+
+test "a member union splices in flat, and a repeat is refused" {
+    var pool: Pool = undefined;
+    try pool.init(testing.allocator);
+    defer pool.deinit(testing.allocator);
+    const gpa = testing.allocator;
+
+    const ab = (try pool.unite(gpa, &.{ .i32_type, .bool_type })).index;
+    const spliced = (try pool.unite(gpa, &.{ ab, .f64_type })).index;
+    const written = (try pool.unite(gpa, &.{ .i32_type, .bool_type, .f64_type })).index;
+    try testing.expectEqual(written, spliced);
+
+    const repeat = try pool.unite(gpa, &.{ .i32_type, .bool_type, .i32_type });
+    try testing.expectEqual(Index.i32_type, repeat.duplicate);
+
+    // the repeat hides inside a member union, and flattening still finds it
+    const nested = try pool.unite(gpa, &.{ ab, .bool_type });
+    try testing.expectEqual(Index.bool_type, nested.duplicate);
+
+    const broken = try pool.unite(gpa, &.{ .poison, .i32_type });
+    try testing.expectEqual(Index.poison, broken.index);
+}
+
+test "a unit type carries one value, which knows its type" {
+    var pool: Pool = undefined;
+    try pool.init(testing.allocator);
+    defer pool.deinit(testing.allocator);
+    const gpa = testing.allocator;
+
+    const none_type = try pool.intern(gpa, .{ .type_unit = .from(0) });
+    const other_type = try pool.intern(gpa, .{ .type_unit = .from(1) });
+    try testing.expect(none_type != other_type);
+    try testing.expect(pool.isType(none_type));
+
+    const none_value = try pool.intern(gpa, .{ .value_unit = none_type });
+    const again = try pool.intern(gpa, .{ .value_unit = none_type });
+    try testing.expectEqual(none_value, again);
+    try testing.expect(pool.isType(none_value) == false);
+    try testing.expectEqual(none_type, pool.typeOfValue(none_value));
+}
+
+test "a constant meets a union through its first fitting member" {
+    var pool: Pool = undefined;
+    try pool.init(testing.allocator);
+    defer pool.deinit(testing.allocator);
+    const gpa = testing.allocator;
+
+    const number = try pool.intern(gpa, .{
+        .value_int = .{ .type = .untyped_int_type, .value = 42 },
+    });
+
+    // both integer members hold 42, and the first one decides
+    const wide = (try pool.unite(gpa, &.{ .i32_type, .i64_type })).index;
+    const first = try pool.fit(gpa, number, wide);
+    try testing.expectEqual(Index.i32_type, pool.keyOf(first.value).value_int.type);
+
+    const none_type = try pool.intern(gpa, .{ .type_unit = .from(0) });
+    const maybe = (try pool.unite(gpa, &.{ .u8_type, none_type })).index;
+
+    const none_value = try pool.intern(gpa, .{ .value_unit = none_type });
+    const chosen = try pool.fit(gpa, none_value, maybe);
+    try testing.expectEqual(none_value, chosen.value);
+
+    // 300 is the right kind for u8 and the wrong size, and no member takes it
+    const big = try pool.intern(gpa, .{
+        .value_int = .{ .type = .untyped_int_type, .value = 300 },
+    });
+    try testing.expectEqual(Fit.does_not_fit, try pool.fit(gpa, big, maybe));
+    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, .true_value, maybe));
 }
 
 test "a constant meets a type by value, not by type" {

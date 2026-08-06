@@ -26,7 +26,16 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
                 current = pointer.child;
             },
             .type_struct => |instance| return writeInstance(comp, writer, instance),
-            .value_simple, .value_int, .value_float => unreachable,
+            .type_unit => |instance| return writeInstance(comp, writer, instance),
+            .type_union => |members| {
+                // a member is never a union, so this recursion is one level
+                for (members, 0..) |member, position| {
+                    if (position > 0) try writer.writeAll(" | ");
+                    try writeType(comp, writer, member);
+                }
+                return;
+            },
+            .value_simple, .value_int, .value_float, .value_unit => unreachable,
         }
     }
     try writer.writeAll("...");
@@ -121,7 +130,9 @@ pub fn writeConstant(
                 try writeType(comp, writer, it.type);
             }
         },
-        .type_pointer, .type_struct => unreachable,
+        // a unit value is spelled the way its type is, which is its name
+        .value_unit => |unit_type| try writeType(comp, writer, unit_type),
+        .type_pointer, .type_struct, .type_unit, .type_union => unreachable,
     }
 }
 
