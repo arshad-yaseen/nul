@@ -229,7 +229,7 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
-        .import, .type_alias, .let => {},
+        .import, .type_alias, .unit_decl, .let => {},
         .fn_decl => try comp.ensureBodiesFn(decl_index, origin),
         .struct_decl => {
             if (decl.state != .done) return;
@@ -331,6 +331,10 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     switch (decl.kind) {
         .import => return Module.resolveImport(comp, decl_index),
         .type_alias => return Check.typeAlias(comp, decl_index),
+        .unit_decl => {
+            _ = try comp.instantiate(decl_index, &.{});
+            return true;
+        },
         .let => return Check.topLevelLet(comp, decl_index),
         .fn_decl => return true,
         .struct_decl => {
@@ -370,7 +374,7 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
             .let => try comp.fmt("'{s}' takes its value from itself", .{name}),
             .type_alias => try comp.fmt("type '{s}' is an alias of itself", .{name}),
             .import => "this import goes in a circle",
-            .struct_decl, .fn_decl => "this definition goes in a circle",
+            .struct_decl, .unit_decl, .fn_decl => "this definition goes in a circle",
         },
         .embedding => try comp.fmt("'{s}' holds itself by value, so it has no size", .{name}),
         .rows, .signature, .body => "this definition goes in a circle",
@@ -427,7 +431,8 @@ pub fn instantiate(
     args: []const Pool.Index,
 ) Allocator.Error!Pool.Instance {
     const decl = comp.declAt(decl_index);
-    assert(decl.kind == .struct_decl or decl.kind == .fn_decl);
+    assert(decl.kind == .struct_decl or decl.kind == .unit_decl or decl.kind == .fn_decl);
+    if (decl.kind == .unit_decl) assert(args.len == 0);
 
     const gop = try comp.instance_map.getOrPutContextAdapted(
         comp.gpa,
@@ -457,6 +462,13 @@ pub fn instantiate(
         comp.instancePtr(index).type = try comp.pool.intern(comp.gpa, .{
             .type_struct = index,
         });
+    }
+    if (decl.kind == .unit_decl) {
+        const unit = comp.instancePtr(index);
+        unit.type = try comp.pool.intern(comp.gpa, .{ .type_unit = index });
+        // no rows and nothing embedded, so both walks are already over
+        unit.rows_state = .done;
+        unit.deep_state = .done;
     }
     return index;
 }

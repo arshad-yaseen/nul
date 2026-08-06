@@ -1,6 +1,10 @@
 pub type Channel = u32
 type Cursor = *var Channel
 
+pub type none
+pub type Clipped
+type Reading = Channel | Clipped | none
+
 pub let opaque_alpha: Channel = 0xff
 let mid_point = 0x80
 let bright = mid_point < mid_point * 2 and mid_point != 0
@@ -64,6 +68,16 @@ type Same = Frame
 
 fn identity[T](value: T) T {
     return value
+}
+
+fn grade(level: Channel) Reading {
+    if level == 0 {
+        return none
+    }
+    if level > 200 {
+        return Clipped
+    }
+    return level * 2
 }
 
 fn shade(level: Channel) i64 {
@@ -139,6 +153,7 @@ fn drive() Channel {
     let deep = twice(handle)
 
     _ = shade(previous.luma())
+    _ = grade(mid_point)
     _ = masked(0x0f, echoed)
     _ = ratio(1.5, 0.25)
     _ = offset(9)

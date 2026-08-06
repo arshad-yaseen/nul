@@ -612,8 +612,9 @@ fn parsePath(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
+/// `type Name` a unit
 /// `type Name = { ... }` a struct
-/// `type Name = T` an alias
+/// `type Name = T` an alias, which `A | B` makes a union
 fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_type));
     const type_token = self.nextToken();
@@ -624,9 +625,23 @@ fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
 
     try self.parseTypeParams();
     const members_start = self.scratch.items.len;
+
+    if (self.at(.semi) or self.at(.comma) or self.at(.eof)) {
+        // a bare name, with nothing assigned, declares a unit type
+        if (members_start == top) {
+            return self.addNode(.{
+                .tag = .unit_decl,
+                .main_token = type_token,
+                .data = .{ .none = {} },
+            });
+        }
+        // type parameters with nothing assigned, so one error covers it
+        try self.expectToken(.eq);
+        return self.hole();
+    }
     try self.expectToken(.eq);
 
-    // only a struct body carries type parameters, until a union can
+    // a generic 'type' is a struct, until an alias can instantiate
     if (self.at(.l_brace) == false and members_start == top) {
         const aliased = try self.parseType();
         return self.addUnary(.alias_decl, type_token, aliased);
@@ -1158,11 +1173,39 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
     if (self.enter() == false) return self.tooDeep();
     defer self.leave();
 
+    const first = try self.parseTypeMember();
+    if (self.at(.pipe) == false) return first;
+
+    const top = self.scratch.items.len;
+    defer self.scratch.shrinkRetainingCapacity(top);
+    try self.scratch.append(self.gpa, first);
+
+    const first_pipe = self.eatToken(.pipe).?;
+    try self.scratch.append(self.gpa, try self.parseTypeMember());
+    while (self.eatToken(.pipe) != null) {
+        try self.scratch.append(self.gpa, try self.parseTypeMember());
+    }
+
+    const start = self.extraStart();
+    try self.extraList(self.scratch.items[top..]);
+    return self.addNode(.{
+        .tag = .union_type,
+        .main_token = first_pipe,
+        .data = .{ .extra = start },
+    });
+}
+
+/// One union member: a pointer or a path. `|` binds looser, in `parseType`,
+/// so a pointer member reads as `(*T) | none`.
+fn parseTypeMember(self: *Parse) Allocator.Error!Node.Index {
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
+
     if (self.at(.star) == false) return self.parseTypePath();
 
     const star = self.nextToken();
     _ = self.eatToken(.kw_var);
-    const child = try self.parseType();
+    const child = try self.parseTypeMember();
     return self.addUnary(.pointer_type, star, child);
 }
 

@@ -1,0 +1,8 @@
+error[E0254]: 'u32' is already a member of this union
+ --> test/fail/union_duplicate.zol:2:27
+  |
+2 | type Twice = u32 | bool | Name
+  |                           ^^^^ the same type again
+  |
+  = help: members are distinct types, and an alias is not a new type
+

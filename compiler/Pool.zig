@@ -417,6 +417,32 @@ pub fn isUnion(pool: *const Pool, index: Index) bool {
     return pool.items.items(.tag)[index.int()] == .type_union;
 }
 
+/// Whether the union lists exactly this type among its members.
+pub fn unionHas(pool: *const Pool, union_index: Index, member: Index) bool {
+    assert(pool.isUnion(union_index));
+    if (pool.isUnion(member)) return false;
+
+    const count = pool.unionMemberCount(union_index);
+    var at: u32 = 0;
+    while (at < count) : (at += 1) {
+        if (pool.unionMemberAt(union_index, at) == member) return true;
+    }
+    return false;
+}
+
+/// Whether `wide` lists every member of `narrow`. Membership, not order.
+pub fn unionCovers(pool: *const Pool, wide: Index, narrow: Index) bool {
+    assert(pool.isUnion(wide));
+    assert(pool.isUnion(narrow));
+
+    const count = pool.unionMemberCount(narrow);
+    var at: u32 = 0;
+    while (at < count) : (at += 1) {
+        if (pool.unionHas(wide, pool.unionMemberAt(narrow, at)) == false) return false;
+    }
+    return true;
+}
+
 /// With `unionMemberAt`, the way to walk members while interning may move
 /// `extra`. `keyOf` hands out the whole list, but only borrowed.
 pub fn unionMemberCount(pool: *const Pool, index: Index) u32 {

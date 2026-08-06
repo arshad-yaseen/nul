@@ -53,6 +53,18 @@ than retrofitted.
   where it used to crash the compiler.
 - The help for a size cycle suggests breaking it with `*T`, and no longer
   with `?*T`, which stopped being syntax when optionals left.
+- `type Name` with nothing assigned declares a unit type, whose only value
+  is its name. `type none` and an error such as `type Timeout` are both
+  this and nothing more.
+- A type may be a union, written `A | B` wherever a type is written.
+  Members are distinct types, order is part of the type, and a member that
+  is itself a union flattens in place, so aliases compose. A repeated
+  member is refused with `E0254`, and a union past 255 members with
+  `E0255`.
+- A value whose type a union lists becomes the union wherever the union is
+  asked for: at `return`, an argument, a field, or an annotated binding. A
+  union value becomes a wider union the same way. Membership decides, and
+  nothing is wrapped.
 - Every commit on `main` that passes CI is now cross-compiled and published as
   a dev build, under the version it reports, at the `dev` tag. Numbered
   releases stay the only supported builds. Both channels ship an `index.json`

@@ -144,6 +144,10 @@ pub const Inst = struct {
         /// Uses `un`. Retypes a pointer and emits nothing.
         ptr_cast,
 
+        /// Uses `un`. A value entering a union that lists its type, or a
+        /// union value entering a wider one. The tag stays the backend's.
+        union_init,
+
         /// Uses `payload`, an `IR.Call`.
         call,
 

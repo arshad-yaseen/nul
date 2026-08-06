@@ -346,6 +346,7 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
                 .type_pointer = .{ .child = child, .mutable = pointer.is_mutable },
             });
         },
+        .union_type => |members| return check.resolveUnionType(node, members),
         .err => return .poison,
         // a bracket item arrives as an expression until its base says otherwise
         else => {
@@ -362,6 +363,64 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
 fn pointerTo(check: *Check, child: Pool.Index, mutable: bool) Allocator.Error!Pool.Index {
     const comp = check.comp;
     return comp.pool.intern(comp.gpa, .{ .type_pointer = .{ .child = child, .mutable = mutable } });
+}
+
+fn resolveUnionType(
+    check: *Check,
+    node: Node.Index,
+    members: []const Node.Index,
+) Allocator.Error!Pool.Index {
+    const comp = check.comp;
+    assert(members.len >= 2);
+
+    if (members.len > Pool.union_members_max) {
+        try check.failTooWide(node);
+        return .poison;
+    }
+
+    var buffer: [Pool.union_members_max]Pool.Index = undefined;
+    var clean = true;
+    for (members, 0..) |member, at| {
+        const resolved = try check.resolveType(member);
+        if (resolved == .poison) clean = false;
+        buffer[at] = resolved;
+    }
+    if (clean == false) return .poison;
+
+    switch (try comp.pool.unite(comp.gpa, buffer[0..members.len])) {
+        .index => |index| return index,
+        .duplicate => |repeat| {
+            // the caret prefers the member written twice over the whole union
+            var where = node;
+            for (members, 0..) |member, at| {
+                if (buffer[at] == repeat) where = member;
+            }
+            try check.fail(where, .{
+                .code = .duplicate_member,
+                .message = try comp.fmt("'{s}' is already a member of this union", .{
+                    try comp.typeName(repeat),
+                }),
+                .label = "the same type again",
+                .help = "members are distinct types, and an alias is not a new type",
+            });
+            return .poison;
+        },
+        .too_many => {
+            try check.failTooWide(node);
+            return .poison;
+        },
+    }
+}
+
+fn failTooWide(check: *Check, node: Node.Index) Allocator.Error!void {
+    @branchHint(.cold);
+    try check.fail(node, .{
+        .code = .union_too_wide,
+        .message = try check.comp.fmt("flat, a union holds at most {d} members", .{
+            Pool.union_members_max,
+        }),
+        .label = "too wide",
+    });
 }
 
 fn resolveTypeName(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
@@ -405,6 +464,11 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
             try comp.ensure(.forDecl(decl_index), check.origin(node));
             if (comp.declAt(decl_index).state != .done) return .poison;
             return @enumFromInt(comp.declAt(decl_index).result);
+        },
+        .unit_decl => {
+            assert(comp.typeParamCount(decl_index) == 0);
+            const instance = try comp.instantiate(decl_index, &.{});
+            return comp.instanceType(instance);
         },
         .import => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
@@ -1506,6 +1570,14 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             try comp.ensure(.forDecl(decl_index), check.origin(node));
             if (comp.declAt(decl_index).state != .done) return .poison;
             return .{ .named_type = @enumFromInt(comp.declAt(decl_index).result) };
+        },
+        // a unit type in a value position is its one value
+        .unit_decl => {
+            const instance = try comp.instantiate(decl_index, &.{});
+            const value = try comp.pool.intern(comp.gpa, .{
+                .value_unit = comp.instanceType(instance),
+            });
+            return .{ .constant = value };
         },
         .import => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
@@ -3376,8 +3448,8 @@ fn tagIsStatement(tag: Node.Tag) bool {
     };
 }
 
-/// Constants are checked by value, and `*var T` serves where `*T` is asked
-/// for. Nothing else converts.
+/// Constants are checked by value, `*var T` serves where `*T` is asked for,
+/// and a union admits a value whose type it lists. Nothing else converts.
 fn coerce(
     check: *Check,
     value: Value,
@@ -3416,6 +3488,20 @@ fn coerce(
                         .help = "take '*var' where the pointer is made",
                     });
                     return .poison;
+                }
+            }
+
+            // membership is the whole conversion story for a union: a member
+            // value becomes a union that lists it, and a union value becomes
+            // a wider one that lists every member it may hold
+            if (want == .type_union) {
+                const listed = if (have == .type_union)
+                    comp.pool.unionCovers(wanted, runtime.type)
+                else
+                    comp.pool.unionHas(wanted, runtime.type);
+                if (listed) {
+                    const wrapped = try check.emitOne(.union_init, wanted, runtime.ref);
+                    return runtimeValue(wrapped, wanted);
                 }
             }
 

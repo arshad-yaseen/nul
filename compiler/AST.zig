@@ -109,6 +109,8 @@ pub const Node = struct {
         import_decl,
         struct_decl,
         alias_decl,
+        /// `type Name` with nothing assigned, whose only value is its name.
+        unit_decl,
         fn_decl,
         /// Both `let` and `var`, told apart by `main_token`.
         var_decl,
@@ -145,6 +147,8 @@ pub const Node = struct {
         unary,
 
         pointer_type,
+        /// `A | B`, only in type position. Members are never unions.
+        union_type,
 
         /// A hole where parsing failed.
         err,
@@ -326,6 +330,7 @@ pub const View = union(enum) {
     import_decl: Import,
     struct_decl: StructDecl,
     alias_decl: AliasDecl,
+    unit_decl: UnitDecl,
     fn_decl: FnDecl,
     var_decl: VarDecl,
     type_param: Token.Index,
@@ -356,6 +361,7 @@ pub const View = union(enum) {
     unary: Unary,
 
     pointer_type: Pointer,
+    union_type: []const Node.Index,
 
     err,
 
@@ -367,6 +373,7 @@ pub const View = union(enum) {
         members: []const Node.Index,
     };
     pub const AliasDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
+    pub const UnitDecl = struct { name_token: Token.Index, is_pub: bool };
     pub const FnDecl = struct {
         name_token: Token.Index,
         is_pub: bool,
@@ -445,6 +452,10 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .name_token = main.after(1),
             .is_pub = tree.isPub(main),
             .aliased = data.node,
+        } },
+        .unit_decl => .{ .unit_decl = .{
+            .name_token = main.after(1),
+            .is_pub = tree.isPub(main),
         } },
         .fn_decl => blk: {
             var payload = tree.fields(data.extra);
@@ -535,6 +546,7 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .is_mutable = tree.tokenTag(main.after(1)) == .kw_var,
             .child = data.node,
         } },
+        .union_type => .{ .union_type = tree.listAt(data.extra) },
 
         .err => .err,
     };
@@ -683,6 +695,7 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => return main,
                 .rightmost => current = it.aliased,
             },
+            .unit_decl => return if (side == .leftmost) main else main.after(1),
             .fn_decl => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.body,
@@ -765,6 +778,11 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => return main,
                 .rightmost => current = it.child,
             },
+            // a union writes at least two members, so both edges exist
+            .union_type => |members| current = if (side == .leftmost)
+                members[0]
+            else
+                members[members.len - 1],
         }
     }
     return tree.nodeMainToken(current);

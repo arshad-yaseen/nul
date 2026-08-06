@@ -1,0 +1,47 @@
+root
+  unit_decl none
+    doc /// The absent value, a unit type like any other.
+  unit_decl Timeout pub
+  alias_decl Reply
+    type: union_type
+      ident u32
+      ident Timeout
+      ident none
+  alias_decl Handle
+    type: union_type
+      pointer_type
+        child: ident u32
+      ident none
+  alias_decl Cursor
+    type: union_type
+      pointer_type var
+        child: ident u32
+      ident none
+  struct_decl Slot
+    field value
+      type: union_type
+        ident u32
+        ident none
+    fn_decl get
+      param self
+        type: ident Slot
+      param fallback
+        type: union_type
+          ident u32
+          ident Timeout
+      ret: union_type
+        ident u32
+        ident none
+      body: block
+        return_expr
+          value: field_access value
+            lhs: ident self
+  fn_decl find
+    param present
+      type: ident bool
+    ret: union_type
+      ident u32
+      ident none
+    body: block
+      return_expr
+        value: ident none

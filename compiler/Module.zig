@@ -58,7 +58,7 @@ pub const Decl = struct {
     kind: Kind,
     state: State,
 
-    pub const Kind = enum(u8) { import, struct_decl, type_alias, let, fn_decl };
+    pub const Kind = enum(u8) { import, struct_decl, type_alias, unit_decl, let, fn_decl };
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
 
     /// Stored in `aux` beside the payload.
@@ -190,6 +190,11 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
             },
             .alias_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .type_alias,
+                .node = node,
+                .name_token = decl.name_token,
+            }),
+            .unit_decl => |decl| _ = try addDecl(comp, module, index, .{
+                .kind = .unit_decl,
                 .node = node,
                 .name_token = decl.name_token,
             }),
@@ -584,6 +589,7 @@ pub fn declIsPub(comp: *const Compilation, decl_index: Decl.Index) bool {
         .import_decl => |view| view.is_pub,
         .struct_decl => |view| view.is_pub,
         .alias_decl => |view| view.is_pub,
+        .unit_decl => |view| view.is_pub,
         .fn_decl => |view| view.is_pub,
         .var_decl => |view| view.is_pub,
         else => false,

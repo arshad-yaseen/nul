@@ -1,0 +1,19 @@
+/// The absent value, a unit type like any other.
+type none
+pub type Timeout
+
+type Reply = u32 | Timeout | none
+type Handle = *u32 | none
+type Cursor = *var u32 | none
+
+type Slot = {
+    value: u32 | none
+
+    fn get(self: Slot, fallback: u32 | Timeout) u32 | none {
+        return self.value
+    }
+}
+
+fn find(present: bool) u32 | none {
+    return none
+}

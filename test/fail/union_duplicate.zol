@@ -1,0 +1,2 @@
+type Name = u32
+type Twice = u32 | bool | Name

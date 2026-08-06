@@ -61,6 +61,12 @@ fn node(
             try docs(ast, writer, index, below);
             try node(ast, writer, it.aliased, below, "type");
         },
+        .unit_decl => |it| {
+            try writer.print(" {s}", .{ast.tokenSlice(it.name_token)});
+            try flag(writer, it.is_pub, "pub");
+            try writer.writeByte('\n');
+            try docs(ast, writer, index, below);
+        },
         .fn_decl => |it| {
             try writer.print(" {s}", .{ast.tokenSlice(it.name_token)});
             try flag(writer, it.is_pub, "pub");
@@ -151,6 +157,10 @@ fn node(
             try writer.writeByte('\n');
             try node(ast, writer, it.child, below, "child");
         },
+        .union_type => |members| {
+            try writer.writeByte('\n');
+            for (members) |member| try node(ast, writer, member, below, "");
+        },
         .deref, .defer_stmt => |child| {
             try writer.writeByte('\n');
             try node(ast, writer, child, below, "child");
@@ -214,6 +224,7 @@ fn inst(
         },
         .load,
         .ptr_cast,
+        .union_init,
         .negate,
         .not,
         .bit_not,

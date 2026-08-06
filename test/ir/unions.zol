@@ -1,0 +1,40 @@
+type none
+type Timeout
+
+type Reply = u32 | Timeout | none
+
+type Slot = {
+    value: u32 | none
+}
+
+fn find(flag: bool) u32 | none {
+    if flag {
+        return 7
+    }
+    return none
+}
+
+fn escalate(flag: bool) Reply {
+    return find(flag)
+}
+
+fn take(value: u32 | none) u32 | none {
+    return value
+}
+
+fn fill(flag: bool) Slot {
+    if flag {
+        return Slot.{ value: 3 }
+    }
+    return Slot.{ value: find(flag) }
+}
+
+fn drive(flag: bool) Reply {
+    let waiting = Timeout
+    let missing: u32 | none = none
+    _ = take(find(flag))
+    _ = fill(flag)
+    _ = waiting
+    _ = missing
+    return escalate(flag)
+}

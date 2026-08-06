@@ -84,6 +84,8 @@ pub const Code = enum(u16) {
     intrinsic_outside_std = 251,
     not_indexable = 252,
     bad_shift = 253,
+    duplicate_member = 254,
+    union_too_wide = 255,
 };
 
 pub const Color = enum { off, on };
