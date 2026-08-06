@@ -132,7 +132,7 @@ pub fn writeConstant(
                 try writeType(comp, writer, it.type);
             }
         },
-        // a unit value is spelled the way its type is, which is its name
+        // a unit value is spelled as its name
         .value_unit => |unit_type| try writeType(comp, writer, unit_type),
         .type_pointer, .type_struct, .type_unit, .type_union => unreachable,
     }

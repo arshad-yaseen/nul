@@ -1195,8 +1195,7 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// One union member: a pointer or a path. `|` binds looser, in `parseType`,
-/// so a pointer member reads as `(*T) | none`.
+/// One union member: a pointer or a path. `|` binds looser, in `parseType`.
 fn parseTypeMember(self: *Parse) Allocator.Error!Node.Index {
     if (self.enter() == false) return self.tooDeep();
     defer self.leave();

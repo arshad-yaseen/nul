@@ -159,17 +159,16 @@ pub const Key = union(enum) {
     type_pointer: Pointer,
     /// A nominal struct, whose identity is the instantiation.
     type_struct: Instance,
-    /// A nominal unit type. A unit is never generic, so its identity is
-    /// the declaration itself, and its only value is its name.
+    /// A nominal unit type. Never generic, so the declaration is the identity.
     type_unit: Module.Decl.Index,
-    /// Ordered distinct members, none of them a union. The slice borrows
-    /// from `extra`, so it goes stale at the next intern.
+    /// Ordered distinct members, none itself a union. Borrowed from
+    /// `extra`, so stale at the next intern.
     type_union: []const Index,
 
     value_simple: SimpleValue,
     value_int: Int,
     value_float: Float,
-    /// The one value of a unit type, named by the type it belongs to.
+    /// The one value of a unit type.
     value_unit: Index,
 
     pub const Pointer = struct { child: Index, mutable: bool };
@@ -238,7 +237,7 @@ const Item = struct {
         value_int,
         /// `data` points at `extra`.
         value_float,
-        /// `data` is the unit type this value belongs to.
+        /// `data` is its unit type.
         value_unit,
     };
 };
@@ -373,14 +372,13 @@ pub const union_members_max = 255;
 /// Everything except `index` is a mistake, reported where the union is written.
 pub const Unite = union(enum) {
     index: Index,
-    /// A member the flattened list already holds. An alias is not a new
-    /// type, so an alias of an earlier member lands here too.
+    /// Already in the flattened list. An alias is not a new type.
     duplicate: Index,
     too_many,
 };
 
-/// The one way a union is built. Member unions splice in flat, in place,
-/// which is what lets aliases compose. A repeated member is refused.
+/// The one way a union is built: member unions splice in flat, so aliases
+/// compose, and a repeat is refused.
 pub fn unite(pool: *Pool, gpa: Allocator, members: []const Index) Allocator.Error!Unite {
     assert(members.len >= 2);
 
@@ -447,8 +445,7 @@ pub fn unionCovers(pool: *const Pool, wide: Index, narrow: Index) bool {
     return true;
 }
 
-/// With `unionMemberAt`, the way to walk members while interning may move
-/// `extra`. `keyOf` hands out the whole list, but only borrowed.
+/// With `unionMemberAt`, for walks that intern. `keyOf` only borrows.
 pub fn unionMemberCount(pool: *const Pool, index: Index) u32 {
     assert(pool.isUnion(index));
     return pool.extra.items[pool.items.items(.data)[index.int()]];

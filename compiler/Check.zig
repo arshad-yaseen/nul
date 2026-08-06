@@ -168,8 +168,8 @@ fn walkEmbedded(
     switch (comp.pool.keyOf(type_index)) {
         .type_struct => |embedded| try comp.ensure(.of(.embedding, embedded), from),
         .type_union => {
-            // a union holds one member in place, so every member embeds.
-            // by position, because the demand can grow the pool
+            // a union holds one member in place, so every member embeds,
+            // read by position because the demand can grow the pool
             const count = comp.pool.unionMemberCount(type_index);
             var at: u32 = 0;
             while (at < count) : (at += 1) {
@@ -3484,9 +3484,8 @@ fn coerce(
                 }
             }
 
-            // membership is the whole conversion story for a union: a member
-            // value becomes a union that lists it, and a union value becomes
-            // a wider one that lists every member it may hold
+            // membership decides: a member value enters a union that lists
+            // it, and a union widens into one that lists all it may hold
             if (want == .type_union) {
                 const listed = if (have == .type_union)
                     comp.pool.unionCovers(wanted, runtime.type)

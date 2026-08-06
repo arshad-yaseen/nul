@@ -145,7 +145,7 @@ pub const Inst = struct {
         ptr_cast,
 
         /// Uses `un`. A value entering a union that lists its type, or a
-        /// union value entering a wider one. The tag stays the backend's.
+        /// narrower union widening. The tag stays the backend's.
         union_init,
 
         /// Uses `payload`, an `IR.Call`.
