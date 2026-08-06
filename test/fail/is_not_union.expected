@@ -1,0 +1,6 @@
+error[E0256]: 'is' asks which member a union holds, and this is u32
+ --> test/fail/is_not_union.zol:2:12
+  |
+2 |     return n is u32
+  |            ^^^^^^^^ not a union
+

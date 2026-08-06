@@ -65,6 +65,13 @@ than retrofitted.
   asked for: at `return`, an argument, a field, or an annotated binding. A
   union value becomes a wider union the same way. Membership decides, and
   nothing is wrapped.
+- `e is T` tests which member a union holds, and `e is not T` the
+  opposite. `T` has to be one of the members: `E0256` refuses `is` off a
+  union, and `E0257` a type the union does not list.
+- A branch that settles an `is` narrows the tested name. `let` bindings
+  and parameters only, in both arms, holding across `and`, and to the
+  rest of the union where a member was denied. A `var` never narrows, so
+  bind it to a `let` first.
 - Every commit on `main` that passes CI is now cross-compiled and published as
   a dev build, under the version it reports, at the `dev` tag. Numbered
   releases stay the only supported builds. Both channels ship an `index.json`

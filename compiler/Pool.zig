@@ -374,7 +374,7 @@ pub const Unite = union(enum) {
     index: Index,
     /// Already in the flattened list. An alias is not a new type.
     duplicate: Index,
-    too_many,
+    too_wide,
 };
 
 /// The one way a union is built: member unions splice in flat, so aliases
@@ -393,12 +393,12 @@ pub fn unite(pool: *Pool, gpa: Allocator, members: []const Index) Allocator.Erro
         switch (pool.keyOf(member)) {
             // an interned union is already flat, so one splice stays flat
             .type_union => |splice| {
-                if (count + splice.len > union_members_max) return .too_many;
+                if (count + splice.len > union_members_max) return .too_wide;
                 @memcpy(flat[count..][0..splice.len], splice);
                 count += @intCast(splice.len);
             },
             else => {
-                if (count == union_members_max) return .too_many;
+                if (count == union_members_max) return .too_wide;
                 flat[count] = member;
                 count += 1;
             },
@@ -430,6 +430,32 @@ pub fn unionHas(pool: *const Pool, union_index: Index, member: Index) bool {
         if (pool.unionMemberAt(union_index, at) == member) return true;
     }
     return false;
+}
+
+/// The union without one member: the rest as a union, or the one member left.
+pub fn unionWithout(
+    pool: *Pool,
+    gpa: Allocator,
+    union_index: Index,
+    member: Index,
+) Allocator.Error!Index {
+    assert(pool.isUnion(union_index));
+    assert(pool.unionHas(union_index, member));
+
+    var flat: [union_members_max]Index = undefined;
+    var count: u32 = 0;
+    const total = pool.unionMemberCount(union_index);
+    var at: u32 = 0;
+    while (at < total) : (at += 1) {
+        const candidate = pool.unionMemberAt(union_index, at);
+        if (candidate == member) continue;
+        flat[count] = candidate;
+        count += 1;
+    }
+    assert(count == total - 1);
+
+    if (count == 1) return flat[0];
+    return pool.intern(gpa, .{ .type_union = flat[0..count] });
 }
 
 /// Whether `wide` lists every member of `narrow`. Membership, not order.
@@ -1114,6 +1140,21 @@ test "a member union splices in flat, and a repeat is refused" {
 
     const broken = try pool.unite(gpa, &.{ .poison, .i32_type });
     try testing.expectEqual(Index.poison, broken.index);
+}
+
+test "a union without one member is the rest, down to the last one bare" {
+    var pool: Pool = undefined;
+    try pool.init(testing.allocator);
+    defer pool.deinit(testing.allocator);
+    const gpa = testing.allocator;
+
+    const wide = (try pool.unite(gpa, &.{ .i32_type, .bool_type, .f64_type })).index;
+    const rest = try pool.unionWithout(gpa, wide, .bool_type);
+    try testing.expect(pool.isUnion(rest));
+    try testing.expectEqual(Index.i32_type, pool.unionMemberAt(rest, 0));
+    try testing.expectEqual(Index.f64_type, pool.unionMemberAt(rest, 1));
+
+    try testing.expectEqual(Index.i32_type, try pool.unionWithout(gpa, rest, .f64_type));
 }
 
 test "a unit type carries one value, which knows its type" {

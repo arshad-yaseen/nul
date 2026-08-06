@@ -86,6 +86,8 @@ pub const Code = enum(u16) {
     bad_shift = 253,
     duplicate_member = 254,
     union_too_wide = 255,
+    not_a_union = 256,
+    not_a_member = 257,
 };
 
 pub const Color = enum { off, on };

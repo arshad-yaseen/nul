@@ -931,15 +931,28 @@ fn parseExprPrec(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
     var node = try self.parsePrefixExpr();
     var banned_prec: u8 = 0;
 
+    // `is` tests like a comparison, so it sits at that precedence
+    const is_prec = comptime AST.oper_table[@intFromEnum(Token.Tag.eq_eq)].prec;
+
     while (true) {
         const op_tag = self.current();
+        if (op_tag == .kw_is) {
+            if (is_prec < min_prec) break;
+            if (is_prec == banned_prec) try self.errChainedComparison();
+
+            const is_token = self.nextToken();
+            _ = self.eatToken(.kw_not);
+            node = try self.addPair(.is_expr, is_token, node, try self.parseTypeMember());
+            banned_prec = is_prec;
+            continue;
+        }
+
         const info = AST.oper_table[@intFromEnum(op_tag)];
         if (info.prec < min_prec) break;
         if (info.prec == banned_prec) try self.errChainedComparison();
 
         const op_token = self.nextToken();
-        const min = if (info.assoc == .right) info.prec else info.prec + 1;
-        node = try self.addPair(.binary, op_token, node, try self.parseExprPrec(min));
+        node = try self.addPair(.binary, op_token, node, try self.parseExprPrec(info.prec + 1));
 
         banned_prec = if (info.assoc == .none) info.prec else 0;
     }

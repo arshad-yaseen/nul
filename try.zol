@@ -80,6 +80,17 @@ fn grade(level: Channel) Reading {
     return level * 2
 }
 
+fn settle(level: Channel) Channel {
+    let read = grade(level)
+    if read is Channel and read > 0 {
+        return read
+    }
+    if read is not Clipped {
+        return 0
+    }
+    return 255
+}
+
 fn shade(level: Channel) i64 {
     if level >= 200 {
         return 3
@@ -153,7 +164,7 @@ fn drive() Channel {
     let deep = twice(handle)
 
     _ = shade(previous.luma())
-    _ = grade(mid_point)
+    _ = settle(mid_point)
     _ = masked(0x0f, echoed)
     _ = ratio(1.5, 0.25)
     _ = offset(9)

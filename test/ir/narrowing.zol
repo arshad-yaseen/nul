@@ -1,0 +1,61 @@
+type none
+type Timeout
+
+fn find(flag: bool) u32 | none {
+    if flag {
+        return 7
+    }
+    return none
+}
+
+fn report(value: u32) u32 {
+    return value
+}
+
+fn report_missing(value: none) u32 {
+    _ = value
+    return 0
+}
+
+fn use_it(flag: bool) u32 {
+    let r = find(flag)
+    if r is u32 {
+        return report(r)
+    } else {
+        return report_missing(r)
+    }
+}
+
+fn guard(flag: bool) u32 {
+    let r = find(flag)
+    if r is u32 and r > 0 {
+        return r
+    }
+    return 0
+}
+
+fn negative(flag: bool) u32 {
+    let r = find(flag)
+    if r is not none {
+        return r
+    }
+    return 0
+}
+
+fn fetch(flag: bool) u32 | Timeout | none {
+    if flag {
+        return 1
+    }
+    return Timeout
+}
+
+fn rest(flag: bool) u32 {
+    let r = fetch(flag)
+    if r is not u32 {
+        let e = r
+        _ = e
+        return 0
+    } else {
+        return r
+    }
+}

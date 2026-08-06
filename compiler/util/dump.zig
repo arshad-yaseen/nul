@@ -152,6 +152,12 @@ fn node(
             try writer.print(" {t}\n", .{it.op});
             try node(ast, writer, it.operand, below, "operand");
         },
+        .is_expr => |it| {
+            try flag(writer, it.negated, "not");
+            try writer.writeByte('\n');
+            try node(ast, writer, it.operand, below, "operand");
+            try node(ast, writer, it.type_expr, below, "type");
+        },
         .pointer_type => |it| {
             try flag(writer, it.is_mutable, "var");
             try writer.writeByte('\n');
@@ -225,12 +231,19 @@ fn inst(
         .load,
         .ptr_cast,
         .union_init,
+        .union_narrow,
         .negate,
         .not,
         .bit_not,
         => {
             try writer.writeByte(' ');
             try ref(comp, data.un, writer);
+        },
+        .union_is => {
+            try writer.writeByte(' ');
+            try ref(comp, data.probe.operand, writer);
+            try writer.writeAll(", ");
+            try spell.writeType(comp, writer, data.probe.member);
         },
         .store,
         .add,

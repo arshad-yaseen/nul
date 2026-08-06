@@ -1,0 +1,17 @@
+type none
+
+fn probe(r: u32 | none, h: *u32 | none, flag: bool) bool {
+    if r is u32 {
+        return true
+    }
+    if r is not none {
+        return true
+    }
+    if h is *u32 and flag {
+        return true
+    }
+    let direct = r is u32
+    let grouped = r is u32 and flag or r is none
+    _ = grouped
+    return direct
+}

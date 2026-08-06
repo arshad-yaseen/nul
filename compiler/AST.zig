@@ -145,6 +145,8 @@ pub const Node = struct {
 
         binary,
         unary,
+        /// `e is T` and `e is not T`, negation read off the token after `is`.
+        is_expr,
 
         pointer_type,
         /// `A | B`, only in type position. Members are never unions.
@@ -237,7 +239,7 @@ pub const UnaryOp = enum {
 };
 
 /// `none` bans chaining, so `a < b < c` is reported rather than nested.
-pub const Assoc = enum { left, right, none };
+pub const Assoc = enum { left, none };
 
 pub const OperInfo = struct {
     /// Zero means the token is not an infix operator. One is the loosest.
@@ -359,6 +361,7 @@ pub const View = union(enum) {
 
     binary: Binary,
     unary: Unary,
+    is_expr: Is,
 
     pointer_type: Pointer,
     union_type: []const Node.Index,
@@ -422,6 +425,7 @@ pub const View = union(enum) {
         rhs: Node.Index,
     };
     pub const Unary = struct { op: UnaryOp, op_token: Token.Index, operand: Node.Index };
+    pub const Is = struct { negated: bool, operand: Node.Index, type_expr: Node.Index };
 };
 
 pub fn viewOf(tree: AST, node: Node.Index) View {
@@ -540,6 +544,12 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .op = unary_table[@intFromEnum(tree.tokenTag(main))].?,
             .op_token = main,
             .operand = data.node,
+        } },
+
+        .is_expr => .{ .is_expr = .{
+            .negated = tree.tokenTag(main.after(1)) == .kw_not,
+            .operand = data.node_and_node[0],
+            .type_expr = data.node_and_node[1],
         } },
 
         .pointer_type => .{ .pointer_type = .{
@@ -769,6 +779,9 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             },
             .binary => |it| {
                 current = if (side == .leftmost) it.lhs else it.rhs;
+            },
+            .is_expr => |it| {
+                current = if (side == .leftmost) it.operand else it.type_expr;
             },
             .unary => |it| switch (side) {
                 .leftmost => return it.op_token,

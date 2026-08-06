@@ -1,0 +1,5 @@
+type none
+
+fn probe(r: u32 | none) bool {
+    return r is f64
+}

@@ -3,11 +3,13 @@ b0:
   %0 = param flag : bool
   branch %0, b1, b2
 b1:
-  return 7:u32
+  %1 = union_init 7:u32 : u32 | none
+  return %1
 b2:
   jump b3
 b3:
-  return none
+  %2 = union_init none : u32 | none
+  return %2
 
 fn escalate(flag: bool) u32 | Timeout | none
 b0:
@@ -26,20 +28,22 @@ b0:
   %0 = param flag : bool
   branch %0, b1, b2
 b1:
-  %1 = struct_init .{ value: 3:u32 } : Slot
-  return %1
+  %1 = union_init 3:u32 : u32 | none
+  %2 = struct_init .{ value: %1 } : Slot
+  return %2
 b2:
   jump b3
 b3:
-  %2 = call find(%0) : u32 | none
-  %3 = struct_init .{ value: %2 } : Slot
-  return %3
+  %3 = call find(%0) : u32 | none
+  %4 = struct_init .{ value: %3 } : Slot
+  return %4
 
 fn drive(flag: bool) u32 | Timeout | none
 b0:
   %0 = param flag : bool
-  %1 = call find(%0) : u32 | none
-  %2 = call take(%1) : u32 | none
-  %3 = call fill(%0) : Slot
-  %4 = call escalate(%0) : u32 | Timeout | none
-  return %4
+  %1 = union_init none : u32 | none
+  %2 = call find(%0) : u32 | none
+  %3 = call take(%2) : u32 | none
+  %4 = call fill(%0) : Slot
+  %5 = call escalate(%0) : u32 | Timeout | none
+  return %5

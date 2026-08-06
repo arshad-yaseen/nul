@@ -1,0 +1,59 @@
+root
+  unit_decl none
+  fn_decl probe
+    param r
+      type: union_type
+        ident u32
+        ident none
+    param h
+      type: union_type
+        pointer_type
+          child: ident u32
+        ident none
+    param flag
+      type: ident bool
+    ret: ident bool
+    body: block
+      if_expr
+        cond: is_expr
+          operand: ident r
+          type: ident u32
+        then: block
+          return_expr
+            value: bool_literal true
+      if_expr
+        cond: is_expr not
+          operand: ident r
+          type: ident none
+        then: block
+          return_expr
+            value: bool_literal true
+      if_expr
+        cond: binary bool_and
+          lhs: is_expr
+            operand: ident h
+            type: pointer_type
+              child: ident u32
+          rhs: ident flag
+        then: block
+          return_expr
+            value: bool_literal true
+      var_decl direct let
+        init: is_expr
+          operand: ident r
+          type: ident u32
+      var_decl grouped let
+        init: binary bool_or
+          lhs: binary bool_and
+            lhs: is_expr
+              operand: ident r
+              type: ident u32
+            rhs: ident flag
+          rhs: is_expr
+            operand: ident r
+            type: ident none
+      assign =
+        lhs: ident _
+        rhs: ident grouped
+      return_expr
+        value: ident direct

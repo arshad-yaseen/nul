@@ -1,0 +1,3 @@
+fn whole(n: u32) bool {
+    return n is u32
+}

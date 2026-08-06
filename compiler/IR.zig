@@ -99,6 +99,7 @@ pub const Inst = struct {
         un: Ref,
         bin: struct { lhs: Ref, rhs: Ref },
         field: struct { base: Ref, row: u32 },
+        probe: struct { operand: Ref, member: Pool.Index },
         name: Pool.String,
         payload: ExtraIndex,
     };
@@ -147,6 +148,11 @@ pub const Inst = struct {
         /// Uses `un`. A value entering a union that lists its type, or a
         /// narrower union widening. The tag stays the backend's.
         union_init,
+        /// Uses `probe`. Whether the union holds that member, as a bool.
+        union_is,
+        /// Uses `un`. A union retyped to what a passed test proved: one
+        /// member, or the rest of the union.
+        union_narrow,
 
         /// Uses `payload`, an `IR.Call`.
         call,

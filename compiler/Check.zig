@@ -401,7 +401,7 @@ fn resolveUnionType(
             });
             return .poison;
         },
-        .too_many => {
+        .too_wide => {
             try check.failTooWide(node);
             return .poison;
         },
@@ -559,7 +559,8 @@ const Builder = struct {
     locals: std.ArrayList(Local),
     scopes: std.ArrayList(Scope),
     defer_nodes: std.ArrayList(Node.Index),
-    loops: std.ArrayList(Loop),
+    /// Active `is` facts, innermost last. Applied per branch, then cut back.
+    narrows: std.ArrayList(Narrow),
     /// Staged call arguments and field values, marked and restored.
     operands: std.ArrayList(Operand),
     in_defer: bool,
@@ -575,12 +576,36 @@ const Builder = struct {
         name: Pool.String,
         node: Node.Index,
         kind: Kind,
-        /// A ref, or a pool constant for `let_constant`.
-        payload: u32,
+        /// Reinterpreted by `kind`, the way `Node.Data` is by its tag.
+        payload: Payload,
         /// A `var_slot` ref is a pointer to this.
         type: Pool.Index,
 
         const Kind = enum(u8) { let_constant, let_value, var_slot, param };
+
+        /// `let_constant` holds the constant. The rest hold a ref: the value
+        /// for `let_value` and `param`, the slot address for `var_slot`.
+        const Payload = union {
+            ref: Ref,
+            constant: Pool.Index,
+        };
+
+        const Index = enum(u32) {
+            _,
+
+            fn from(raw: usize) Index {
+                assert(raw < std.math.maxInt(u32));
+                return @enumFromInt(@as(u32, @intCast(raw)));
+            }
+
+            fn int(index: Index) u32 {
+                return @intFromEnum(index);
+            }
+        };
+
+        comptime {
+            if (std.debug.runtime_safety == false) assert(@sizeOf(Payload) == 4);
+        }
     };
 
     const Scope = struct {
@@ -588,13 +613,10 @@ const Builder = struct {
         defers_start: u32,
     };
 
-    const Loop = struct {
-        continue_target: IR.Block.Index,
-        break_target: IR.Block.Index,
-        /// A `break` unwinds to here.
-        scope: u32,
-        /// Whether a reachable `break` was seen.
-        has_live_break: bool,
+    const Narrow = struct {
+        local: Local.Index,
+        type: Pool.Index,
+        ref: Ref,
     };
 
     fn blockAt(builder: *Builder, index: IR.Block.Index) *BlockBuild {
@@ -612,7 +634,7 @@ const Builder = struct {
         blocks: usize,
         locals: usize,
         scopes: usize,
-        loops: usize,
+        narrows: usize,
         operands: usize,
         current: IR.Block.Index,
     };
@@ -624,7 +646,7 @@ const Builder = struct {
             .blocks = builder.blocks.items.len,
             .locals = builder.locals.items.len,
             .scopes = builder.scopes.items.len,
-            .loops = builder.loops.items.len,
+            .narrows = builder.narrows.items.len,
             .operands = builder.operands.items.len,
             .current = builder.current,
         };
@@ -632,7 +654,7 @@ const Builder = struct {
 
     fn rewind(builder: *Builder, to: Mark) void {
         assert(builder.scopes.items.len == to.scopes);
-        assert(builder.loops.items.len == to.loops);
+        assert(builder.narrows.items.len == to.narrows);
         assert(builder.operands.items.len == to.operands);
 
         builder.insts.shrinkRetainingCapacity(to.insts);
@@ -653,7 +675,7 @@ const Builder = struct {
         builder.locals.deinit(gpa);
         builder.scopes.deinit(gpa);
         builder.defer_nodes.deinit(gpa);
-        builder.loops.deinit(gpa);
+        builder.narrows.deinit(gpa);
         builder.operands.deinit(gpa);
         builder.* = undefined;
     }
@@ -679,7 +701,7 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
         .locals = .empty,
         .scopes = .empty,
         .defer_nodes = .empty,
-        .loops = .empty,
+        .narrows = .empty,
         .operands = .empty,
         .in_defer = false,
         .reachable = true,
@@ -703,7 +725,7 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
             .name = row.name,
             .node = row.node,
             .kind = .param,
-            .payload = @intFromEnum(param_ref),
+            .payload = .{ .ref = param_ref },
             .type = row.type,
         }, row.node);
     }
@@ -921,12 +943,36 @@ fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator
 }
 
 fn findLocal(check: *const Check, name: []const u8) ?Builder.Local {
+    const index = check.findLocalIndex(name) orelse return null;
+    return check.localAt(index);
+}
+
+fn findLocalIndex(check: *const Check, name: []const u8) ?Builder.Local.Index {
     const builder = check.builder orelse return null;
     var index = builder.locals.items.len;
     while (index > 0) {
         index -= 1;
         const local = builder.locals.items[index];
-        if (std.mem.eql(u8, check.comp.pool.stringText(local.name), name)) return local;
+        if (std.mem.eql(u8, check.comp.pool.stringText(local.name), name)) {
+            return .from(index);
+        }
+    }
+    return null;
+}
+
+fn localAt(check: *const Check, index: Builder.Local.Index) Builder.Local {
+    const builder = check.builder.?;
+    assert(index.int() < builder.locals.items.len);
+    return builder.locals.items[index.int()];
+}
+
+fn activeNarrow(check: *const Check, local: Builder.Local.Index) ?Builder.Narrow {
+    const builder = check.builder.?;
+    var index = builder.narrows.items.len;
+    while (index > 0) {
+        index -= 1;
+        const narrow = builder.narrows.items[index];
+        if (narrow.local == local) return narrow;
     }
     return null;
 }
@@ -1029,16 +1075,16 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
                 .name = name,
                 .node = node,
                 .kind = .let_constant,
-                .payload = Pool.Index.poison.int(),
+                .payload = .{ .constant = .poison },
                 .type = .poison,
             }, node);
             return;
         },
-        .constant => |constant| {
+        .constant => {
             const met = if (annotation) |wanted|
-                try check.fitValue(constant, wanted, view.init_expr)
+                try check.coerce(value, wanted, view.init_expr)
             else
-                Value{ .constant = constant };
+                value;
             switch (met) {
                 .constant => |final| {
                     if (view.is_mutable) {
@@ -1048,7 +1094,7 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
                             .name = name,
                             .node = node,
                             .kind = .let_constant,
-                            .payload = final.int(),
+                            .payload = .{ .constant = final },
                             .type = comp.pool.typeOfValue(final),
                         }, node);
                     }
@@ -1115,7 +1161,7 @@ fn checkVarDeclSlot(
             .name = name,
             .node = node,
             .kind = .let_value,
-            .payload = @intFromEnum(refOf(final)),
+            .payload = .{ .ref = refOf(final) },
             .type = value_type,
         }, node);
         return;
@@ -1127,7 +1173,7 @@ fn checkVarDeclSlot(
         .name = name,
         .node = node,
         .kind = .var_slot,
-        .payload = @intFromEnum(slot),
+        .payload = .{ .ref = slot },
         .type = value_type,
     }, node);
 }
@@ -1137,7 +1183,7 @@ fn declarePoisoned(check: *Check, name: Pool.String, node: Node.Index) Allocator
         .name = name,
         .node = node,
         .kind = .let_constant,
-        .payload = Pool.Index.poison.int(),
+        .payload = .{ .constant = .poison },
         .type = .poison,
     }, node);
 }
@@ -1223,14 +1269,25 @@ fn checkIf(
     const join = try check.newBlock();
 
     const cond = try check.checkCondition(view.cond);
+
+    var facts: Facts = .{};
+    try check.gatherFacts(view.cond, &facts);
+
     check.endBlock(.{ .branch = .{
         .cond = cond,
         .then_block = then_block,
         .else_block = else_block,
     } });
 
+    const narrows_mark = builder.narrows.items.len;
+
     check.startBlock(then_block);
+
+    try check.applyFacts(facts.when_true.slice());
+
     const then_value = try check.checkExpr(view.then_block, hint);
+
+    builder.narrows.shrinkRetainingCapacity(narrows_mark);
 
     var result_type = hint orelse check.typeOf(then_value);
     if (carries and then_value != .diverged) {
@@ -1245,13 +1302,19 @@ fn checkIf(
     builder.reachable = entry_reachable;
     var else_value: Value = .diverged;
     if (view.else_node.unwrap()) |else_node| {
+        try check.applyFacts(facts.when_false.slice());
+
         else_value = try check.checkExpr(else_node, hint);
+
+        builder.narrows.shrinkRetainingCapacity(narrows_mark);
+
         if (carries and else_value != .diverged) {
             if (then_value == .diverged and hint == null) {
                 result_type = try check.settleArmType(node, check.typeOf(else_value));
             }
             try check.storeArm(slot, else_value, result_type, else_node);
         }
+
         if (check.blockOpen() and builder.reachable) join_reachable = true;
         if (check.blockOpen()) check.endBlock(.{ .jump = join });
     } else {
@@ -1322,6 +1385,169 @@ fn setSlotType(check: *Check, slot: Ref, value_type: Pool.Index) Allocator.Error
     builder.insts.items(.type)[index] = try check.pointerTo(value_type, true);
 }
 
+const facts_max = 8;
+
+const Fact = struct { local: Builder.Local.Index, type: Pool.Index };
+
+const FactList = struct {
+    facts: [facts_max]Fact = undefined,
+    count: u32 = 0,
+
+    fn hold(list: *FactList, fact: Fact) void {
+        if (list.count == facts_max) return;
+        list.facts[list.count] = fact;
+        list.count += 1;
+    }
+
+    fn slice(list: *const FactList) []const Fact {
+        return list.facts[0..list.count];
+    }
+};
+
+/// What a condition proves about locals, per edge it can take.
+const Facts = struct {
+    when_true: FactList = .{},
+    when_false: FactList = .{},
+};
+
+/// `is` proves a member when true and the rest when false. A failed `and`
+/// does not say which side failed, so it proves nothing when false.
+fn gatherFacts(check: *Check, node: Node.Index, facts: *Facts) Allocator.Error!void {
+    switch (check.tree.viewOf(node)) {
+        .is_expr => {
+            const found = try check.factsOfIs(node) orelse return;
+            facts.when_true.hold(found.when_true);
+            facts.when_false.hold(found.when_false);
+        },
+        .binary => |it| {
+            if (it.op != .bool_and) return;
+            try check.gatherWhenTrue(it.lhs, &facts.when_true);
+            try check.gatherWhenTrue(it.rhs, &facts.when_true);
+        },
+        else => {},
+    }
+}
+
+/// What an `and`-spine proves when the whole condition passes.
+fn gatherWhenTrue(
+    check: *Check,
+    node: Node.Index,
+    when_true: *FactList,
+) Allocator.Error!void {
+    switch (check.tree.viewOf(node)) {
+        .is_expr => {
+            const found = try check.factsOfIs(node) orelse return;
+            when_true.hold(found.when_true);
+        },
+        .binary => |it| {
+            if (it.op != .bool_and) return;
+            try check.gatherWhenTrue(it.lhs, when_true);
+            try check.gatherWhenTrue(it.rhs, when_true);
+        },
+        else => {},
+    }
+}
+
+/// One `is`, both doors: the member where it passed, the rest where it
+/// failed, swapped for `is not`.
+fn factsOfIs(
+    check: *Check,
+    node: Node.Index,
+) Allocator.Error!?struct { when_true: Fact, when_false: Fact } {
+    const comp = check.comp;
+    const view = check.tree.viewOf(node).is_expr;
+
+    if (check.tree.nodeTag(view.operand) != .ident) return null;
+    const text = check.tree.tokenSlice(check.tree.nodeMainToken(view.operand));
+    const index = check.findLocalIndex(text) orelse return null;
+
+    const local = check.localAt(index);
+    switch (local.kind) {
+        .let_value, .param => {},
+        .let_constant, .var_slot => return null,
+    }
+
+    const found = if (check.activeNarrow(index)) |narrow| narrow.type else local.type;
+    if (comp.pool.isUnion(found) == false) return null;
+
+    const member = try check.resolveType(view.type_expr);
+    if (comp.pool.unionHas(found, member) == false) return null;
+    const rest = try comp.pool.unionWithout(comp.gpa, found, member);
+
+    if (view.negated) {
+        return .{
+            .when_true = .{ .local = index, .type = rest },
+            .when_false = .{ .local = index, .type = member },
+        };
+    }
+    return .{
+        .when_true = .{ .local = index, .type = member },
+        .when_false = .{ .local = index, .type = rest },
+    };
+}
+
+fn applyFacts(check: *Check, facts: []const Fact) Allocator.Error!void {
+    const builder = check.builder.?;
+    for (facts) |fact| {
+        const local = check.localAt(fact.local);
+        const source: Ref = if (check.activeNarrow(fact.local)) |narrow|
+            narrow.ref
+        else
+            local.payload.ref;
+        const narrowed = try check.emitOne(.union_narrow, fact.type, source);
+        try builder.narrows.append(check.comp.gpa, .{
+            .local = fact.local,
+            .type = fact.type,
+            .ref = narrowed,
+        });
+    }
+}
+
+fn checkIs(check: *Check, node: Node.Index, view: AST.View.Is) Allocator.Error!Value {
+    const comp = check.comp;
+    const operand = try check.checkExpr(view.operand, null);
+    const member = try check.resolveType(view.type_expr);
+
+    if (operand == .diverged) return .diverged;
+    if (operand == .poison) return .poison;
+    if (member == .poison) return .poison;
+    if (try check.valueOnly(view.operand, operand) == false) return .poison;
+
+    const found = check.typeOf(operand);
+    if (found == .poison) return .poison;
+    if (comp.pool.isUnion(found) == false) {
+        try check.fail(node, .{
+            .code = .not_a_union,
+            .message = try comp.fmt("'is' asks which member a union holds, and this is {s}", .{
+                try comp.typeName(found),
+            }),
+            .label = "not a union",
+        });
+        return .poison;
+    }
+    if (comp.pool.unionHas(found, member) == false) {
+        try check.fail(view.type_expr, .{
+            .code = .not_a_member,
+            .message = try comp.fmt("'{s}' is not a member of '{s}'", .{
+                try comp.typeName(member),
+                try comp.typeName(found),
+            }),
+            .label = "not a member",
+        });
+        return .poison;
+    }
+
+    assert(operand == .runtime);
+    const tested = try check.emit(.union_is, .bool_type, .{
+        .probe = .{ .operand = refOf(operand), .member = member },
+    });
+    if (view.negated) {
+        const flipped = try check.emitOne(.not, .bool_type, tested);
+        return runtimeValue(flipped, .bool_type);
+    }
+    return runtimeValue(tested, .bool_type);
+}
+
 fn checkCondition(check: *Check, node: Node.Index) Allocator.Error!Ref {
     const value = try check.checkExpr(node, null);
     const found = check.typeOf(value);
@@ -1388,11 +1614,8 @@ fn checkReturn(
     return .diverged;
 }
 
-const LoopJump = enum { breaking, continuing };
-
-fn checkLoopJump(check: *Check, node: Node.Index, jump: LoopJump) Allocator.Error!Value {
-    const builder = check.builder.?;
-    if (builder.in_defer) {
+fn checkLoopJump(check: *Check, node: Node.Index) Allocator.Error!Value {
+    if (check.builder.?.in_defer) {
         try check.fail(node, .{
             .code = .defer_cannot_leave,
             .message = "a 'defer' runs on the way out, so it cannot leave again",
@@ -1400,25 +1623,12 @@ fn checkLoopJump(check: *Check, node: Node.Index, jump: LoopJump) Allocator.Erro
         });
         return .poison;
     }
-    if (builder.loops.items.len == 0) {
-        try check.fail(node, .{
-            .code = .outside_loop,
-            .message = "there is no loop here to leave",
-            .label = "outside every loop",
-        });
-        return .poison;
-    }
-
-    const loop = &builder.loops.items[builder.loops.items.len - 1];
-    try check.unwindScopesTo(loop.scope);
-    switch (jump) {
-        .breaking => {
-            if (builder.reachable) loop.has_live_break = true;
-            check.endBlock(.{ .jump = loop.break_target });
-        },
-        .continuing => check.endBlock(.{ .jump = loop.continue_target }),
-    }
-    return .diverged;
+    try check.fail(node, .{
+        .code = .outside_loop,
+        .message = "there is no loop here to leave",
+        .label = "outside every loop",
+    });
+    return .poison;
 }
 
 fn checkDefer(check: *Check, body: Node.Index) Allocator.Error!void {
@@ -1489,10 +1699,10 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .block => return check.checkBlockValue(node, hint),
         .if_expr => |view| return check.checkIf(node, view, hint),
         .return_expr => |operand| return check.checkReturn(node, operand),
-        .break_expr => return check.checkLoopJump(node, .breaking),
-        .continue_expr => return check.checkLoopJump(node, .continuing),
+        .break_expr, .continue_expr => return check.checkLoopJump(node),
         .binary => |view| return check.checkBinary(view),
         .unary => |view| return check.checkUnary(view),
+        .is_expr => |view| return check.checkIs(node, view),
         .field_access => |view| return check.checkFieldAccess(node, view),
         .deref => return check.checkDeref(node),
         .call => return check.checkCall(node),
@@ -1517,13 +1727,18 @@ fn checkIdent(check: *Check, node: Node.Index) Allocator.Error!Value {
         return .poison;
     }
 
-    if (check.findLocal(text)) |local| {
+    if (check.findLocalIndex(text)) |index| {
+        const local = check.localAt(index);
         switch (local.kind) {
-            .let_constant => return .{ .constant = @enumFromInt(local.payload) },
-            .let_value, .param => return runtimeValue(@enumFromInt(local.payload), local.type),
+            .let_constant => return .{ .constant = local.payload.constant },
+            .let_value, .param => {
+                if (check.activeNarrow(index)) |narrow| {
+                    return runtimeValue(narrow.ref, narrow.type);
+                }
+                return runtimeValue(local.payload.ref, local.type);
+            },
             .var_slot => {
-                const slot: Ref = @enumFromInt(local.payload);
-                const loaded = try check.emitOne(.load, local.type, slot);
+                const loaded = try check.emitOne(.load, local.type, local.payload.ref);
                 return runtimeValue(loaded, local.type);
             },
         }
@@ -1852,9 +2067,24 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     } });
 
     check.startBlock(rhs_block);
+    // the right side runs knowing how the left went, so its proof holds here
+    var facts: Facts = .{};
+    const narrows_mark = check.builder.?.narrows.items.len;
+    switch (view.op) {
+        .bool_and => {
+            try check.gatherWhenTrue(view.lhs, &facts.when_true);
+            try check.applyFacts(facts.when_true.slice());
+        },
+        .bool_or => {
+            try check.gatherFacts(view.lhs, &facts);
+            try check.applyFacts(facts.when_false.slice());
+        },
+        else => unreachable,
+    }
     const rhs = try check.checkExpr(view.rhs, null);
     const rhs_met = try check.coerce(rhs, .bool_type, view.rhs);
     try check.emitStore(slot, refOf(rhs_met));
+    check.builder.?.narrows.shrinkRetainingCapacity(narrows_mark);
     check.endBlock(.{ .jump = join });
 
     check.startBlock(join);
@@ -3114,7 +3344,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
                 return switch (local.kind) {
                     .var_slot => .{
                         .kind = .address,
-                        .ref = @enumFromInt(local.payload),
+                        .ref = local.payload.ref,
                         .type = local.type,
                         .mutable = true,
                         .reason = .mutable,
@@ -3123,7 +3353,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
                     },
                     .let_constant => .{
                         .kind = .value,
-                        .ref = .fromConstant(@enumFromInt(local.payload)),
+                        .ref = .fromConstant(local.payload.constant),
                         .type = local.type,
                         .mutable = false,
                         .reason = .let_bound,
@@ -3132,7 +3362,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
                     },
                     .let_value, .param => .{
                         .kind = .value,
-                        .ref = @enumFromInt(local.payload),
+                        .ref = local.payload.ref,
                         .type = local.type,
                         .mutable = false,
                         .reason = switch (local.kind) {
@@ -3455,7 +3685,14 @@ fn coerce(
     switch (value) {
         .poison => return .poison,
         .diverged => return .diverged,
-        .constant => |constant| return check.fitValue(constant, wanted, node),
+        .constant => |constant| {
+            const met = try check.fitValue(constant, wanted, node);
+            if (met != .constant) return met;
+            if (comp.pool.isUnion(wanted) == false) return met;
+            if (check.builder == null) return met;
+            const wrapped = try check.emitOne(.union_init, wanted, .fromConstant(met.constant));
+            return runtimeValue(wrapped, wanted);
+        },
         .runtime => |runtime| {
             if (runtime.type == wanted) return value;
             if (runtime.type == .poison) return .poison;
@@ -3578,6 +3815,17 @@ fn reportMismatch(
     const comp = check.comp;
     const found = check.typeOf(value);
     const found_name = try comp.typeName(found);
+
+    // the union holds what is wanted, so what is missing is the proof
+    const narrowable = found != .poison and wanted != .poison and
+        comp.pool.isUnion(found) and comp.pool.isUnion(wanted) == false and
+        comp.pool.unionHas(found, wanted);
+    const help: []const u8 = if (narrowable)
+        try comp.fmt("an 'is' branch narrows this to {s} on a 'let' or a parameter, " ++
+            "never on a 'var'", .{try comp.typeName(wanted)})
+    else
+        "nothing converts on its own";
+
     try check.fail(node, .{
         .code = .type_mismatch,
         .message = try comp.fmt("expected {s}, found {s}", .{
@@ -3585,7 +3833,7 @@ fn reportMismatch(
             found_name,
         }),
         .label = "the wrong type",
-        .help = "nothing converts on its own",
+        .help = help,
     });
     return .poison;
 }
@@ -3610,6 +3858,7 @@ fn runtimeOnly(tag: Node.Tag) ?[]const u8 {
         .call => "a call",
         .struct_literal => "a struct literal",
         .deref => "reading through a pointer",
+        .is_expr => "an 'is' test",
         else => null,
     };
 }

@@ -1,0 +1,9 @@
+type none
+
+fn hold(v: u32 | none) u32 {
+    var slot: u32 | none = v
+    if slot is u32 {
+        return slot
+    }
+    return 0
+}

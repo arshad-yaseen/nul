@@ -1,0 +1,6 @@
+error[E0257]: 'f64' is not a member of 'u32 | none'
+ --> test/fail/is_not_member.zol:4:17
+  |
+4 |     return r is f64
+  |                 ^^^ not a member
+
