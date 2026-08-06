@@ -166,6 +166,8 @@ fn addZol(
 /// came from, so a report names one revision rather than a branch.
 fn resolveVersion(b: *std.Build) []const u8 {
     const manifest = zon.version;
+    // a tree with no history to read must not claim the release it precedes
+    const unknown = b.fmt("{s}-dev", .{manifest});
 
     var code: u8 = undefined;
     const stdout = b.runAllowFail(&.{
@@ -173,23 +175,53 @@ fn resolveVersion(b: *std.Build) []const u8 {
         b.build_root.path orelse ".", "describe",
         "--match",                    "*.*.*",
         "--tags",                     "--abbrev=9",
-    }, &code, .ignore) catch return manifest;
+    }, &code, .ignore) catch return unknown;
     const described = std.mem.trim(u8, stdout, " \n\r");
 
     // no trailing distance means the commit carries the tag itself
-    if (std.mem.indexOfScalar(u8, described, '-') == null) {
+    const dev = splitDescribe(described) orelse {
         if (std.mem.eql(u8, described, manifest)) return manifest;
         std.debug.panic(
             "tag '{s}' and build.zig.zon version '{s}' disagree",
             .{ described, manifest },
         );
-    }
+    };
 
-    // `0.1.0-47-g7f3a91c9a` is 47 commits past 0.1.0, so the next one is brewing
-    var fields = std.mem.splitBackwardsScalar(u8, described, '-');
-    const hash = fields.next() orelse return manifest;
-    const distance = fields.next() orelse return manifest;
-    return b.fmt("{s}-dev.{s}+{s}", .{ manifest, distance, hash[1..] });
+    // a tag at or past the manifest would number this build below a release
+    const tagged = std.SemanticVersion.parse(dev.tag) catch
+        std.debug.panic("tag '{s}' is not a version", .{dev.tag});
+    const next = std.SemanticVersion.parse(manifest) catch
+        std.debug.panic("build.zig.zon version '{s}' is not a version", .{manifest});
+    if (tagged.order(next) != .lt) std.debug.panic(
+        "tag '{s}' does not precede build.zig.zon version '{s}'",
+        .{ dev.tag, manifest },
+    );
+
+    return b.fmt("{s}-dev.{s}+{s}", .{ manifest, dev.distance, dev.hash });
+}
+
+const Describe = struct { tag: []const u8, distance: []const u8, hash: []const u8 };
+
+/// `0.1.0-47-g7f3a91c9a` is 47 commits past 0.1.0, so the next one is brewing.
+/// A tag may hold dashes of its own, so the trailing two fields are found by
+/// their shape rather than counted in.
+fn splitDescribe(described: []const u8) ?Describe {
+    const hash_dash = std.mem.lastIndexOfScalar(u8, described, '-') orelse return null;
+    const hash = described[hash_dash + 1 ..];
+    if (hash.len < 2 or hash[0] != 'g') return null;
+    for (hash[1..]) |c| if (!std.ascii.isHex(c)) return null;
+
+    const head = described[0..hash_dash];
+    const distance_dash = std.mem.lastIndexOfScalar(u8, head, '-') orelse return null;
+    const distance = head[distance_dash + 1 ..];
+    if (distance.len == 0) return null;
+    for (distance) |c| if (!std.ascii.isDigit(c)) return null;
+
+    return .{
+        .tag = head[0..distance_dash],
+        .distance = distance,
+        .hash = hash[1..],
+    };
 }
 
 fn addTestFiles(b: *std.Build, run: *std.Build.Step.Run) void {

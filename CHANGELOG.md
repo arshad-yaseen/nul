@@ -51,6 +51,9 @@ than retrofitted. `demo.zol` is the design it is heading for.
   declaration already was.
 - `-x` on the smallest value of a signed type reports that it does not fit,
   where it used to crash the compiler.
+- A build with no history to read reports `X.Y.Z-dev` where it used to report
+  `X.Y.Z`, so a source tree unpacked without its `.git` no longer claims to be
+  the release it still precedes.
 
 ## [0.1.0] - 2026-08-04
 

@@ -109,6 +109,17 @@ manifest version disagree, so a mistagged release stops before it publishes.
 
 ## Versions
 
-`build.zig.zon` holds the next, unreleased version. A build standing on the
-matching tag reports it bare, and every other build reports something like
-`0.2.0-dev.47+7f3a91c9a`, so a bug report names one commit rather than a branch.
+`build.zig.zon` holds the next, unreleased version, and is the only place a
+version is written. A build standing on the matching tag reports it bare, and
+every other build reports something like `0.2.0-dev.47+7f3a91c9a`, so a bug
+report names one commit rather than a branch.
+
+`resolveVersion` in `build.zig` derives that from `git describe`, and refuses
+two ways of being wrong rather than shipping a version that lies:
+
+- A tree with no history to read reports `0.2.0-dev` and stops. It understates,
+  which is the only safe direction: a source archive unpacked without its `.git`
+  must never claim to be the release it still precedes.
+- A tag standing at or past the manifest version fails the build. Left alone it
+  would number every commit on `main` below a release that already exists, and
+  every comparison made downstream would read it that way.
