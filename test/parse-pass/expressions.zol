@@ -3,7 +3,7 @@ fn precedence(a: i64, b: i64, c: i64) i64 {
     let grouped = (a + b) * c
     let compared = a + b == c
     let logical = a < b and b > c or a != c
-    let unary = -a + !true
+    let unary = -a + ~b
     let mixed = -(a * b) + c
     return arithmetic + grouped
 }
@@ -16,7 +16,6 @@ fn literals() {
     _ = 1e10
     _ = true
     _ = false
-    _ = null
 }
 
 fn calls(f: i64, value: Node) {

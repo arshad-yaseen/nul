@@ -4,7 +4,7 @@ struct Inner {
 
 struct Outer {
     inner: Inner
-    peer: ?*var Outer
+    peer: *var Outer
 }
 
 fn bump(counter: *var Inner, by: i64) {
@@ -13,7 +13,5 @@ fn bump(counter: *var Inner, by: i64) {
 
 fn deep(out: *var Outer) {
     out.inner.hits = out.inner.hits + 1
-    if out.peer |other| {
-        other.inner.hits = 0
-    }
+    out.peer.inner.hits = 0
 }

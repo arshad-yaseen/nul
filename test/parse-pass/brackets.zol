@@ -2,7 +2,7 @@ fn instantiated(box: Box[i64], pair: Pair[bool, i64]) Box[i64] {
     return box
 }
 
-fn nested(box: Box[Box[i64]], pointers: Box[*var i64], maybe: Box[?i64]) i64 {
+fn nested(box: Box[Box[i64]], pointers: Box[*var i64]) i64 {
     return 0
 }
 

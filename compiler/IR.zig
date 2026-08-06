@@ -147,16 +147,6 @@ pub const Inst = struct {
         /// Uses `payload`, an `IR.Call`.
         call,
 
-        // all `un`
-        wrap_optional,
-        has_value,
-        unwrap_value,
-        wrap_ok,
-        wrap_err,
-        is_error,
-        unwrap_ok,
-        unwrap_err,
-
         /// Uses `payload`, read by `structInitAt`.
         struct_init,
     };

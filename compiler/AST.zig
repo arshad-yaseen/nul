@@ -106,11 +106,9 @@ pub const Node = struct {
 
     pub const Tag = enum(u8) {
         root,
-        use_decl,
+        import_decl,
         struct_decl,
         type_decl,
-        /// The declaration is the error's identity.
-        error_decl,
         fn_decl,
         /// Both `let` and `var`, told apart by `main_token`.
         var_decl,
@@ -123,19 +121,15 @@ pub const Node = struct {
         assign,
         defer_stmt,
         if_expr,
-        while_stmt,
         break_expr,
         continue_expr,
         return_expr,
-        /// The `v` of `|v|`, on an `if` or a `catch`.
-        capture,
 
         /// The `intrinsic` keyword, which only a `.name` call may follow.
         intrinsic,
         ident,
         number_literal,
         bool_literal,
-        null_literal,
 
         field_access,
         /// `p.*`, what a pointer points at.
@@ -147,16 +141,10 @@ pub const Node = struct {
         struct_literal,
         struct_field_init,
 
-        try_expr,
-        orelse_expr,
-        catch_expr,
         binary,
         unary,
 
         pointer_type,
-        optional_type,
-        /// `!T`, over the one universal error set.
-        error_union_type,
 
         /// A hole where parsing failed.
         err,
@@ -268,26 +256,21 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
         .{ Token.Tag.lt_eq, 3, Assoc.none, BinaryOp.less_or_equal },
         .{ Token.Tag.gt, 3, Assoc.none, BinaryOp.greater_than },
         .{ Token.Tag.gt_eq, 3, Assoc.none, BinaryOp.greater_or_equal },
-        .{ Token.Tag.pipe, 5, Assoc.left, BinaryOp.bit_or },
-        .{ Token.Tag.caret, 6, Assoc.left, BinaryOp.bit_xor },
-        .{ Token.Tag.ampersand, 7, Assoc.left, BinaryOp.bit_and },
-        .{ Token.Tag.lt_lt, 8, Assoc.left, BinaryOp.shift_left },
-        .{ Token.Tag.gt_gt, 8, Assoc.left, BinaryOp.shift_right },
-        .{ Token.Tag.plus, 9, Assoc.left, BinaryOp.add },
-        .{ Token.Tag.minus, 9, Assoc.left, BinaryOp.sub },
-        .{ Token.Tag.star, 10, Assoc.left, BinaryOp.mul },
-        .{ Token.Tag.slash, 10, Assoc.left, BinaryOp.div },
-        .{ Token.Tag.percent, 10, Assoc.left, BinaryOp.mod },
+        .{ Token.Tag.pipe, 4, Assoc.left, BinaryOp.bit_or },
+        .{ Token.Tag.caret, 5, Assoc.left, BinaryOp.bit_xor },
+        .{ Token.Tag.ampersand, 6, Assoc.left, BinaryOp.bit_and },
+        .{ Token.Tag.lt_lt, 7, Assoc.left, BinaryOp.shift_left },
+        .{ Token.Tag.gt_gt, 7, Assoc.left, BinaryOp.shift_right },
+        .{ Token.Tag.plus, 8, Assoc.left, BinaryOp.add },
+        .{ Token.Tag.minus, 8, Assoc.left, BinaryOp.sub },
+        .{ Token.Tag.star, 9, Assoc.left, BinaryOp.mul },
+        .{ Token.Tag.slash, 9, Assoc.left, BinaryOp.div },
+        .{ Token.Tag.percent, 9, Assoc.left, BinaryOp.mod },
     }) |entry| table[@intFromEnum(entry[0])] = .{
         .prec = entry[1],
         .assoc = entry[2],
         .op = entry[3],
     };
-
-    // right nesting, so `a orelse b orelse c` tries each in turn
-    for (.{ Token.Tag.kw_orelse, Token.Tag.kw_catch }) |tag| {
-        table[@intFromEnum(tag)] = .{ .prec = 4, .assoc = .right };
-    }
     break :blk table;
 };
 
@@ -295,7 +278,7 @@ pub const oper_table: [Token.tag_count]OperInfo = blk: {
 pub const unary_table: [Token.tag_count]?UnaryOp = blk: {
     var table: [Token.tag_count]?UnaryOp = @splat(null);
     table[@intFromEnum(Token.Tag.minus)] = .negate;
-    table[@intFromEnum(Token.Tag.bang)] = .bool_not;
+    table[@intFromEnum(Token.Tag.kw_not)] = .bool_not;
     table[@intFromEnum(Token.Tag.tilde)] = .bit_not;
     table[@intFromEnum(Token.Tag.ampersand)] = .address_of;
     break :blk table;
@@ -328,12 +311,10 @@ pub fn assigns(tag: Token.Tag) bool {
 comptime {
     @setEvalBranchQuota(20000);
     for (std.enums.values(Token.Tag)) |tag| {
-        // `unpack` reads the op of every `.binary`, and only these two build a
-        // node of their own
+        // `unpack` reads the op of every `.binary`, so an infix token that
+        // builds one must name it
         const info = oper_table[@intFromEnum(tag)];
-        if (info.prec > 0 and info.op == null) {
-            assert(tag == .kw_orelse or tag == .kw_catch);
-        }
+        if (info.prec > 0) assert(info.op != null);
         // an assignment never also sits between two values, so a statement can
         // tell where the expression on its left ends
         if (assigns(tag)) assert(info.prec == 0);
@@ -342,10 +323,9 @@ comptime {
 
 pub const View = union(enum) {
     root: []const Node.Index,
-    use_decl: Use,
+    import_decl: Import,
     struct_decl: StructDecl,
     type_decl: TypeDecl,
-    error_decl: ErrorDecl,
     fn_decl: FnDecl,
     var_decl: VarDecl,
     type_param: Token.Index,
@@ -356,17 +336,14 @@ pub const View = union(enum) {
     assign: Assign,
     defer_stmt: Node.Index,
     if_expr: If,
-    while_stmt: While,
     break_expr: Token.Index,
     continue_expr: Token.Index,
     return_expr: Node.OptionalIndex,
-    capture: Token.Index,
 
     intrinsic: Token.Index,
     ident: Token.Index,
     number_literal: Token.Index,
     bool_literal: Bool,
-    null_literal: Token.Index,
 
     field_access: FieldAccess,
     deref: Node.Index,
@@ -375,28 +352,19 @@ pub const View = union(enum) {
     struct_literal: []const Node.Index,
     struct_field_init: NamedValue,
 
-    try_expr: Node.Index,
-    orelse_expr: Pair,
-    catch_expr: Catch,
     binary: Binary,
     unary: Unary,
 
     pointer_type: Pointer,
-    optional_type: Node.Index,
-    error_union_type: Node.Index,
 
     err,
 
-    pub const Use = struct { is_pub: bool, path: Node.Index };
+    pub const Import = struct { is_pub: bool, path: Node.Index };
     pub const StructDecl = struct {
         name_token: Token.Index,
         is_pub: bool,
         type_params: []const Node.Index,
         members: []const Node.Index,
-    };
-    pub const ErrorDecl = struct {
-        name_token: Token.Index,
-        is_pub: bool,
     };
     pub const TypeDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
     pub const FnDecl = struct {
@@ -428,20 +396,11 @@ pub const View = union(enum) {
     /// `else_node` is a block, or another `if_expr` for `else if`.
     pub const If = struct {
         cond: Node.Index,
-        capture: Node.OptionalIndex,
         then_block: Node.Index,
         else_node: Node.OptionalIndex,
     };
-    /// No condition is `while { }`.
-    pub const While = struct {
-        cond: Node.OptionalIndex,
-        capture: Node.OptionalIndex,
-        body: Node.Index,
-    };
     pub const Bracket = struct { base: Node.Index, args: []const Node.Index };
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
-    /// `rhs` is a value, or the block of `a catch |err| { }`.
-    pub const Catch = struct { lhs: Node.Index, capture: Node.OptionalIndex, rhs: Node.Index };
     pub const FieldAccess = struct { lhs: Node.Index, name_token: Token.Index };
     pub const Pointer = struct { is_mutable: bool, child: Node.Index };
     pub const Bool = struct { value: bool, token: Token.Index };
@@ -468,7 +427,7 @@ pub fn viewOf(tree: AST, node: Node.Index) View {
 fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) View {
     return switch (node_tag) {
         .root => .{ .root = tree.listAt(data.extra) },
-        .use_decl => .{ .use_decl = .{ .is_pub = tree.isPub(main), .path = data.node } },
+        .import_decl => .{ .import_decl = .{ .is_pub = tree.isPub(main), .path = data.node } },
         .struct_decl => blk: {
             var payload = tree.fields(data.extra);
             break :blk .{ .struct_decl = .{
@@ -482,10 +441,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .name_token = main.after(1),
             .is_pub = tree.isPub(main),
             .aliased = data.node,
-        } },
-        .error_decl => .{ .error_decl = .{
-            .name_token = main.after(1),
-            .is_pub = tree.isPub(main),
         } },
         .fn_decl => blk: {
             var payload = tree.fields(data.extra);
@@ -523,23 +478,13 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             var payload = tree.fields(data.extra);
             break :blk .{ .if_expr = .{
                 .cond = payload.node(),
-                .capture = payload.optNode(),
                 .then_block = payload.node(),
                 .else_node = payload.optNode(),
-            } };
-        },
-        .while_stmt => blk: {
-            var payload = tree.fields(data.extra);
-            break :blk .{ .while_stmt = .{
-                .cond = payload.optNode(),
-                .capture = payload.optNode(),
-                .body = payload.node(),
             } };
         },
         .break_expr => .{ .break_expr = main },
         .continue_expr => .{ .continue_expr = main },
         .return_expr => .{ .return_expr = data.opt_node },
-        .capture => .{ .capture = main },
 
         .intrinsic => .{ .intrinsic = main },
         .ident => .{ .ident = main },
@@ -548,8 +493,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .value = tree.tokenTag(main) == .kw_true,
             .token = main,
         } },
-        .null_literal => .{ .null_literal = main },
-
         .field_access => .{ .field_access = .{ .lhs = data.node, .name_token = main.after(1) } },
         .deref => .{ .deref = data.node },
         .bracket => blk: {
@@ -563,19 +506,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         .struct_literal => .{ .struct_literal = tree.listAt(data.extra) },
         .struct_field_init => .{ .struct_field_init = .{ .name_token = main, .value = data.node } },
 
-        .try_expr => .{ .try_expr = data.node },
-        .orelse_expr => .{ .orelse_expr = .{
-            .lhs = data.node_and_node[0],
-            .rhs = data.node_and_node[1],
-        } },
-        .catch_expr => blk: {
-            var payload = tree.fields(data.extra);
-            break :blk .{ .catch_expr = .{
-                .lhs = payload.node(),
-                .capture = payload.optNode(),
-                .rhs = payload.node(),
-            } };
-        },
         .binary => .{
             .binary = .{
                 // `.binary` is built only for tokens the table names
@@ -595,8 +525,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .is_mutable = tree.tokenTag(main.after(1)) == .kw_var,
             .child = data.node,
         } },
-        .optional_type => .{ .optional_type = data.node },
-        .error_union_type => .{ .error_union_type = data.node },
 
         .err => .err,
     };
@@ -726,14 +654,10 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
         const main = tree.nodeMainToken(current);
         switch (tree.viewOf(current)) {
             .root => return if (side == .leftmost) .first else main,
-            .err, .type_param, .capture, .break_expr, .continue_expr => return main,
-            .intrinsic, .ident, .number_literal, .null_literal => return main,
+            .err, .type_param, .break_expr, .continue_expr => return main,
+            .intrinsic, .ident, .number_literal => return main,
             .bool_literal => |it| return it.token,
-            .error_decl => |it| switch (side) {
-                .leftmost => return if (it.is_pub) main.before(1) else main,
-                .rightmost => return it.name_token,
-            },
-            .use_decl => |it| switch (side) {
+            .import_decl => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.path,
             },
@@ -772,20 +696,13 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             .assign => |it| {
                 current = if (side == .leftmost) it.lhs else it.rhs;
             },
-            .orelse_expr => |it| {
-                current = if (side == .leftmost) it.lhs else it.rhs;
-            },
-            .defer_stmt, .try_expr => |child| switch (side) {
+            .defer_stmt => |child| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = child,
             },
             .if_expr => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.else_node.unwrap() orelse it.then_block,
-            },
-            .while_stmt => |it| switch (side) {
-                .leftmost => return main,
-                .rightmost => current = it.body,
             },
             .return_expr => |operand| switch (side) {
                 .leftmost => return main,
@@ -827,19 +744,12 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
                 .leftmost => return main,
                 .rightmost => current = it.value,
             },
-            .catch_expr => |it| {
-                current = if (side == .leftmost) it.lhs else it.rhs;
-            },
             .binary => |it| {
                 current = if (side == .leftmost) it.lhs else it.rhs;
             },
             .unary => |it| switch (side) {
                 .leftmost => return it.op_token,
                 .rightmost => current = it.operand,
-            },
-            .optional_type, .error_union_type => |child| switch (side) {
-                .leftmost => return main,
-                .rightmost => current = child,
             },
             .pointer_type => |it| switch (side) {
                 .leftmost => return main,

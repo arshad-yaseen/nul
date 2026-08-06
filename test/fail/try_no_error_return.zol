@@ -1,7 +1,0 @@
-fn risky() !i64 {
-    return 1
-}
-
-fn drive() i64 {
-    return try risky()
-}

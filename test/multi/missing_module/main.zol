@@ -1,4 +1,4 @@
-use nowhere
+import nowhere
 
 fn drive() i64 {
     return 0

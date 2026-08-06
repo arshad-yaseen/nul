@@ -30,22 +30,9 @@ fn arm_with_statements(c: bool) i64 {
     return n
 }
 
-fn ways_out(opt: ?i64, may: !i64) i64 {
-    let a = opt orelse return 0
-    let b = may catch return 1
-    return a + b
-}
-
-fn in_a_loop(limit: i64, opt: ?i64) i64 {
-    var total: i64 = 0
-    var i: i64 = 0
-    while i < limit {
-        i = i + 1
-        let step = opt orelse break
-        if i == 3 { continue }
-        total = total + step * i
-    }
-    return total
+fn ways_out(c: bool) i64 {
+    let a = if c { 1 } else { return 0 }
+    return a
 }
 
 fn as_an_argument(c: bool) i64 {

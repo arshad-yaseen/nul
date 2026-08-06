@@ -29,29 +29,6 @@ fn both_arms_leave(c: bool) i64 {
     if c { return 1 } else { return 2 }
 }
 
-fn through_a_capture(opt: ?i64) i64 {
-    let n: i64 = if opt |value| { value * 2 } else { 0 }
-    return n
-}
-
-fn guard(opt: ?i64) i64 {
-    let value = opt orelse return 0
-    return value
-}
-
-fn rescue(may: !i64) i64 {
-    let value = may catch return -1
-    return value
-}
-
-fn fallback_with_a_tail(may: !i64) i64 {
-    let value = may catch |err| {
-        let backup: i64 = 8080
-        backup
-    }
-    return value
-}
-
 fn statement_position(c: bool, out: *var Cell) {
     if c {
         out.value = 1
@@ -60,36 +37,12 @@ fn statement_position(c: bool, out: *var Cell) {
     }
 }
 
-fn dropped(may: !i64) {
-    // 'catch' settles the failure, '_ =' settles the value. two drops, two marks
-    _ = may catch 0
-}
-
-fn leaves_a_loop(limit: i64, opt: ?i64) i64 {
-    var total: i64 = 0
-    var i: i64 = 0
-    while i < limit {
-        // the counter advances first, so 'continue' still makes progress
-        i = i + 1
-        let step = opt orelse break
-        if i == 3 { continue }
-        total = total + step * i
-    }
-    return total
-}
-
 fn as_an_argument(c: bool) i64 {
     return take(if c { 1 } else { 2 })
 }
 
 fn take(n: i64) i64 {
     return n
-}
-
-fn annotated_null(c: bool) ?i64 {
-    // the context names the type, so a bare null in an arm is fine
-    let x: ?i64 = if c { null } else { 5 }
-    return x
 }
 
 fn every_arm_leaves(a: bool, b: bool) i64 {
@@ -103,8 +56,9 @@ fn every_arm_leaves(a: bool, b: bool) i64 {
     return n
 }
 
-fn leaving_from_an_operand(a: i64, opt: ?i64) i64 {
-    let n = (opt orelse return 0) + 1
+fn leaving_from_an_operand(a: i64, c: bool) i64 {
+    // the parameter type names the arm type, and the else arm still leaves
+    let n = take(if c { 1 } else { return 0 }) + 1
     return n + a
 }
 

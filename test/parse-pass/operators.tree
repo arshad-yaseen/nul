@@ -137,40 +137,56 @@ root
       var_decl address let
         init: unary address_of
           operand: ident a
+      var_decl read let
+        init: deref
+          child: ident address
       assign =
         lhs: ident _
         rhs: ident inverted
       assign =
         lhs: ident _
-        rhs: ident address
+        rhs: ident read
       return_expr
         value: binary add
           lhs: ident negated
           rhs: ident complemented
-  fn_decl rescue
+  fn_decl compound
     param a
-      type: optional_type
-        child: ident i64
-    param b
-      type: error_union_type
-        child: ident i64
+      type: ident i64
     ret: ident i64
     body: block
-      var_decl settled let
-        init: orelse_expr
-          lhs: ident a
-          rhs: number_literal 0
-      var_decl caught let
-        init: catch_expr
-          lhs: ident b
-          capture: capture err
-          rhs: number_literal 0
-      var_decl tried let
-        init: try_expr
-          child: ident b
+      var_decl slot var
+        type: ident i64
+        init: ident a
+      assign +=
+        lhs: ident slot
+        rhs: number_literal 1
+      assign -=
+        lhs: ident slot
+        rhs: number_literal 1
+      assign *=
+        lhs: ident slot
+        rhs: number_literal 2
+      assign /=
+        lhs: ident slot
+        rhs: number_literal 2
+      assign %=
+        lhs: ident slot
+        rhs: number_literal 3
+      assign &=
+        lhs: ident slot
+        rhs: number_literal 7
+      assign |=
+        lhs: ident slot
+        rhs: number_literal 8
+      assign ^=
+        lhs: ident slot
+        rhs: number_literal 9
+      assign <<=
+        lhs: ident slot
+        rhs: number_literal 1
+      assign >>=
+        lhs: ident slot
+        rhs: number_literal 1
       return_expr
-        value: binary add
-          lhs: binary add
-            lhs: ident settled
-            rhs: ident caught
-          rhs: ident tried
+        value: ident slot

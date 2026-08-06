@@ -1,5 +1,5 @@
 root
-  use_decl
+  import_decl
     path: field_access Buffer
       lhs: field_access text
         lhs: ident std

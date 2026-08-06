@@ -58,11 +58,11 @@ pub const Decl = struct {
     kind: Kind,
     state: State,
 
-    pub const Kind = enum(u8) { use, struct_decl, type_alias, error_decl, let, fn_decl };
+    pub const Kind = enum(u8) { import, struct_decl, type_alias, let, fn_decl };
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
 
     /// Stored in `aux` beside the payload.
-    pub const UseTarget = enum(u8) { module, decl };
+    pub const ImportTarget = enum(u8) { module, decl };
 
     pub const Index = enum(u32) {
         _,
@@ -172,10 +172,10 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
 
     for (root) |node| {
         switch (tree.viewOf(node)) {
-            .use_decl => |use| {
+            .import_decl => |use| {
                 const name_token = lastPathComponent(tree, use.path) orelse continue;
                 _ = try addDecl(comp, module, index, .{
-                    .kind = .use,
+                    .kind = .import,
                     .node = node,
                     .name_token = name_token,
                 });
@@ -190,11 +190,6 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
             },
             .type_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .type_alias,
-                .node = node,
-                .name_token = decl.name_token,
-            }),
-            .error_decl => |decl| _ = try addDecl(comp, module, index, .{
-                .kind = .error_decl,
                 .node = node,
                 .name_token = decl.name_token,
             }),
@@ -374,7 +369,7 @@ pub fn lastPathComponent(tree: *const AST, path: AST.Node.Index) ?Token.Index {
 
 // modules on disk
 
-const use_chain_max = 32;
+const import_chain_max = 32;
 const path_components_max = 32;
 
 const Loaded = union(enum) { module: Module.Index, not_found, no_std };
@@ -407,11 +402,11 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
 }
 
 /// A module, or a module plus one public declaration.
-pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
+pub fn resolveImport(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     const decl = comp.declAt(decl_index);
     const module = comp.moduleAt(decl.module);
     const tree = &module.tree;
-    const path = tree.viewOf(decl.node).use_decl.path;
+    const path = tree.viewOf(decl.node).import_decl.path;
 
     var names: [path_components_max][]const u8 = undefined;
     var nodes: [path_components_max]AST.Node.Index = undefined;
@@ -447,7 +442,7 @@ pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bo
     const whole = try std.mem.join(comp.arena.allocator(), "/", names[first..count]);
     switch (try loadModule(comp, space, whole)) {
         .module => |target| {
-            setUseTarget(comp, decl_index, .module, target.int());
+            setImportTarget(comp, decl_index, .module, target.int());
             return true;
         },
         .no_std => return reportNoStd(comp, decl.module, path),
@@ -470,7 +465,7 @@ pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bo
                     .{ .module = decl.module, .node = last },
                     .{ .start = tree.tokenStart(name_token), .end = tree.tokenEnd(name_token) },
                 ) orelse return false;
-                setUseTarget(comp, decl_index, .decl, found.int());
+                setImportTarget(comp, decl_index, .decl, found.int());
                 return true;
             },
             .no_std => return reportNoStd(comp, decl.module, path),
@@ -495,23 +490,23 @@ pub fn resolveUse(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bo
     return false;
 }
 
-fn setUseTarget(
+fn setImportTarget(
     comp: *Compilation,
     decl_index: Decl.Index,
-    target: Decl.UseTarget,
+    target: Decl.ImportTarget,
     payload: u32,
 ) void {
     comp.declPtr(decl_index).aux = @intFromEnum(target);
     comp.declPtr(decl_index).result = payload;
 }
 
-pub const UseResolved = union(enum) { module: Module.Index, decl: Decl.Index };
+pub const ImportResolved = union(enum) { module: Module.Index, decl: Decl.Index };
 
-pub fn useTarget(comp: *const Compilation, decl_index: Decl.Index) UseResolved {
+pub fn importTarget(comp: *const Compilation, decl_index: Decl.Index) ImportResolved {
     const decl = comp.declAt(decl_index);
-    assert(decl.kind == .use);
+    assert(decl.kind == .import);
     assert(decl.state == .done);
-    return switch (@as(Decl.UseTarget, @enumFromInt(decl.aux))) {
+    return switch (@as(Decl.ImportTarget, @enumFromInt(decl.aux))) {
         .module => .{ .module = @enumFromInt(decl.result) },
         .decl => .{ .decl = @enumFromInt(decl.result) },
     };
@@ -526,7 +521,7 @@ pub fn findExported(
     at: Diagnostic.Span,
 ) Allocator.Error!?Decl.Index {
     var target = in;
-    var remaining: u32 = use_chain_max;
+    var remaining: u32 = import_chain_max;
     while (remaining > 0) : (remaining -= 1) {
         const module = comp.moduleAt(target);
         const name = try comp.pool.string(comp.gpa, name_text);
@@ -557,15 +552,15 @@ pub fn findExported(
             return null;
         }
 
-        if (decl.kind != .use) return found;
+        if (decl.kind != .import) return found;
 
         // a re-export. resolve it and keep walking
         try comp.ensure(.forDecl(found), origin);
         if (comp.declAt(found).state != .done) return null;
-        switch (useTarget(comp, found)) {
+        switch (importTarget(comp, found)) {
             .decl => |next| {
                 const next_decl = comp.declAt(next);
-                if (next_decl.kind != .use) return next;
+                if (next_decl.kind != .import) return next;
                 target = next_decl.module;
                 continue;
             },
@@ -576,7 +571,7 @@ pub fn findExported(
     try comp.report(origin.module, at, .{
         .code = .value_cycle,
         .message = try comp.fmt("following '{s}' crossed {d} re-exports without arriving", .{
-            name_text, use_chain_max,
+            name_text, import_chain_max,
         }),
     });
     return null;
@@ -586,10 +581,9 @@ pub fn declIsPub(comp: *const Compilation, decl_index: Decl.Index) bool {
     const decl = comp.declAt(decl_index);
     const tree = comp.treeOf(decl.module);
     return switch (tree.viewOf(decl.node)) {
-        .use_decl => |view| view.is_pub,
+        .import_decl => |view| view.is_pub,
         .struct_decl => |view| view.is_pub,
         .type_decl => |view| view.is_pub,
-        .error_decl => |view| view.is_pub,
         .fn_decl => |view| view.is_pub,
         .var_decl => |view| view.is_pub,
         else => false,

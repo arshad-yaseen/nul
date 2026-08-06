@@ -1,21 +1,12 @@
-fn risky() !i64 {
-    return 1
-}
-
 fn returning() i64 {
     defer return 1
     return 0
 }
 
 fn breaking(n: i64) i64 {
-    while n > 0 {
+    if n > 0 {
         defer break
         return 1
     }
-    return 0
-}
-
-fn trying() !i64 {
-    defer try risky()
     return 0
 }

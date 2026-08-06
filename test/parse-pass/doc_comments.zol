@@ -1,5 +1,5 @@
 /// Where the standard allocator lives.
-use std.text.Buffer
+import std.text.Buffer
 
 /// The largest thing anyone should ask for.
 /// Two lines, both kept.

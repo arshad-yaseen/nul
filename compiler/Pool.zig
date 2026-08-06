@@ -44,12 +44,8 @@ pub const Index = enum(u32) {
     /// A number that has not met a type yet.
     untyped_int_type,
     untyped_float_type,
-    /// The one universal error set, the type of a caught `|err|`.
-    error_type,
     true_value,
     false_value,
-    /// `null` before it meets an optional type.
-    untyped_null_value,
     _,
 
     pub fn from(raw: usize) Index {
@@ -108,7 +104,6 @@ pub const SimpleType = enum(u32) {
     void = @intFromEnum(Index.void_type),
     untyped_int = @intFromEnum(Index.untyped_int_type),
     untyped_float = @intFromEnum(Index.untyped_float_type),
-    @"error" = @intFromEnum(Index.error_type),
 
     pub fn index(simple: SimpleType) Index {
         return @enumFromInt(@intFromEnum(simple));
@@ -121,7 +116,7 @@ pub const SimpleType = enum(u32) {
             .i8, .i16, .i32, .i64 => true,
             .u8, .u16, .u32, .u64 => true,
             .f32, .f64 => true,
-            .poison, .void, .untyped_int, .untyped_float, .@"error" => false,
+            .poison, .void, .untyped_int, .untyped_float => false,
         };
     }
 };
@@ -130,8 +125,6 @@ pub const SimpleType = enum(u32) {
 pub const SimpleValue = enum(u32) {
     true = @intFromEnum(Index.true_value),
     false = @intFromEnum(Index.false_value),
-    /// Before it meets an optional type.
-    null = @intFromEnum(Index.untyped_null_value),
 
     pub fn index(simple: SimpleValue) Index {
         return @enumFromInt(@intFromEnum(simple));
@@ -164,18 +157,12 @@ const prelude = build: {
 pub const Key = union(enum) {
     type_simple: SimpleType,
     type_pointer: Pointer,
-    type_optional: Index,
-    type_error_union: Index,
     /// A nominal struct, whose identity is the instantiation.
     type_struct: Instance,
 
     value_simple: SimpleValue,
     value_int: Int,
     value_float: Float,
-    /// A declared error.
-    value_error: Module.Decl.Index,
-    /// `null` once it met an optional type, which is the index here.
-    value_typed_null: Index,
 
     pub const Pointer = struct { child: Index, mutable: bool };
     pub const Int = struct { type: Index, value: i128 };
@@ -190,9 +177,6 @@ pub const Key = union(enum) {
                 hasher.update(std.mem.asBytes(&pointer.child));
                 hasher.update(std.mem.asBytes(&pointer.mutable));
             },
-            .type_optional, .type_error_union, .value_typed_null => |child| {
-                hasher.update(std.mem.asBytes(&child));
-            },
             .type_struct => |instance| hasher.update(std.mem.asBytes(&instance)),
             .value_int => |it| {
                 hasher.update(std.mem.asBytes(&it.type));
@@ -203,7 +187,6 @@ pub const Key = union(enum) {
                 hasher.update(std.mem.asBytes(&it.type));
                 hasher.update(std.mem.asBytes(&bits));
             },
-            .value_error => |text| hasher.update(std.mem.asBytes(&text)),
         }
         return hasher.final();
     }
@@ -215,15 +198,11 @@ pub const Key = union(enum) {
             .value_simple => |simple| simple == other.value_simple,
             .type_pointer => |pointer| pointer.child == other.type_pointer.child and
                 pointer.mutable == other.type_pointer.mutable,
-            .type_optional => |child| child == other.type_optional,
-            .type_error_union => |child| child == other.type_error_union,
-            .value_typed_null => |child| child == other.value_typed_null,
             .type_struct => |instance| instance == other.type_struct,
             .value_int => |it| it.type == other.value_int.type and it.value == other.value_int.value,
             // by bits, so float equality is never asked
             .value_float => |it| it.type == other.value_float.type and
                 @as(u64, @bitCast(it.value)) == @as(u64, @bitCast(other.value_float.value)),
-            .value_error => |text| text == other.value_error,
         };
     }
 };
@@ -236,16 +215,12 @@ const Item = struct {
         type_simple,
         type_pointer,
         type_pointer_var,
-        type_optional,
-        type_error_union,
         type_struct,
         value_simple,
         /// `data` points at `extra`.
         value_int,
         /// `data` points at `extra`.
         value_float,
-        value_error,
-        value_typed_null,
     };
 };
 
@@ -311,8 +286,6 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
             .tag = if (pointer.mutable) .type_pointer_var else .type_pointer,
             .data = pointer.child.int(),
         },
-        .type_optional => |child| .{ .tag = .type_optional, .data = child.int() },
-        .type_error_union => |child| .{ .tag = .type_error_union, .data = child.int() },
         .type_struct => |instance| .{ .tag = .type_struct, .data = instance.int() },
         .value_int => |it| .{
             .tag = .value_int,
@@ -322,8 +295,6 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
             .tag = .value_float,
             .data = try pool.addExtra(gpa, it.type, &wordsOf(@as(u64, @bitCast(it.value)))),
         },
-        .value_error => |declared| .{ .tag = .value_error, .data = declared.int() },
-        .value_typed_null => |child| .{ .tag = .value_typed_null, .data = child.int() },
     };
     try pool.items.append(gpa, item);
     gop.key_ptr.* = index;
@@ -342,8 +313,6 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
         .value_simple => .{ .value_simple = @enumFromInt(data) },
         .type_pointer => .{ .type_pointer = .{ .child = @enumFromInt(data), .mutable = false } },
         .type_pointer_var => .{ .type_pointer = .{ .child = @enumFromInt(data), .mutable = true } },
-        .type_optional => .{ .type_optional = @enumFromInt(data) },
-        .type_error_union => .{ .type_error_union = @enumFromInt(data) },
         .type_struct => .{ .type_struct = @enumFromInt(data) },
         .value_int => .{ .value_int = .{
             .type = @enumFromInt(pool.extra.items[data]),
@@ -353,8 +322,6 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
             .type = @enumFromInt(pool.extra.items[data]),
             .value = @bitCast(@as(u64, @bitCast(pool.extraWords(data + 1, 2).*))),
         } },
-        .value_error => .{ .value_error = @enumFromInt(data) },
-        .value_typed_null => .{ .value_typed_null = @enumFromInt(data) },
     };
 }
 
@@ -396,25 +363,21 @@ pub fn typeOfValue(pool: *const Pool, value: Index) Index {
     return switch (pool.keyOf(value)) {
         .value_simple => |simple| switch (simple) {
             .true, .false => .bool_type,
-            // untyped `null` is spelled by itself, having met no optional yet
-            .null => .untyped_null_value,
         },
         .value_int => |it| it.type,
         .value_float => |it| it.type,
-        .value_error => .error_type,
-        .value_typed_null => |optional| optional,
         .type_simple => |simple| simple: {
             assert(simple == .poison);
             break :simple .poison;
         },
-        .type_pointer, .type_optional, .type_error_union, .type_struct => unreachable,
+        .type_pointer, .type_struct => unreachable,
     };
 }
 
 pub fn isType(pool: *const Pool, index: Index) bool {
     return switch (pool.keyOf(index)) {
-        .type_simple, .type_pointer, .type_optional, .type_error_union, .type_struct => true,
-        .value_simple, .value_int, .value_float, .value_error, .value_typed_null => false,
+        .type_simple, .type_pointer, .type_struct => true,
+        .value_simple, .value_int, .value_float => false,
     };
 }
 
@@ -498,8 +461,6 @@ pub fn fold(
         },
         else => {},
     }
-
-    if (left == .value_error or right == .value_error) return pool.foldError(op, lhs, rhs);
 
     const a = numberOf(left) orelse return .{ .bad_operand = pool.typeOfValue(lhs) };
     const b = numberOf(right) orelse return .{ .bad_operand = pool.typeOfValue(rhs) };
@@ -623,24 +584,8 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
             .true, .false => {
                 return if (type_index == .bool_type) .{ .value = value } else .wrong_kind;
             },
-            .null => switch (pool.keyOf(type_index)) {
-                .type_optional => return .{
-                    .value = try pool.intern(gpa, .{ .value_typed_null = type_index }),
-                },
-                else => return .wrong_kind,
-            },
         },
-        .value_typed_null => |own| {
-            if (own == type_index) return .{ .value = value };
-            return switch (pool.keyOf(type_index)) {
-                .type_optional => .{ .value = try pool.intern(gpa, .{ .value_typed_null = type_index }) },
-                else => .wrong_kind,
-            };
-        },
-        .value_error => {
-            return if (type_index == .error_type) .{ .value = value } else .wrong_kind;
-        },
-        .type_simple, .type_pointer, .type_optional, .type_error_union, .type_struct => unreachable,
+        .type_simple, .type_pointer, .type_struct => unreachable,
     }
 }
 
@@ -671,7 +616,6 @@ fn boolOf(key: Key) ?bool {
         .value_simple => |simple| switch (simple) {
             .true => true,
             .false => false,
-            .null => null,
         },
         else => null,
     };
@@ -767,23 +711,6 @@ fn foldFloat(
         .greater_or_equal => return boolFold(a >= b),
         .bool_and, .bool_or => unreachable,
     }
-}
-
-/// An error compares with `==` and `!=`, and nothing else.
-fn foldError(pool: *const Pool, op: AST.BinaryOp, lhs: Index, rhs: Index) Fold {
-    const left = pool.keyOf(lhs);
-    const right = pool.keyOf(rhs);
-    if (left != .value_error or right != .value_error) {
-        return .{ .mismatch = .{
-            .left = pool.typeOfValue(lhs),
-            .right = pool.typeOfValue(rhs),
-        } };
-    }
-    return switch (op) {
-        .equal => boolFold(left.value_error == right.value_error),
-        .not_equal => boolFold(left.value_error != right.value_error),
-        else => .{ .bad_operand = .error_type },
-    };
 }
 
 fn boolFold(value: bool) Fold {
@@ -1001,7 +928,6 @@ test "a constant meets a type by value, not by type" {
     const big = try pool.intern(gpa, .{ .value_int = .{ .type = .untyped_int_type, .value = 256 } });
     try testing.expectEqual(Fit.does_not_fit, try pool.fit(gpa, big, .u8_type));
 
-    const optional = try pool.intern(gpa, .{ .type_optional = .i64_type });
-    const met = try pool.fit(gpa, .untyped_null_value, optional);
-    try testing.expectEqual(optional, pool.keyOf(met.value).value_typed_null);
+    // a bool is the wrong kind for a number's type, however it is spelled
+    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, .true_value, .u8_type));
 }

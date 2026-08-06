@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+The language is being redesigned around union types. A type may be several
+types, and a branch that settles which one narrows the value to it, so
+optionals, errors, and sum types stop being three features and become one.
+This release strips what that design replaces, so the rest is built rather
+than retrofitted. `demo.zol` is the design it is heading for.
+
+- Optionals `?T` and error unions `!T` are gone, along with the one universal
+  error set and the `error Name` declaration. `T | none` is the first and
+  `T | SomeError` is the second, and neither wraps the value it carries.
+- `try`, `catch`, `orelse`, `null`, and the `|v|` capture go with them. One
+  operator, `or`, takes over from the first three.
+- `while` is gone. `loop` replaces it.
+- `use` is now `import`.
+- `!` before a value is now `not`. `!=` is unchanged.
+- `E0217`, and `E0224` through `E0228`, retire.
 - A declaration that writes more than 16 type parameters is now refused with
   `E0118` instead of crashing the compiler. A generic method inside a generic
   struct may hold 16 of its own on top of the struct's.

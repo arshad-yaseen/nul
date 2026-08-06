@@ -1,2 +1,2 @@
-pub fn read(store: Store, path: i64) !i64 {
-    let value = try io.read_file(store, pa
+pub fn read(store: Store, path: i64) i64 {
+    let value = io.read_file(store, pa

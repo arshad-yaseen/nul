@@ -1,4 +1,4 @@
-use shape.Box
+import shape.Box
 
 fn reach_public(b: *Box) i64 {
     return b.shown()

@@ -1,3 +1,0 @@
-fn f(store: Store) i64 {
-    return read(store) catch
-}

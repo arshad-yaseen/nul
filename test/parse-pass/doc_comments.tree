@@ -1,5 +1,5 @@
 root
-  use_decl
+  import_decl
     doc /// Where the standard allocator lives.
     path: field_access Buffer
       lhs: field_access text

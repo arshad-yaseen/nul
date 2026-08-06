@@ -1,9 +1,7 @@
 root
-  use_decl
+  import_decl
     path: field_access mem
       lhs: ident std
-  error_decl Broken pub
-  error_decl Quiet
   type_decl Alias pub
     type: ident i64
   type_decl Pointer
@@ -14,8 +12,7 @@ root
       base: ident Box
       arg: bracket
         base: ident Box
-        arg: optional_type
-          child: ident i64
+        arg: ident i64
   struct_decl Box pub
     type_param T
     field item
@@ -74,39 +71,10 @@ root
         child: assign =
           lhs: ident slot
           rhs: number_literal 0
-      while_stmt
-        cond: binary greater_than
-          lhs: ident slot
-          rhs: number_literal 0
-        body: block
-          assign -=
-            lhs: ident slot
-            rhs: number_literal 1
-          if_expr
-            cond: binary equal
-              lhs: ident slot
-              rhs: number_literal 3
-            then: block
-              continue_expr
-          if_expr
-            cond: binary equal
-              lhs: ident slot
-              rhs: number_literal 2
-            then: block
-              break_expr
-      while_stmt
-        body: block
-          break_expr
       assign =
         lhs: ident _
         rhs: ident slot
   fn_decl every_expression
-    param m
-      type: optional_type
-        child: ident i64
-    param e
-      type: error_union_type
-        child: ident i64
     param p
       type: pointer_type var
         child: ident i64
@@ -114,6 +82,8 @@ root
       type: bracket
         base: ident Box
         arg: ident i64
+    param flag
+      type: ident bool
     ret: ident i64
     body: block
       var_decl grouped let
@@ -150,42 +120,14 @@ root
         init: struct_literal
           struct_field_init item
             value: number_literal 1
-      var_decl settled let
-        init: orelse_expr
-          lhs: ident m
-          rhs: number_literal 0
-      var_decl block_settled let
-        init: orelse_expr
-          lhs: ident m
-          rhs: block
-            return_expr
-              value: number_literal 0
-      var_decl caught let
-        init: catch_expr
-          lhs: ident e
-          capture: capture err
-          rhs: number_literal 0
-      var_decl caught_block let
-        init: catch_expr
-          lhs: ident e
-          capture: capture err
-          rhs: block
-            return_expr
-              value: number_literal 0
-      var_decl tried let
-        init: catch_expr
-          lhs: call
-            callee: ident try_it
-            arg: ident e
-          rhs: number_literal 0
-      var_decl captured let
+      var_decl branched let
+        type: ident i64
         init: if_expr
-          cond: ident m
-          capture: capture v
+          cond: ident flag
           then: block
-            ident v
+            number_literal 1
           else: block
-            number_literal 0
+            number_literal 2
       var_decl chained let
         init: call
           callee: field_access read
@@ -203,45 +145,24 @@ root
         lhs: ident _
         rhs: ident boolean
       assign =
-        lhs: ident _
-        rhs: ident tried
-      assign =
         lhs: deref
           child: ident p
         rhs: ident grouped
       return_expr
         value: binary add
-          lhs: binary add
-            lhs: binary add
-              lhs: binary add
-                lhs: binary add
-                  lhs: ident settled
-                  rhs: ident block_settled
-                rhs: ident caught
-              rhs: ident caught_block
-            rhs: ident captured
+          lhs: ident branched
           rhs: ident chained
-  fn_decl try_it
-    param e
-      type: error_union_type
-        child: ident i64
-    ret: error_union_type
-      child: ident i64
-    body: block
-      return_expr
-        value: try_expr
-          child: ident e
-  fn_decl while_capture
-    param m
-      type: optional_type
-        child: ident i64
+  fn_decl ways_out
+    param limit
+      type: ident i64
     ret: ident i64
     body: block
-      while_stmt
-        cond: ident m
-        capture: capture v
-        body: block
+      if_expr
+        cond: binary greater_than
+          lhs: ident limit
+          rhs: number_literal 0
+        then: block
           return_expr
-            value: ident v
+            value: ident limit
       return_expr
         value: number_literal 0

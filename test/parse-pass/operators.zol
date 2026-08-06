@@ -29,16 +29,25 @@ fn grouped(a: i64, b: i64, c: i64) i64 {
 fn unary(a: i64, flag: bool) i64 {
     let negated = -a
     let complemented = ~a
-    let inverted = !flag
+    let inverted = not flag
     let address = &a
+    let read = address.*
     _ = inverted
-    _ = address
+    _ = read
     return negated + complemented
 }
 
-fn rescue(a: ?i64, b: !i64) i64 {
-    let settled = a orelse 0
-    let caught = b catch |err| 0
-    let tried = try b
-    return settled + caught + tried
+fn compound(a: i64) i64 {
+    var slot: i64 = a
+    slot += 1
+    slot -= 1
+    slot *= 2
+    slot /= 2
+    slot %= 3
+    slot &= 7
+    slot |= 8
+    slot ^= 9
+    slot <<= 1
+    slot >>= 1
+    return slot
 }

@@ -1,9 +1,9 @@
 root
-  use_decl
+  import_decl
     path: field_access Buffer
       lhs: field_access text
         lhs: ident std
-  use_decl pub
+  import_decl pub
     path: field_access twice
       lhs: ident helper
   var_decl internal let

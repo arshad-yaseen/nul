@@ -229,7 +229,7 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
-        .use, .type_alias, .error_decl, .let => {},
+        .import, .type_alias, .let => {},
         .fn_decl => try comp.ensureBodiesFn(decl_index, origin),
         .struct_decl => {
             if (decl.state != .done) return;
@@ -329,10 +329,10 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
 fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
-        .use => return Module.resolveUse(comp, decl_index),
+        .import => return Module.resolveImport(comp, decl_index),
         .type_alias => return Check.typeAlias(comp, decl_index),
         .let => return Check.topLevelLet(comp, decl_index),
-        .error_decl, .fn_decl => return true,
+        .fn_decl => return true,
         .struct_decl => {
             if (comp.isGeneric(decl_index)) return true;
             const instance = try comp.instantiate(decl_index, &.{});
@@ -369,8 +369,8 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
         .decl => switch (comp.declAt(@enumFromInt(unit.index)).kind) {
             .let => try comp.fmt("'{s}' takes its value from itself", .{name}),
             .type_alias => try comp.fmt("type '{s}' is an alias of itself", .{name}),
-            .use => "this import goes in a circle",
-            .struct_decl, .error_decl, .fn_decl => "this definition goes in a circle",
+            .import => "this import goes in a circle",
+            .struct_decl, .fn_decl => "this definition goes in a circle",
         },
         .embedding => try comp.fmt("'{s}' holds itself by value, so it has no size", .{name}),
         .rows, .signature, .body => "this definition goes in a circle",

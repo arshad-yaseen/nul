@@ -1,6 +1,0 @@
-error[E0101]: expected '|', found '{'
- --> test/parse-error/capture_unclosed.zol:2:21
-  |
-2 |     if maybe |value {
-  |                     ^ expected '|'
-

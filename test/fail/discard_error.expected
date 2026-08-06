@@ -1,8 +1,0 @@
-error[E0227]: this can fail, and '_ =' drops only the value
- --> test/fail/discard_error.zol:6:9
-  |
-6 |     _ = risky()
-  |         ^^^^^^^ the failure is still unhandled
-  |
-  = help: 'try' passes it up, and 'catch' settles it here, as in '_ = f() catch 0'
-

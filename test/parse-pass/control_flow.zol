@@ -10,19 +10,6 @@ fn branches(a: i64) i64 {
     }
 }
 
-fn loops(a: i64, limit: i64) {
-    var i = a
-    while {
-        break
-    }
-    while i < limit {
-        if i == 3 {
-            continue
-        }
-        i = i + 1
-    }
-}
-
 fn cleanup(store: Store) {
     var scratch = store.reset()
     defer scratch.destroy()

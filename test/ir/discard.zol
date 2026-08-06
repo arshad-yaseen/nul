@@ -1,25 +1,13 @@
-// What '_ =' drops, and what it does not. A value goes away on purpose; a
-// failure has to be handled first, and 'catch {}' is how it is dropped.
-
-fn noisy() !i64 {
-    return 5
-}
+// What '_ =' drops. A value goes away on purpose, and the expression is still
+// checked and still emitted.
 
 fn quiet() i64 {
     return 5
 }
 
 fn drive() {
-    // 'catch' settles the failure, '_ =' settles the value. two drops, two marks
-    _ = noisy() catch 0
     _ = quiet()
     _ = 5 + 5
     let bound = quiet()
     _ = bound
-}
-
-fn passing() !i64 {
-    // 'try' leaves a plain value behind, so '_ =' drops it
-    _ = try noisy()
-    return 0
 }

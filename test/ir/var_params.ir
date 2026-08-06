@@ -19,17 +19,9 @@ b0:
   %5 = field_val %4, .hits : i64
   %6 = add %5, 1:i64 : i64
   %7 = store %2, %6
-  %8 = field_ptr %0, .peer : *var ?*var Outer
-  %9 = load %8 : ?*var Outer
-  %10 = has_value %9 : bool
-  branch %10, b1, b2
-b1:
-  %11 = unwrap_value %9 : *var Outer
-  %12 = field_ptr %11, .inner : *var Inner
-  %13 = field_ptr %12, .hits : *var i64
-  %14 = store %13, 0:i64
-  jump b3
-b2:
-  jump b3
-b3:
+  %8 = field_ptr %0, .peer : *var *var Outer
+  %9 = load %8 : *var Outer
+  %10 = field_ptr %9, .inner : *var Inner
+  %11 = field_ptr %10, .hits : *var i64
+  %12 = store %11, 0:i64
   return

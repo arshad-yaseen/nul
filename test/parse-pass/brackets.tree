@@ -27,11 +27,6 @@ root
         base: ident Box
         arg: pointer_type var
           child: ident i64
-    param maybe
-      type: bracket
-        base: ident Box
-        arg: optional_type
-          child: ident i64
     ret: ident i64
     body: block
       return_expr
