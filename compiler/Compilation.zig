@@ -332,7 +332,7 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
         .import => return Module.resolveImport(comp, decl_index),
         .type_alias => return Check.typeAlias(comp, decl_index),
         .unit_decl => {
-            _ = try comp.instantiate(decl_index, &.{});
+            _ = try comp.pool.intern(comp.gpa, .{ .type_unit = decl_index });
             return true;
         },
         .let => return Check.topLevelLet(comp, decl_index),
@@ -431,8 +431,7 @@ pub fn instantiate(
     args: []const Pool.Index,
 ) Allocator.Error!Pool.Instance {
     const decl = comp.declAt(decl_index);
-    assert(decl.kind == .struct_decl or decl.kind == .unit_decl or decl.kind == .fn_decl);
-    if (decl.kind == .unit_decl) assert(args.len == 0);
+    assert(decl.kind == .struct_decl or decl.kind == .fn_decl);
 
     const gop = try comp.instance_map.getOrPutContextAdapted(
         comp.gpa,
@@ -462,13 +461,6 @@ pub fn instantiate(
         comp.instancePtr(index).type = try comp.pool.intern(comp.gpa, .{
             .type_struct = index,
         });
-    }
-    if (decl.kind == .unit_decl) {
-        const unit = comp.instancePtr(index);
-        unit.type = try comp.pool.intern(comp.gpa, .{ .type_unit = index });
-        // no rows and nothing embedded, so both walks are already over
-        unit.rows_state = .done;
-        unit.deep_state = .done;
     }
     return index;
 }

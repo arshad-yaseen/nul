@@ -159,8 +159,9 @@ pub const Key = union(enum) {
     type_pointer: Pointer,
     /// A nominal struct, whose identity is the instantiation.
     type_struct: Instance,
-    /// A nominal unit type, whose only value is its name.
-    type_unit: Instance,
+    /// A nominal unit type. A unit is never generic, so its identity is
+    /// the declaration itself, and its only value is its name.
+    type_unit: Module.Decl.Index,
     /// Ordered distinct members, none of them a union. The slice borrows
     /// from `extra`, so it goes stale at the next intern.
     type_union: []const Index,
@@ -185,7 +186,7 @@ pub const Key = union(enum) {
                 hasher.update(std.mem.asBytes(&pointer.mutable));
             },
             .type_struct => |instance| hasher.update(std.mem.asBytes(&instance)),
-            .type_unit => |instance| hasher.update(std.mem.asBytes(&instance)),
+            .type_unit => |decl| hasher.update(std.mem.asBytes(&decl)),
             .type_union => |members| hasher.update(std.mem.sliceAsBytes(members)),
             .value_unit => |unit_type| hasher.update(std.mem.asBytes(&unit_type)),
             .value_int => |it| {
@@ -209,7 +210,7 @@ pub const Key = union(enum) {
             .type_pointer => |pointer| pointer.child == other.type_pointer.child and
                 pointer.mutable == other.type_pointer.mutable,
             .type_struct => |instance| instance == other.type_struct,
-            .type_unit => |instance| instance == other.type_unit,
+            .type_unit => |decl| decl == other.type_unit,
             .type_union => |members| std.mem.eql(Index, members, other.type_union),
             .value_unit => |unit_type| unit_type == other.value_unit,
             .value_int => |it| it.type == other.value_int.type and it.value == other.value_int.value,
@@ -305,7 +306,7 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
             .data = pointer.child.int(),
         },
         .type_struct => |instance| .{ .tag = .type_struct, .data = instance.int() },
-        .type_unit => |instance| .{ .tag = .type_unit, .data = instance.int() },
+        .type_unit => |decl| .{ .tag = .type_unit, .data = decl.int() },
         .type_union => |members| item: {
             assert(members.len >= 2);
             assert(members.len <= union_members_max);

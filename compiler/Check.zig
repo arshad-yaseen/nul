@@ -463,8 +463,7 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
         },
         .unit_decl => {
             assert(comp.typeParamCount(decl_index) == 0);
-            const instance = try comp.instantiate(decl_index, &.{});
-            return comp.instanceType(instance);
+            return comp.pool.intern(comp.gpa, .{ .type_unit = decl_index });
         },
         .import => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
@@ -1569,10 +1568,8 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
         },
         // a unit type in a value position is its one value
         .unit_decl => {
-            const instance = try comp.instantiate(decl_index, &.{});
-            const value = try comp.pool.intern(comp.gpa, .{
-                .value_unit = comp.instanceType(instance),
-            });
+            const unit_type = try comp.pool.intern(comp.gpa, .{ .type_unit = decl_index });
+            const value = try comp.pool.intern(comp.gpa, .{ .value_unit = unit_type });
             return .{ .constant = value };
         },
         .import => {

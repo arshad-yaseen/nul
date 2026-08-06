@@ -26,7 +26,9 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
                 current = pointer.child;
             },
             .type_struct => |instance| return writeInstance(comp, writer, instance),
-            .type_unit => |instance| return writeInstance(comp, writer, instance),
+            .type_unit => |decl| {
+                return writer.writeAll(comp.pool.stringText(comp.declAt(decl).name));
+            },
             .type_union => |members| {
                 // a member is never a union, so this recursion is one level
                 for (members, 0..) |member, position| {
