@@ -1,5 +1,5 @@
 root
-  use_decl
+  import_decl
     path: field_access text
       lhs: ident std
   struct_decl Pair pub
@@ -33,11 +33,11 @@ root
     ret: ident i64
     body: block
       var_decl p let
-        type: bracket
-          base: ident Pair
-          arg: ident i64
-          arg: ident i64
         init: struct_literal
+          type: bracket
+            base: ident Pair
+            arg: ident i64
+            arg: ident i64
           struct_field_init first
             value: ident a
           struct_field_init second

@@ -96,18 +96,12 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
 
 // the cursor
 
-/// Or `.eof` past the end. Three ahead is what `atCapture` needs to see a
-/// whole `| name | {`, and nothing looks further.
-fn peek(self: *const Parse, ahead: u32) Token.Tag {
-    assert(ahead <= 3);
-    const index = self.token_index.after(ahead).int();
+/// Or `.eof` past the end. Nothing in the grammar looks further than the token
+/// the cursor is on.
+fn current(self: *const Parse) Token.Tag {
+    const index = self.token_index.int();
     if (index < self.tags.len) return self.tags[index];
     return .eof;
-}
-
-fn current(self: *const Parse) Token.Tag {
-    assert(self.token_index.int() < self.tags.len);
-    return self.peek(0);
 }
 
 fn at(self: *const Parse, expected: Token.Tag) bool {
@@ -327,7 +321,7 @@ fn expectTerminator(self: *Parse, closer: Token.Tag) Allocator.Error!void {
 
 /// A line opening with one of these may be continuing the line above. A line
 /// opening with `.` is not among them, because the tokenizer already joined it.
-const continues_line = TokenSet.initMany(&.{ .minus, .ampersand, .bang, .l_paren });
+const continues_line = TokenSet.initMany(&.{ .minus, .ampersand, .tilde, .l_paren });
 
 fn errAmbiguousLine(self: *Parse) Allocator.Error!void {
     @branchHint(.cold);
@@ -448,29 +442,28 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,       .number,       .kw_true,   .kw_false,
-    .kw_null,     .l_paren,      .dot,       .minus,
-    .bang,        .tilde,        .kw_try,    .ampersand,
-    .invalid,     .kw_if,        .kw_return, .kw_break,
-    .kw_continue, .kw_intrinsic,
+    .ident,     .number,    .kw_true,     .kw_false,
+    .l_paren,   .dot,       .minus,       .kw_not,
+    .tilde,     .ampersand, .invalid,     .kw_if,
+    .kw_return, .kw_break,  .kw_continue, .kw_intrinsic,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
-    .kw_let, .kw_var, .kw_while, .kw_defer, .kw_else,
+    .kw_let, .kw_var, .kw_defer, .kw_else,
 }));
 
 const starts_member = TokenSet.initMany(&.{ .ident, .kw_fn, .kw_pub });
 
-const starts_type = TokenSet.initMany(&.{ .ident, .star, .question, .bang });
+const starts_type = TokenSet.initMany(&.{ .ident, .star });
 
 /// Whatever opens a type argument or an index, which a bracket may hold.
-const starts_bracket_item = starts_expr.unionWith(TokenSet.initMany(&.{ .star, .question }));
+const starts_bracket_item = starts_expr.unionWith(TokenSet.initOne(.star));
 
 const starts_name = TokenSet.initOne(.ident);
 
 const starts_decl = TokenSet.initMany(&.{
-    .kw_pub,   .kw_use, .kw_struct, .kw_type,
-    .kw_error, .kw_fn,  .kw_let,    .kw_var,
+    .kw_pub, .kw_import, .kw_type,
+    .kw_fn,  .kw_let,    .kw_var,
 });
 
 const ends_list = starts_decl.unionWith(TokenSet.initMany(&.{ .l_brace, .r_brace, .semi }));
@@ -558,7 +551,7 @@ fn parseRoot(self: *Parse) Allocator.Error!void {
         .opener = null,
         .code = .expected_declaration,
         .expected = "a declaration",
-        .help = "a file holds 'use', 'struct', 'type', 'error', 'fn', and 'let'",
+        .help = "a file holds 'import', 'type', 'fn', and 'let'",
         .bails = TokenSet.initEmpty(),
     });
 
@@ -572,10 +565,8 @@ fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
     assert(self.eof() == false);
     _ = self.eatToken(.kw_pub);
     switch (self.current()) {
-        .kw_use => return self.parseUseDecl(),
-        .kw_struct => return self.parseStructDecl(),
+        .kw_import => return self.parseImportDecl(),
         .kw_type => return self.parseTypeDecl(),
-        .kw_error => return self.parseErrorDecl(),
         .kw_fn => return self.parseFnDecl(),
         .kw_let => return self.parseVarDecl(),
         .kw_var => {
@@ -596,11 +587,11 @@ fn parseDecl(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-fn parseUseDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_use));
-    const use_token = self.nextToken();
+fn parseImportDecl(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_import));
+    const import_token = self.nextToken();
     const path = try self.parsePath();
-    return self.addUnary(.use_decl, use_token, path);
+    return self.addUnary(.import_decl, import_token, path);
 }
 
 /// An import path, or the head of a type. Only names, never `.*`.
@@ -621,9 +612,11 @@ fn parsePath(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
-fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_struct));
-    const struct_token = self.nextToken();
+/// `type Name = { ... }` a struct
+/// `type Name = T` an alias
+fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_type));
+    const type_token = self.nextToken();
     try self.expectToken(.ident);
 
     const top = self.scratch.items.len;
@@ -631,6 +624,13 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
 
     try self.parseTypeParams();
     const members_start = self.scratch.items.len;
+    try self.expectToken(.eq);
+
+    // only a struct body carries type parameters, until a union can
+    if (self.at(.l_brace) == false and members_start == top) {
+        const aliased = try self.parseType();
+        return self.addUnary(.alias_decl, type_token, aliased);
+    }
 
     const lbrace = self.eatToken(.l_brace);
     if (lbrace == null) try self.errExpected(.expected_token, Token.Tag.l_brace.symbol(), null);
@@ -649,30 +649,8 @@ fn parseStructDecl(self: *Parse) Allocator.Error!Node.Index {
     try self.extraList(self.scratch.items[members_start..]);
     return self.addNode(.{
         .tag = .struct_decl,
-        .main_token = struct_token,
+        .main_token = type_token,
         .data = .{ .extra = start },
-    });
-}
-
-fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_type));
-    const type_token = self.nextToken();
-    try self.expectToken(.ident);
-    try self.expectToken(.eq);
-    const aliased = try self.parseType();
-    return self.addUnary(.type_decl, type_token, aliased);
-}
-
-/// `error Name`
-fn parseErrorDecl(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_error));
-
-    const error_token = self.nextToken();
-    try self.expectToken(.ident);
-    return self.addNode(.{
-        .tag = .error_decl,
-        .main_token = error_token,
-        .data = .{ .none = {} },
     });
 }
 
@@ -820,7 +798,6 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
     assert(starts_stmt.contains(self.current()));
     switch (self.current()) {
         .kw_let, .kw_var => return self.parseVarDecl(),
-        .kw_while => return self.parseWhile(),
         .kw_else => return self.parseStrayElse(),
         .kw_defer => {
             const defer_token = self.nextToken();
@@ -898,29 +875,6 @@ fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
     return self.addPair(.assign, op_token, lhs, rhs);
 }
 
-fn parseWhile(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.kw_while));
-    const while_token = self.nextToken();
-
-    var capture: Node.OptionalIndex = .none;
-    const cond: Node.OptionalIndex = if (self.at(.l_brace)) .none else cond: {
-        const written = try self.parseExpr();
-        capture = try self.parseCapture();
-        break :cond written.toOptional();
-    };
-    const body = try self.parseBlock();
-
-    const start = self.extraStart();
-    try self.extraOpt(cond);
-    try self.extraOpt(capture);
-    try self.extraNode(body);
-    return self.addNode(.{
-        .tag = .while_stmt,
-        .main_token = while_token,
-        .data = .{ .extra = start },
-    });
-}
-
 /// No parentheses, and mandatory braces, so no arm can dangle.
 fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_if));
@@ -930,7 +884,6 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
 
     const if_token = self.nextToken();
     const cond = try self.parseExpr();
-    const capture = try self.parseCapture();
     const then_block = try self.parseBlock();
     const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
         (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
@@ -939,7 +892,6 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
 
     const start = self.extraStart();
     try self.extraNode(cond);
-    try self.extraOpt(capture);
     try self.extraNode(then_block);
     try self.extraOpt(else_node);
     return self.addNode(.{
@@ -947,33 +899,6 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
         .main_token = if_token,
         .data = .{ .extra = start },
     });
-}
-
-/// `| name | {` opens a capture, and so does `| name {` with its close left
-/// out. A `|` anywhere else is the bitwise or.
-fn atCapture(self: *const Parse) bool {
-    assert(self.at(.pipe));
-    if (self.peek(1) != .ident) return false;
-    if (self.peek(2) == .pipe) return self.peek(3) == .l_brace;
-    return self.peek(2) == .l_brace;
-}
-
-/// `|v|`, naming an optional payload or a caught error.
-fn parseCapture(self: *Parse) Allocator.Error!Node.OptionalIndex {
-    if (self.eatToken(.pipe) == null) return .none;
-
-    if (self.at(.ident) == false) {
-        try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
-        return (try self.hole()).toOptional();
-    }
-    const name = self.nextToken();
-    try self.expectToken(.pipe);
-
-    return (try self.addNode(.{
-        .tag = .capture,
-        .main_token = name,
-        .data = .{ .none = {} },
-    })).toOptional();
 }
 
 // expressions
@@ -993,53 +918,17 @@ fn parseExprPrec(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
 
     while (true) {
         const op_tag = self.current();
-        if (op_tag == .pipe and self.atCapture()) break;
-
         const info = AST.oper_table[@intFromEnum(op_tag)];
         if (info.prec < min_prec) break;
         if (info.prec == banned_prec) try self.errChainedComparison();
 
         const op_token = self.nextToken();
         const min = if (info.assoc == .right) info.prec else info.prec + 1;
-
-        node = switch (op_tag) {
-            .kw_catch => try self.parseCatchTail(node, op_token, min),
-            .kw_orelse => try self.addPair(.orelse_expr, op_token, node, try self.parseRescue(min)),
-            else => try self.addPair(.binary, op_token, node, try self.parseExprPrec(min)),
-        };
+        node = try self.addPair(.binary, op_token, node, try self.parseExprPrec(min));
 
         banned_prec = if (info.assoc == .none) info.prec else 0;
     }
     return node;
-}
-
-/// `a catch b` and `a catch |err| { }`.
-fn parseCatchTail(
-    self: *Parse,
-    lhs: Node.Index,
-    catch_token: Token.Index,
-    min_prec: u8,
-) Allocator.Error!Node.Index {
-    assert(lhs.int() < self.nodes.len);
-    assert(self.tags[catch_token.int()] == .kw_catch);
-    const capture = try self.parseCapture();
-    const rhs = try self.parseRescue(min_prec);
-
-    const start = self.extraStart();
-    try self.extraNode(lhs);
-    try self.extraOpt(capture);
-    try self.extraNode(rhs);
-    return self.addNode(.{
-        .tag = .catch_expr,
-        .main_token = catch_token,
-        .data = .{ .extra = start },
-    });
-}
-
-/// What settles an `orelse` or a `catch`, which may be a block.
-fn parseRescue(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
-    if (self.at(.l_brace)) return self.parseBlock();
-    return self.parseExprPrec(min_prec);
 }
 
 fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
@@ -1051,18 +940,14 @@ fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
         else => {},
     }
 
-    const node_tag: Node.Tag = tag: {
-        if (self.at(.kw_try)) break :tag .try_expr;
-        if (AST.unary_table[@intFromEnum(self.current())] != null) break :tag .unary;
-        return self.parseSuffixExpr();
-    };
+    if (AST.unary_table[@intFromEnum(self.current())] == null) return self.parseSuffixExpr();
 
     if (self.enter() == false) return self.tooDeep();
     defer self.leave();
 
     const op_token = self.nextToken();
     const operand = try self.parsePrefixExpr();
-    return self.addUnary(node_tag, op_token, operand);
+    return self.addUnary(.unary, op_token, operand);
 }
 
 fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
@@ -1113,6 +998,7 @@ fn parseSelector(self: *Parse, base: Node.Index) Allocator.Error!?Node.Index {
     assert(self.at(.dot));
     const dot = self.nextToken();
     if (self.eatToken(.ident) != null) return try self.addUnary(.field_access, dot, base);
+    if (self.at(.l_brace)) return try self.parseStructLiteral(base, dot);
 
     try self.errExpected(.expected_token, Token.Tag.ident.symbol(), null);
     // an operator cannot follow a `.`, so it is the mistake itself
@@ -1174,11 +1060,11 @@ fn parseBracket(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     });
 }
 
-/// Only a type opens with `*`, `?`, or `!`. Everything else is an expression,
-/// which the checker reads as a type when the base turns out to be generic.
+/// Only a type opens with `*`. Everything else is an expression, which the
+/// checker reads as a type when the base turns out to be generic.
 fn parseBracketItem(self: *Parse) Allocator.Error!Node.Index {
     return switch (self.current()) {
-        .star, .question, .bang => self.parseType(),
+        .star => self.parseType(),
         else => self.parseExpr(),
     };
 }
@@ -1189,8 +1075,20 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .ident => return self.addLeaf(.ident),
         .number => return self.addLeaf(.number_literal),
         .kw_true, .kw_false => return self.addLeaf(.bool_literal),
-        .kw_null => return self.addLeaf(.null_literal),
-        .dot => return self.parseStructLiteral(),
+        // a literal with no type in front of it, which the checker cannot place
+        .dot => {
+            try self.err(.{
+                .code = .expected_expression,
+                .span = self.here(),
+                .message = "a struct literal names the type it builds",
+                .label = "nothing here says which struct",
+                .help = "write it as 'Point.{ field: value }'",
+            });
+            const dot = self.nextToken();
+            if (self.at(.l_brace) == false) return self.hole();
+            // read the body anyway, so the mistake reports once
+            return self.parseStructLiteral(try self.hole(), dot);
+        },
         // parentheses group, and the tree already holds the grouping
         .l_paren => {
             const lparen = self.nextToken();
@@ -1214,22 +1112,16 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.dot));
-
-    if (self.peek(1) != .l_brace) {
-        try self.err(.{
-            .code = .expected_expression,
-            .span = self.here(),
-            .message = "a '.' here begins a struct literal",
-            .label = "expected '{' after this",
-            .help = "a struct literal is written '.{ field: value }'",
-        });
-        return self.skip();
-    }
-
-    const dot = self.nextToken();
+/// `Point.{ x: 1 }`. The type is written, so nothing has to infer it and a
+/// union member names which one it is.
+fn parseStructLiteral(
+    self: *Parse,
+    type_expr: Node.Index,
+    dot: Token.Index,
+) Allocator.Error!Node.Index {
+    assert(self.at(.l_brace));
     const lbrace = self.nextToken();
+
     const top = self.scratch.items.len;
     defer self.scratch.shrinkRetainingCapacity(top);
 
@@ -1243,6 +1135,7 @@ fn parseStructLiteral(self: *Parse) Allocator.Error!Node.Index {
     });
 
     const start = self.extraStart();
+    try self.extraNode(type_expr);
     try self.extraList(self.scratch.items[top..]);
     return self.addNode(.{
         .tag = .struct_literal,
@@ -1265,17 +1158,12 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
     if (self.enter() == false) return self.tooDeep();
     defer self.leave();
 
-    const node_tag: Node.Tag = switch (self.current()) {
-        .star => .pointer_type,
-        .question => .optional_type,
-        .bang => .error_union_type,
-        else => return self.parseTypePath(),
-    };
+    if (self.at(.star) == false) return self.parseTypePath();
 
-    const op_token = self.nextToken();
-    if (node_tag == .pointer_type) _ = self.eatToken(.kw_var);
+    const star = self.nextToken();
+    _ = self.eatToken(.kw_var);
     const child = try self.parseType();
-    return self.addUnary(node_tag, op_token, child);
+    return self.addUnary(.pointer_type, star, child);
 }
 
 fn parseTypePath(self: *Parse) Allocator.Error!Node.Index {

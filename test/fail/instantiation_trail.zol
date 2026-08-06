@@ -1,4 +1,4 @@
-pub struct Box[T] {
+pub type Box[T] = {
     item: T
 
     pub fn broken(self: Box[T]) T {
@@ -7,6 +7,6 @@ pub struct Box[T] {
 }
 
 fn drive() i64 {
-    let box: Box[i64] = .{ item: 4 }
+    let box = Box[i64].{ item: 4 }
     return box.broken()
 }

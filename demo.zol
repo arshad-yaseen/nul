@@ -1,68 +1,27 @@
-error TooSmall
+import std.fs
+import std.mem
 
-struct Counter {
-    hits: i64
-    label: u32
+type BadConfig = { line: u32 }
+type ConfigError = fs.ReadError | BadConfig
 
-    fn bump(self: *var Counter) {
-        self.hits = self.hits + 1
-    }
-
-    fn read(self: *Counter) i64 {
-        return self.hits
-    }
+fn load(store: *var mem.Store, path: []u8) Config | ConfigError {
+    let text = fs.read_all(store, path) or return
+    defer store.free(text)
+    return parse(text) or return
 }
 
-struct Box[T] {
-    item: T
-}
-
-fn checked(n: i64) !i64 {
-    if n < 10 {
-        return TooSmall
-    }
-    return n
-}
-
-fn first(maybe: ?i64) i64 {
-    if maybe |value| {
-        return value
-    }
-    return 0
-}
-
-fn packed_flags(low: u32, high: u32) u32 {
-    var bits: u32 = low & 0xffff
-    bits |= high << 16
-    bits ^= ~low
-    return bits >> 1
-}
-
-fn bump_through(slot: *var i64) i64 {
-    slot.* += 1
-    return slot.*
-}
-
-pub fn main() i64 {
-    var counter: Counter = .{ hits: 0, label: 7 }
-    defer counter.bump()
-
-    var round: i64 = 0
-    while round < 3 {
-        round = round + 1
-        if round == 2 {
-            continue
+pub fn main(store: *var mem.Store, args: [][]u8) u8 {
+    let config = load(store, "zol.toml") or e {
+        match e {
+            fs.NotFound n     => log("no such file: {}", n.path)
+            fs.Denied d       => log("cannot read: {}", d.path)
+            fs.IsDirectory d  => log("{} is a directory", d.path)
+            fs.ReadFailed r   => log("read failed on {}: {}", r.path, r.code)
+            mem.OutOfMemory   => log("out of memory")
+            BadConfig b       => log("bad config on line {}", b.line)
         }
-        counter.bump()
+        return 1
     }
 
-    let boxed: Box[i64] = .{ item: counter
-        .read() }
-    let safe = checked(boxed.item) catch 0
-
-    var slot: i64 = 0
-    _ = bump_through(&slot)
-    _ = packed_flags(1, 2)
-
-    return safe + first(null) + first(41) + slot
+    return run(config)
 }

@@ -1,4 +1,4 @@
-struct Tally {
+type Tally = {
     hits: i64
 }
 
@@ -11,8 +11,8 @@ fn bump(tally: *var Tally) {
 }
 
 fn drive() i64 {
-    var mine: Tally = .{ hits: 0 }
+    var mine = Tally.{ hits: 0 }
     bump(&mine)
-    let frozen: Tally = .{ hits: 5 }
+    let frozen = Tally.{ hits: 5 }
     return read(&mine) + read(&frozen)
 }

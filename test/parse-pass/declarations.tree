@@ -1,9 +1,9 @@
 root
-  use_decl
+  import_decl
     path: field_access Buffer
       lhs: field_access text
         lhs: ident std
-  use_decl pub
+  import_decl pub
     path: field_access twice
       lhs: ident helper
   var_decl internal let
@@ -15,7 +15,7 @@ root
   var_decl name let pub
     type: ident i64
     init: number_literal 7
-  type_decl Count pub
+  alias_decl Count pub
     type: ident i64
   struct_decl Empty pub
   struct_decl Point

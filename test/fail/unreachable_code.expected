@@ -10,24 +10,13 @@ note: the block already left here
   |     ^^^^^^^^
 
 error[E0250]: this cannot be reached
-  --> test/fail/unreachable_code.zol:11:9
+  --> test/fail/unreachable_code.zol:13:5
    |
-11 |         i = i + 1
-   |         ^^^^^^^^^ never runs
-note: the block already left here
-  --> test/fail/unreachable_code.zol:10:9
-   |
-10 |         break
-   |         ^^^^^
-
-error[E0250]: this cannot be reached
-  --> test/fail/unreachable_code.zol:22:5
-   |
-22 |     let ignored = 3
+13 |     let ignored = 3
    |     ^^^^^^^^^^^^^^^ never runs
 note: the block already left here
-  --> test/fail/unreachable_code.zol:17:5
+  --> test/fail/unreachable_code.zol:8:5
    |
-17 |     if c {
+ 8 |     if c {
    |     ^^^^^^
 

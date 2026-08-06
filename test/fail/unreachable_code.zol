@@ -4,15 +4,6 @@ fn after_return(a: i64) i64 {
     return ignored
 }
 
-fn after_break(limit: i64) i64 {
-    var i: i64 = 0
-    while i < limit {
-        break
-        i = i + 1
-    }
-    return i
-}
-
 fn after_every_arm_exits(c: bool) i64 {
     if c {
         return 1

@@ -1,5 +1,5 @@
-use std.text.Buffer
-pub use helper.twice
+import std.text.Buffer
+pub import helper.twice
 
 let internal = 1
 pub let limit = 90 + 10
@@ -7,9 +7,9 @@ pub let name: i64 = 7
 
 pub type Count = i64
 
-pub struct Empty {}
+pub type Empty = {}
 
-struct Point {
+type Point = {
     x: i64
     y: i64
 }

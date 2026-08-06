@@ -6,19 +6,11 @@ error[E0215]: the arms of this 'if' do not say what type it is
   |
   = help: annotate what it feeds, as in 'let n: i64 = if ...'
 
-error[E0215]: the arms of this 'if' do not say what type it is
+error[E0206]: this 'if' produces nothing, so it cannot stand where a value does
  --> test/fail/if_arms_have_no_type.zol:7:13
   |
-7 |     let n = if c { null } else { null }
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^ no type in sight
+7 |     let n = if c { effect() } else { effect() }
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value here
   |
-  = help: annotate what it feeds, as in 'let n: i64 = if ...'
-
-error[E0206]: this 'if' produces nothing, so it cannot stand where a value does
-  --> test/fail/if_arms_have_no_type.zol:13:13
-   |
-13 |     let n = if c { effect() } else { effect() }
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value here
-   |
-   = help: an arm has to end in a value for the 'if' to have one
+  = help: an arm has to end in a value for the 'if' to have one
 

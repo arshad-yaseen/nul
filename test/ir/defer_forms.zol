@@ -9,7 +9,7 @@ fn every_form(n: i64) i64 {
     return total
 }
 
-struct Counter {
+type Counter = {
     hits: i64
 
     fn bump(self: *var Counter) {

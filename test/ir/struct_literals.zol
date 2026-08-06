@@ -1,18 +1,18 @@
-struct Point {
+type Point = {
     x: i64
     y: i64
 }
 
-struct Frame {
+type Frame = {
     origin: Point
     size: Point
     label: u32
 }
 
 fn framed(width: i64) Frame {
-    return .{
-        origin: .{ x: 0, y: 0 },
-        size: .{ x: width, y: width * 2 },
+    return Frame.{
+        origin: Point.{ x: 0, y: 0 },
+        size: Point.{ x: width, y: width * 2 },
         label: 7,
     }
 }

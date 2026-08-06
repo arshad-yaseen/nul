@@ -1,4 +1,4 @@
-struct Counter {
+type Counter = {
     hits: i64
 
     fn total(self: Counter) i64 {
@@ -14,7 +14,7 @@ struct Counter {
     }
 
     fn zero() Counter {
-        return .{ hits: 0 }
+        return Counter.{ hits: 0 }
     }
 }
 

@@ -1,6 +1,4 @@
-error TooRisky
-
-struct Counter {
+type Counter = {
     hits: i64
 
     fn bump(self: *var Counter) {
@@ -8,37 +6,22 @@ struct Counter {
     }
 }
 
-fn tidy(early: bool) !i64 {
-    var counter: Counter = .{ hits: 0 }
+fn tidy(early: bool) i64 {
+    var counter = Counter.{ hits: 0 }
     defer counter.bump()
     if early {
         return 1
     }
-    let value = try risky(5)
-    return value
+    return 0
 }
 
-fn risky(seed: i64) !i64 {
-    if seed > 4 {
-        return TooRisky
+fn nested_scopes(deep: bool) i64 {
+    var counter = Counter.{ hits: 0 }
+    defer counter.bump()
+    if deep {
+        var inner = Counter.{ hits: 0 }
+        defer inner.bump()
+        return inner.hits
     }
-    return seed
-}
-
-fn each_iteration(rounds: i64) i64 {
-    var counter: Counter = .{ hits: 0 }
-    var round: i64 = 0
-    var kept: i64 = 0
-    while round < rounds {
-        defer counter.bump()
-        round = round + 1
-        if round == 2 {
-            continue
-        }
-        if round == 4 {
-            break
-        }
-        kept = kept + round
-    }
-    return kept
+    return counter.hits
 }

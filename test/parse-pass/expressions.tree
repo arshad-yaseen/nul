@@ -48,8 +48,8 @@ root
         init: binary add
           lhs: unary negate
             operand: ident a
-          rhs: unary bool_not
-            operand: bool_literal true
+          rhs: unary bit_not
+            operand: ident b
       var_decl mixed let
         init: binary add
           lhs: unary negate
@@ -84,9 +84,6 @@ root
       assign =
         lhs: ident _
         rhs: bool_literal false
-      assign =
-        lhs: ident _
-        rhs: null_literal
   fn_decl calls
     param f
       type: ident i64

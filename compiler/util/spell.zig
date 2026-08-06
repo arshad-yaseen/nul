@@ -18,29 +18,15 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
                 .poison => writer.writeAll("<broken>"),
                 .untyped_int => writer.writeAll("an untyped number"),
                 .untyped_float => writer.writeAll("an untyped float"),
-                .@"error" => writer.writeAll("an error"),
                 .void => writer.writeAll("nothing"),
                 else => writer.writeAll(@tagName(simple)),
-            },
-            // untyped `null` names itself
-            .value_simple => |simple| {
-                assert(simple == .null);
-                return writer.writeAll("null");
             },
             .type_pointer => |pointer| {
                 try writer.writeAll(if (pointer.mutable) "*var " else "*");
                 current = pointer.child;
             },
-            .type_optional => |child| {
-                try writer.writeByte('?');
-                current = child;
-            },
-            .type_error_union => |child| {
-                try writer.writeByte('!');
-                current = child;
-            },
             .type_struct => |instance| return writeInstance(comp, writer, instance),
-            .value_int, .value_float, .value_error, .value_typed_null => unreachable,
+            .value_simple, .value_int, .value_float => unreachable,
         }
     }
     try writer.writeAll("...");
@@ -135,11 +121,7 @@ pub fn writeConstant(
                 try writeType(comp, writer, it.type);
             }
         },
-        .value_error => |declared| try writer.writeAll(
-            comp.pool.stringText(comp.declAt(declared).name),
-        ),
-        .value_typed_null => try writer.writeAll("null"),
-        .type_pointer, .type_optional, .type_error_union, .type_struct => unreachable,
+        .type_pointer, .type_struct => unreachable,
     }
 }
 

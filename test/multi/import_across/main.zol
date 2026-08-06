@@ -1,4 +1,4 @@
-use helper.twice
+import helper.twice
 
 fn drive(seed: i64) i64 {
     return twice(seed)

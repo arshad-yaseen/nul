@@ -10,19 +10,8 @@ fn classify(value: i64) i64 {
     }
 }
 
-fn spin(limit: i64) i64 {
-    var count: i64 = 0
-    while {
-        count = count + 1
-        if count >= limit {
-            break
-        }
-    }
-    return count
-}
-
 fn shorted(a: bool, value: i64) bool {
     let both = a and value > 0
     let either = a or value > 0
-    return both or (either and value < 10) or !a
+    return both or (either and value < 10) or not a
 }

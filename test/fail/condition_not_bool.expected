@@ -4,17 +4,9 @@ error[E0229]: this condition is i64, not a bool
 2 |     if n {
   |        ^ not a bool
 
-error[E0229]: this condition is i64, not a bool
- --> test/fail/condition_not_bool.zol:9:11
+error[E0229]: this condition is *i64, not a bool
+ --> test/fail/condition_not_bool.zol:9:8
   |
-9 |     while n {
-  |           ^ not a bool
-
-error[E0229]: this condition is ?i64, not a bool
-  --> test/fail/condition_not_bool.zol:16:8
-   |
-16 |     if maybe {
-   |        ^^^^^ not a bool
-   |
-   = help: capture the payload instead: 'if x |v| { }'
+9 |     if p {
+  |        ^ not a bool
 

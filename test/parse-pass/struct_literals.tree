@@ -10,17 +10,18 @@ root
     ret: ident Point
     body: block
       var_decl p let
-        type: ident Point
         init: struct_literal
+          type: ident Point
           struct_field_init x
             value: ident a
           struct_field_init y
             value: number_literal 2
       var_decl nested let
-        type: ident Wrapper
         init: struct_literal
+          type: ident Wrapper
           struct_field_init inner
             value: struct_literal
+              type: ident Point
               struct_field_init x
                 value: number_literal 1
               struct_field_init y
@@ -28,11 +29,11 @@ root
           struct_field_init tag
             value: number_literal 9
       var_decl empty let
-        type: ident Point
         init: struct_literal
+          type: ident Point
       var_decl spread let
-        type: ident Point
         init: struct_literal
+          type: ident Point
           struct_field_init x
             value: number_literal 1
           struct_field_init y

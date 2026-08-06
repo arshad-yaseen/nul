@@ -1,14 +1,14 @@
 //! A file doc comment.
 
 // a comment before anything
-use std.text // after a use
+import std.text // after an import
 
 /// A documented struct.
 pub // between 'pub' and what it introduces
-struct Pair[
+type Pair[
     A, // after a type parameter
     B
-] {
+] = {
     // above a field
     first: A, // after a field
     second: B
@@ -25,7 +25,7 @@ struct Pair[
 }
 
 pub fn build(a: i64) i64 { // after the brace
-    let p: Pair[i64, i64] = .{ // inside a literal
+    let p = Pair[i64, i64].{ // inside a literal
         first: a, // after a field value
         second: 2
     }

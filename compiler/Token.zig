@@ -21,28 +21,22 @@ pub const Tag = enum(u8) {
     // `lexeme` holds every keyword's spelling
     kw_and,
     kw_break,
-    kw_catch,
     kw_continue,
     kw_defer,
     kw_else,
-    kw_error,
     kw_false,
     kw_fn,
     kw_if,
+    kw_import,
     kw_intrinsic,
     kw_let,
-    kw_null,
+    kw_not,
     kw_or,
-    kw_orelse,
     kw_pub,
     kw_return,
-    kw_struct,
     kw_true,
-    kw_try,
     kw_type,
-    kw_use,
     kw_var,
-    kw_while,
 
     l_paren,
     r_paren,
@@ -57,13 +51,10 @@ pub const Tag = enum(u8) {
     colon,
     /// Written, or inserted at a line break.
     semi,
-    /// A capture's delimiter, and the bitwise or.
     pipe,
-    question,
 
     eq,
     eq_eq,
-    bang,
     bang_eq,
     lt,
     lt_eq,
@@ -99,28 +90,22 @@ pub const Tag = enum(u8) {
 
             .kw_and => "and",
             .kw_break => "break",
-            .kw_catch => "catch",
             .kw_continue => "continue",
             .kw_defer => "defer",
             .kw_else => "else",
-            .kw_error => "error",
             .kw_false => "false",
             .kw_fn => "fn",
             .kw_if => "if",
+            .kw_import => "import",
             .kw_intrinsic => "intrinsic",
             .kw_let => "let",
-            .kw_null => "null",
+            .kw_not => "not",
             .kw_or => "or",
-            .kw_orelse => "orelse",
             .kw_pub => "pub",
             .kw_return => "return",
-            .kw_struct => "struct",
             .kw_true => "true",
-            .kw_try => "try",
             .kw_type => "type",
-            .kw_use => "use",
             .kw_var => "var",
-            .kw_while => "while",
 
             .l_paren => "(",
             .r_paren => ")",
@@ -134,11 +119,9 @@ pub const Tag = enum(u8) {
             .colon => ":",
             .semi => ";",
             .pipe => "|",
-            .question => "?",
 
             .eq => "=",
             .eq_eq => "==",
-            .bang => "!",
             .bang_eq => "!=",
             .lt => "<",
             .lt_eq => "<=",
@@ -180,12 +163,10 @@ pub const Tag = enum(u8) {
     }
 };
 
-/// A position in a token list.
 pub const Index = enum(u32) {
     first = 0,
     _,
 
-    /// The token `count` places later.
     pub fn after(index: Index, count: u32) Index {
         assert(@intFromEnum(index) <= std.math.maxInt(u32) - count);
         return @enumFromInt(@intFromEnum(index) + count);
@@ -238,7 +219,7 @@ pub fn endsStatement(tag: Tag) bool {
         .kw_intrinsic => true,
         .r_paren, .r_brace, .r_bracket => true,
         .dot_star => true,
-        .kw_true, .kw_false, .kw_null => true,
+        .kw_true, .kw_false => true,
         .kw_return, .kw_break, .kw_continue => true,
         else => false,
     };

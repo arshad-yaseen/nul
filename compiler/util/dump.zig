@@ -36,17 +36,11 @@ fn node(
 
     const below = depth + 1;
     switch (view) {
-        .root, .block, .struct_literal => |children| {
+        .root, .block => |children| {
             try writer.writeByte('\n');
             for (children) |child| try node(ast, writer, child, below, "");
         },
-        .error_decl => |it| {
-            try writer.print(" {s}", .{ast.tokenSlice(it.name_token)});
-            try flag(writer, it.is_pub, "pub");
-            try writer.writeByte('\n');
-            try docs(ast, writer, index, below);
-        },
-        .use_decl => |it| {
+        .import_decl => |it| {
             try flag(writer, it.is_pub, "pub");
             try writer.writeByte('\n');
             try docs(ast, writer, index, below);
@@ -60,7 +54,7 @@ fn node(
             for (it.type_params) |param| try node(ast, writer, param, below, "");
             for (it.members) |member| try node(ast, writer, member, below, "");
         },
-        .type_decl => |it| {
+        .alias_decl => |it| {
             try writer.print(" {s}", .{ast.tokenSlice(it.name_token)});
             try flag(writer, it.is_pub, "pub");
             try writer.writeByte('\n');
@@ -86,7 +80,7 @@ fn node(
             if (it.type_expr.unwrap()) |declared| try node(ast, writer, declared, below, "type");
             try node(ast, writer, it.init_expr, below, "init");
         },
-        .type_param, .capture => |token| {
+        .type_param => |token| {
             try writer.print(" {s}\n", .{ast.tokenSlice(token)});
         },
         .param, .field => |it| {
@@ -101,25 +95,13 @@ fn node(
             try node(ast, writer, it.lhs, below, "lhs");
             try node(ast, writer, it.rhs, below, "rhs");
         },
-        .orelse_expr => |it| {
-            try writer.writeByte('\n');
-            try node(ast, writer, it.lhs, below, "lhs");
-            try node(ast, writer, it.rhs, below, "rhs");
-        },
         .if_expr => |it| {
             try writer.writeByte('\n');
             try node(ast, writer, it.cond, below, "cond");
-            if (it.capture.unwrap()) |bound| try node(ast, writer, bound, below, "capture");
             try node(ast, writer, it.then_block, below, "then");
             if (it.else_node.unwrap()) |otherwise| try node(ast, writer, otherwise, below, "else");
         },
-        .while_stmt => |it| {
-            try writer.writeByte('\n');
-            if (it.cond.unwrap()) |cond| try node(ast, writer, cond, below, "cond");
-            if (it.capture.unwrap()) |capture| try node(ast, writer, capture, below, "capture");
-            try node(ast, writer, it.body, below, "body");
-        },
-        .intrinsic, .break_expr, .continue_expr, .null_literal, .err => {
+        .intrinsic, .break_expr, .continue_expr, .err => {
             try writer.writeByte('\n');
         },
         .return_expr => |operand| {
@@ -146,15 +128,14 @@ fn node(
             try node(ast, writer, it.callee, below, "callee");
             for (it.args) |arg| try node(ast, writer, arg, below, "arg");
         },
+        .struct_literal => |it| {
+            try writer.writeByte('\n');
+            try node(ast, writer, it.type_expr, below, "type");
+            for (it.fields) |field| try node(ast, writer, field, below, "");
+        },
         .struct_field_init => |it| {
             try writer.print(" {s}\n", .{ast.tokenSlice(it.name_token)});
             try node(ast, writer, it.value, below, "value");
-        },
-        .catch_expr => |it| {
-            try writer.writeByte('\n');
-            try node(ast, writer, it.lhs, below, "lhs");
-            if (it.capture.unwrap()) |bound| try node(ast, writer, bound, below, "capture");
-            try node(ast, writer, it.rhs, below, "rhs");
         },
         .binary => |it| {
             try writer.print(" {t}\n", .{it.op});
@@ -170,7 +151,7 @@ fn node(
             try writer.writeByte('\n');
             try node(ast, writer, it.child, below, "child");
         },
-        .deref, .defer_stmt, .try_expr, .optional_type, .error_union_type => |child| {
+        .deref, .defer_stmt => |child| {
             try writer.writeByte('\n');
             try node(ast, writer, child, below, "child");
         },
@@ -236,14 +217,6 @@ fn inst(
         .negate,
         .not,
         .bit_not,
-        .wrap_optional,
-        .has_value,
-        .unwrap_value,
-        .wrap_ok,
-        .wrap_err,
-        .is_error,
-        .unwrap_ok,
-        .unwrap_err,
         => {
             try writer.writeByte(' ');
             try ref(comp, data.un, writer);

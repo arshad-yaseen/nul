@@ -5,15 +5,8 @@ fn in_an_if(n: i64) i64 {
     return 0
 }
 
-fn in_a_while(n: i64) i64 {
-    while n {
-        return 1
-    }
-    return 0
-}
-
-fn on_an_optional(maybe: ?i64) i64 {
-    if maybe {
+fn on_a_pointer(p: *i64) i64 {
+    if p {
         return 1
     }
     return 0

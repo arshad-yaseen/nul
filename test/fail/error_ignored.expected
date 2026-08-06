@@ -1,8 +1,0 @@
-error[E0227]: this can fail, and nothing here handles it
- --> test/fail/error_ignored.zol:6:5
-  |
-6 |     risky()
-  |     ^^^^^^^ an unhandled error
-  |
-  = help: 'try' passes it up, and 'catch' handles it here
-

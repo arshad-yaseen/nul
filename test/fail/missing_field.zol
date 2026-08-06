@@ -1,8 +1,8 @@
-struct Point {
+type Point = {
     x: i64
     y: i64
 }
 
 fn drive() Point {
-    return .{ x: 1 }
+    return Point.{ x: 1 }
 }

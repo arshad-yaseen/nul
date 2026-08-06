@@ -28,33 +28,6 @@ root
             else: block
               return_expr
                 value: number_literal 4
-  fn_decl loops
-    param a
-      type: ident i64
-    param limit
-      type: ident i64
-    body: block
-      var_decl i var
-        init: ident a
-      while_stmt
-        body: block
-          break_expr
-      while_stmt
-        cond: binary less_than
-          lhs: ident i
-          rhs: ident limit
-        body: block
-          if_expr
-            cond: binary equal
-              lhs: ident i
-              rhs: number_literal 3
-            then: block
-              continue_expr
-          assign =
-            lhs: ident i
-            rhs: binary add
-              lhs: ident i
-              rhs: number_literal 1
   fn_decl cleanup
     param store
       type: ident Store

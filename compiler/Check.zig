@@ -67,7 +67,7 @@ const Value = union(enum) {
 
 pub fn typeAlias(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     var check = context(comp, decl_index, &.{});
-    const view = check.tree.viewOf(check.declNode(decl_index)).type_decl;
+    const view = check.tree.viewOf(check.declNode(decl_index)).alias_decl;
 
     const resolved = try check.resolveWrittenType(view.aliased);
     comp.declPtr(decl_index).result = resolved.int();
@@ -167,9 +167,8 @@ fn walkEmbedded(
     if (depth >= type_depth_max) return;
     switch (comp.pool.keyOf(type_index)) {
         .type_struct => |embedded| try comp.ensure(.of(.embedding, embedded), from),
-        .type_optional, .type_error_union => |child| try walkEmbedded(comp, child, from, depth + 1),
         .type_simple, .value_simple, .type_pointer => {},
-        .value_int, .value_float, .value_error, .value_typed_null => unreachable,
+        .value_int, .value_float => unreachable,
     }
 }
 
@@ -337,35 +336,6 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
                 .type_pointer = .{ .child = child, .mutable = pointer.is_mutable },
             });
         },
-        .optional_type => |child_node| {
-            const child = try check.resolveType(child_node);
-            if (child == .poison) return .poison;
-            if (comp.pool.keyOf(child) == .type_error_union) {
-                try check.fail(node, .{
-                    .code = .not_error_union,
-                    .message = "an optional cannot hold an error union",
-                    .label = "the '!' belongs outside",
-                    .help = "write '!?T' for a value that may fail, and may succeed with nothing",
-                });
-                return .poison;
-            }
-            return comp.pool.intern(comp.gpa, .{ .type_optional = child });
-        },
-        .error_union_type => |child_node| {
-            const child = try check.resolveType(child_node);
-            if (child == .poison) return .poison;
-            // by the resolved type, so an alias cannot smuggle a '!' in
-            if (comp.pool.keyOf(child) == .type_error_union) {
-                try check.fail(node, .{
-                    .code = .not_error_union,
-                    .message = "an error union cannot hold another error union",
-                    .label = "one '!' is enough",
-                    .help = "there is one universal error set, so '!T' already covers every error",
-                });
-                return .poison;
-            }
-            return comp.pool.intern(comp.gpa, .{ .type_error_union = child });
-        },
         .err => return .poison,
         // a bracket item arrives as an expression until its base says otherwise
         else => {
@@ -426,10 +396,10 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
             if (comp.declAt(decl_index).state != .done) return .poison;
             return @enumFromInt(comp.declAt(decl_index).result);
         },
-        .use => {
+        .import => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
             if (comp.declAt(decl_index).state != .done) return .poison;
-            switch (Module.useTarget(comp, decl_index)) {
+            switch (Module.importTarget(comp, decl_index)) {
                 .decl => |target| return check.declAsType(target, node),
                 .module => {
                     try check.fail(node, .{
@@ -442,12 +412,8 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
                 },
             }
         },
-        .let, .error_decl, .fn_decl => {
-            const what = switch (decl.kind) {
-                .let => "a value",
-                .error_decl => "an error",
-                else => "a function",
-            };
+        .let, .fn_decl => {
+            const what: []const u8 = if (decl.kind == .let) "a value" else "a function";
             try check.fail(node, .{
                 .code = .not_a_type,
                 .message = try comp.fmt("'{s}' is {s}, not a type", .{ name, what }),
@@ -545,7 +511,7 @@ const Builder = struct {
         /// A `var_slot` ref is a pointer to this.
         type: Pool.Index,
 
-        const Kind = enum(u8) { let_constant, let_value, var_slot, param, capture };
+        const Kind = enum(u8) { let_constant, let_value, var_slot, param };
     };
 
     const Scope = struct {
@@ -953,10 +919,9 @@ fn checkStatement(check: *Check, node: Node.Index) Allocator.Error!void {
     switch (check.tree.viewOf(node)) {
         .var_decl => try check.checkVarDecl(node),
         .assign => |assign| try check.checkAssign(assign),
-        .while_stmt => |view| try check.checkWhile(view),
         .defer_stmt => |body| try check.checkDefer(body),
         .err => {},
-        // a void hint tells an `if` or a `catch` to drop its value
+        // a void hint tells an `if` to drop its value
         else => {
             const value = try check.checkExpr(node, .void_type);
             try check.expectNothing(node, value);
@@ -1002,7 +967,7 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
         },
         .constant => |constant| {
             const met = if (annotation) |wanted|
-                try check.fitOrWrap(constant, wanted, view.init_expr)
+                try check.fitValue(constant, wanted, view.init_expr)
             else
                 Value{ .constant = constant };
             switch (met) {
@@ -1059,8 +1024,6 @@ fn checkVarDeclSlot(
         assert(view.is_mutable);
         const spelled = switch (comp.pool.keyOf(final.constant)) {
             .value_int, .value_float => true,
-            .value_typed_null => false,
-            .value_simple => |simple| simple == .null,
             else => false,
         };
         if (spelled) {
@@ -1159,17 +1122,6 @@ fn checkDiscard(check: *Check, rhs: Node.Index) Allocator.Error!void {
     }
     const found = check.typeOf(value);
     if (found == .poison) return;
-
-    // a failure is not a value, so dropping the value leaves it unhandled
-    if (check.comp.pool.keyOf(found) == .type_error_union) {
-        try check.fail(rhs, .{
-            .code = .error_ignored,
-            .message = "this can fail, and '_ =' drops only the value",
-            .label = "the failure is still unhandled",
-            .help = "'try' passes it up, and 'catch' settles it here, " ++
-                "as in '_ = f() catch 0'",
-        });
-    }
 }
 
 fn checkIf(
@@ -1180,7 +1132,6 @@ fn checkIf(
 ) Allocator.Error!Value {
     const builder = check.builder.?;
     const entry_reachable = builder.reachable;
-    const capture = view.capture.unwrap();
 
     const wants = wantsValue(hint);
     if (wants and view.else_node == .none) {
@@ -1202,14 +1153,7 @@ fn checkIf(
     const else_block = try check.newBlock();
     const join = try check.newBlock();
 
-    var payload: Pool.Index = .poison;
-    var tested: Ref = .none;
-    const cond: Ref = if (capture != null) cond: {
-        const optional = try check.checkExpr(view.cond, null);
-        payload = try check.optionalPayload(view.cond, optional);
-        tested = refOf(optional);
-        break :cond try check.emitOne(.has_value, .bool_type, tested);
-    } else try check.checkCondition(view.cond);
+    const cond = try check.checkCondition(view.cond);
     check.endBlock(.{ .branch = .{
         .cond = cond,
         .then_block = then_block,
@@ -1217,13 +1161,7 @@ fn checkIf(
     } });
 
     check.startBlock(then_block);
-    if (capture) |bound| {
-        try check.pushScope();
-        const unwrapped = try check.emitOne(.unwrap_value, payload, tested);
-        try check.bindCapture(bound, unwrapped, payload);
-    }
     const then_value = try check.checkExpr(view.then_block, hint);
-    if (capture != null) check.popScope();
 
     var result_type = hint orelse check.typeOf(then_value);
     if (carries and then_value != .diverged) {
@@ -1315,175 +1253,20 @@ fn setSlotType(check: *Check, slot: Ref, value_type: Pool.Index) Allocator.Error
     builder.insts.items(.type)[index] = try check.pointerTo(value_type, true);
 }
 
-fn checkWhile(check: *Check, view: AST.View.While) Allocator.Error!void {
-    const builder = check.builder.?;
-    const body_scope: u32 = @intCast(builder.scopes.items.len);
-    const entry_reachable = builder.reachable;
-
-    // a condition that cannot vary is a loop spelled the long way. it is
-    // refused, then modelled as what it means
-    var loop_cond = view.cond;
-    if (view.capture.unwrap() == null) {
-        if (view.cond.unwrap()) |written| {
-            if (check.constantCondition(written)) |always| {
-                try check.reportConstantLoop(written, always);
-                if (always) loop_cond = .none;
-            }
-        }
-    }
-
-    if (loop_cond.unwrap()) |cond_node| {
-        const cond_block = try check.newBlock();
-        const body_block = try check.newBlock();
-        const break_target = try check.newBlock();
-        check.endBlock(.{ .jump = cond_block });
-
-        check.startBlock(cond_block);
-        var tested: Ref = .none;
-        var payload: Pool.Index = .poison;
-        if (view.capture.unwrap() != null) {
-            const optional = try check.checkExpr(cond_node, null);
-            payload = try check.optionalPayload(cond_node, optional);
-            tested = refOf(optional);
-            const has = try check.emitOne(.has_value, .bool_type, tested);
-            check.endBlock(.{ .branch = .{
-                .cond = has,
-                .then_block = body_block,
-                .else_block = break_target,
-            } });
-        } else {
-            const cond = try check.checkCondition(cond_node);
-            check.endBlock(.{ .branch = .{
-                .cond = cond,
-                .then_block = body_block,
-                .else_block = break_target,
-            } });
-        }
-
-        try builder.loops.append(check.comp.gpa, .{
-            .continue_target = cond_block,
-            .break_target = break_target,
-            .scope = body_scope,
-            .has_live_break = false,
-        });
-        check.startBlock(body_block);
-        builder.reachable = entry_reachable;
-        try check.pushScope();
-        if (view.capture.unwrap()) |capture| {
-            const unwrapped = try check.emitOne(.unwrap_value, payload, tested);
-            try check.bindCapture(capture, unwrapped, payload);
-        }
-        _ = try check.checkBlockValue(view.body, .void_type);
-        check.popScope();
-        if (check.blockOpen()) check.endBlock(.{ .jump = cond_block });
-        _ = builder.loops.pop();
-
-        check.startBlock(break_target);
-        builder.reachable = entry_reachable;
-    } else {
-        // with no condition the body head is the whole loop
-        const body_block = try check.newBlock();
-        const break_target = try check.newBlock();
-        check.endBlock(.{ .jump = body_block });
-
-        try builder.loops.append(check.comp.gpa, .{
-            .continue_target = body_block,
-            .break_target = break_target,
-            .scope = body_scope,
-            .has_live_break = false,
-        });
-        check.startBlock(body_block);
-        builder.reachable = entry_reachable;
-        _ = try check.checkBlockValue(view.body, .void_type);
-        if (check.blockOpen()) check.endBlock(.{ .jump = body_block });
-        const loop = builder.loops.pop().?;
-
-        // with no condition, only a `break` makes the far side real
-        check.startBlock(break_target);
-        builder.reachable = loop.has_live_break;
-    }
-}
-
-/// A `true` or `false` written where a loop condition goes. Read off the
-/// tree, because this is about the spelling.
-fn constantCondition(check: *const Check, node: Node.Index) ?bool {
-    return switch (check.tree.viewOf(node)) {
-        .bool_literal => |literal| literal.value,
-        else => null,
-    };
-}
-
-fn reportConstantLoop(check: *Check, node: Node.Index, always: bool) Allocator.Error!void {
-    if (always) {
-        try check.fail(node, .{
-            .code = .constant_condition,
-            .message = "this condition is always true",
-            .label = "never false",
-            .help = "'while { }' is the loop that only a 'break' or a 'return' leaves",
-        });
-        return;
-    }
-    try check.fail(node, .{
-        .code = .constant_condition,
-        .message = "this condition is always false, so the body never runs",
-        .label = "never true",
-        .help = "delete the loop, or give it a condition that can be true",
-    });
-}
-
 fn checkCondition(check: *Check, node: Node.Index) Allocator.Error!Ref {
     const value = try check.checkExpr(node, null);
     const found = check.typeOf(value);
     if (found == .bool_type) return refOf(value);
     if (found == .poison) return .fromConstant(.poison);
 
-    const optional = check.comp.pool.keyOf(found) == .type_optional;
     try check.fail(node, .{
         .code = .condition_not_bool,
         .message = try check.comp.fmt("this condition is {s}, not a bool", .{
             try check.comp.typeName(found),
         }),
         .label = "not a bool",
-        .help = if (optional) "capture the payload instead: 'if x |v| { }'" else null,
     });
     return .fromConstant(.poison);
-}
-
-fn bindCapture(
-    check: *Check,
-    capture: Node.Index,
-    ref: Ref,
-    payload: Pool.Index,
-) Allocator.Error!void {
-    assert(check.tree.nodeTag(capture) == .capture);
-    const token = check.tree.viewOf(capture).capture;
-    const name = try check.comp.pool.string(check.comp.gpa, check.tree.tokenSlice(token));
-    try check.declareLocal(.{
-        .name = name,
-        .node = capture,
-        .kind = .capture,
-        .payload = @intFromEnum(ref),
-        .type = payload,
-    }, capture);
-}
-
-/// Behind an optional condition, reporting when the value is not one.
-fn optionalPayload(check: *Check, node: Node.Index, value: Value) Allocator.Error!Pool.Index {
-    const found = check.typeOf(value);
-    if (found == .poison) return .poison;
-    switch (check.comp.pool.keyOf(found)) {
-        .type_optional => |child| return child,
-        else => {
-            try check.fail(node, .{
-                .code = .not_optional,
-                .message = try check.comp.fmt("the capture needs an optional, and this is {s}", .{
-                    try check.comp.typeName(found),
-                }),
-                .label = "nothing to unwrap",
-            });
-            return .poison;
-        },
-    }
 }
 
 fn checkReturn(
@@ -1585,15 +1368,6 @@ fn expectNothing(check: *Check, node: Node.Index, value: Value) Allocator.Error!
     if (found == .void_type) return;
     if (found == .poison) return;
 
-    if (check.comp.pool.keyOf(found) == .type_error_union) {
-        try check.fail(node, .{
-            .code = .error_ignored,
-            .message = "this can fail, and nothing here handles it",
-            .label = "an unhandled error",
-            .help = "'try' passes it up, and 'catch' handles it here",
-        });
-        return;
-    }
     try check.reportUnusedValue(node, found, "bind it, return it, or drop it with '_ ='");
 }
 
@@ -1642,7 +1416,6 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .bool_literal => |view| {
             return .{ .constant = if (view.value) .true_value else .false_value };
         },
-        .null_literal => return .{ .constant = .untyped_null_value },
         // a block reaches here as an arm
         .block => return check.checkBlockValue(node, hint),
         .if_expr => |view| return check.checkIf(node, view, hint),
@@ -1655,10 +1428,7 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .deref => return check.checkDeref(node),
         .call => return check.checkCall(node),
         .bracket => |view| return check.checkBracketExpr(node, view),
-        .struct_literal => return check.checkStructLiteral(node, hint),
-        .try_expr => |operand| return check.checkTry(node, operand),
-        .orelse_expr => |view| return check.checkOrelse(node, view, hint),
-        .catch_expr => |view| return check.checkCatch(node, view, hint),
+        .struct_literal => return check.checkStructLiteral(node),
         .err => return .poison,
         // the parser keeps statements out of expression position
         else => unreachable,
@@ -1681,7 +1451,7 @@ fn checkIdent(check: *Check, node: Node.Index) Allocator.Error!Value {
     if (check.findLocal(text)) |local| {
         switch (local.kind) {
             .let_constant => return .{ .constant = @enumFromInt(local.payload) },
-            .let_value, .param, .capture => return runtimeValue(@enumFromInt(local.payload), local.type),
+            .let_value, .param => return runtimeValue(@enumFromInt(local.payload), local.type),
             .var_slot => {
                 const slot: Ref = @enumFromInt(local.payload);
                 const loaded = try check.emitOne(.load, local.type, slot);
@@ -1716,9 +1486,6 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             if (comp.declAt(decl_index).state != .done) return .poison;
             return .{ .constant = @enumFromInt(comp.declAt(decl_index).result) };
         },
-        .error_decl => return .{
-            .constant = try comp.pool.intern(comp.gpa, .{ .value_error = decl_index }),
-        },
         .fn_decl => return .{ .named_fn = decl_index },
         .struct_decl => {
             if (comp.typeParamCount(decl_index) > 0) return .{ .named_generic = decl_index };
@@ -1730,10 +1497,10 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             if (comp.declAt(decl_index).state != .done) return .poison;
             return .{ .named_type = @enumFromInt(comp.declAt(decl_index).result) };
         },
-        .use => {
+        .import => {
             try comp.ensure(.forDecl(decl_index), check.origin(node));
             if (comp.declAt(decl_index).state != .done) return .poison;
-            switch (Module.useTarget(comp, decl_index)) {
+            switch (Module.importTarget(comp, decl_index)) {
                 .module => |target| return .{ .named_module = target },
                 .decl => |target| return check.declAsValue(target, node),
             }
@@ -1932,8 +1699,7 @@ fn emitBinary(check: *Check, it: Operation) Allocator.Error!Value {
         .bit_and, .bit_or, .bit_xor => Pool.isInteger(left),
         .shift_left, .shift_right => Pool.isInteger(left),
         .less_than, .less_or_equal, .greater_than, .greater_or_equal => Pool.isNumeric(left),
-        .equal, .not_equal => Pool.isNumeric(left) or left == .bool_type or
-            left == .error_type,
+        .equal, .not_equal => Pool.isNumeric(left) or left == .bool_type,
         .bool_and, .bool_or => unreachable,
     };
     if (admissible == false) {
@@ -2108,271 +1874,6 @@ fn checkAddressOf(check: *Check, view: AST.View.Unary) Allocator.Error!Value {
     return runtimeValue(addressed.ref, try check.pointerTo(addressed.type, addressed.mutable));
 }
 
-fn checkTry(check: *Check, node: Node.Index, operand: Node.Index) Allocator.Error!Value {
-    const comp = check.comp;
-    const builder = check.builder.?;
-
-    if (builder.in_defer) {
-        try check.fail(node, .{
-            .code = .defer_cannot_leave,
-            .message = "a 'defer' runs on the way out, so 'try' cannot leave from inside one",
-            .label = "no 'try' here",
-            .help = "handle the error in the defer with 'catch'",
-        });
-        _ = try check.checkExpr(operand, null);
-        return .poison;
-    }
-
-    const value = try check.checkExpr(operand, null);
-    if (value == .poison) return .poison;
-    const found = check.typeOf(value);
-    const payload = switch (comp.pool.keyOf(found)) {
-        .type_error_union => |child| child,
-        else => {
-            try check.fail(operand, .{
-                .code = .not_error_union,
-                .message = try comp.fmt("'try' needs a value that can fail, and this is {s}", .{
-                    try comp.typeName(found),
-                }),
-                .label = "cannot fail",
-                .help = "drop the 'try'",
-            });
-            return .poison;
-        },
-    };
-
-    const returns = comp.pool.keyOf(builder.return_type);
-    if (returns != .type_error_union) {
-        try check.fail(node, .{
-            .code = .try_needs_error_return,
-            .message = "'try' passes the error up, but this function cannot fail",
-            .label = "nowhere to send the error",
-            .help = try comp.fmt("declare the return type '!{s}'", .{
-                try comp.typeName(builder.return_type),
-            }),
-        });
-        return .poison;
-    }
-
-    const tested = refOf(value);
-    const is_error = try check.emitOne(.is_error, .bool_type, tested);
-    const propagate = try check.newBlock();
-    const ok_block = try check.newBlock();
-    check.endBlock(.{ .branch = .{
-        .cond = is_error,
-        .then_block = propagate,
-        .else_block = ok_block,
-    } });
-
-    check.startBlock(propagate);
-    const caught = try check.emitOne(.unwrap_err, .error_type, tested);
-    // the propagation path is a way out, so every live defer runs on it
-    try check.unwindScopesTo(0);
-    const wrapped = try check.emitOne(.wrap_err, builder.return_type, caught);
-    check.endBlock(.{ .ret = wrapped });
-
-    check.startBlock(ok_block);
-    const unwrapped = try check.emitOne(.unwrap_ok, payload, tested);
-    return runtimeValue(unwrapped, payload);
-}
-
-fn checkOrelse(
-    check: *Check,
-    node: Node.Index,
-    view: AST.View.Pair,
-    hint: ?Pool.Index,
-) Allocator.Error!Value {
-    const comp = check.comp;
-    const lhs = try check.checkExpr(view.lhs, null);
-    if (lhs == .poison) return .poison;
-
-    // a constant left side is always `null`
-    if (lhs == .constant) {
-        const key = comp.pool.keyOf(lhs.constant);
-        const is_null = key == .value_typed_null or key == .value_simple;
-        if (is_null == false) {
-            try check.fail(view.lhs, .{
-                .code = .not_optional,
-                .message = "'orelse' needs an optional on its left",
-                .label = "never null",
-            });
-            return .poison;
-        }
-        return check.checkExpr(view.rhs, hint);
-    }
-
-    return check.checkRescue(node, .{
-        .kind = .optional,
-        .lhs = lhs,
-        .lhs_node = view.lhs,
-        .rhs = view.rhs,
-        .capture = .none,
-    }, hint);
-}
-
-fn checkCatch(
-    check: *Check,
-    node: Node.Index,
-    view: AST.View.Catch,
-    hint: ?Pool.Index,
-) Allocator.Error!Value {
-    const lhs = try check.checkExpr(view.lhs, null);
-    if (lhs == .poison) return .poison;
-    if (try check.valueOnly(view.lhs, lhs) == false) return .poison;
-
-    return check.checkRescue(node, .{
-        .kind = .error_union,
-        .lhs = lhs,
-        .lhs_node = view.lhs,
-        .rhs = view.rhs,
-        .capture = view.capture,
-    }, hint);
-}
-
-/// `a orelse b` and `a catch b`, one lowering over two wrappers.
-const Rescue = struct {
-    kind: Kind,
-    lhs: Value,
-    lhs_node: Node.Index,
-    rhs: Node.Index,
-    capture: Node.OptionalIndex,
-
-    const Kind = enum { optional, error_union };
-};
-
-/// A branch, a payload arm, and a fallback arm. The fallback is an ordinary
-/// expression, so every shape of it is one case.
-fn checkRescue(
-    check: *Check,
-    node: Node.Index,
-    rescue: Rescue,
-    hint: ?Pool.Index,
-) Allocator.Error!Value {
-    const found = check.typeOf(rescue.lhs);
-    const payload = check.rescuePayload(rescue.kind, found) orelse {
-        try check.reportRescue(rescue.kind, rescue.lhs_node, found);
-        return .poison;
-    };
-
-    const carries = wantsValue(hint);
-    // settling the failure is not acknowledging the value
-    const dropped = carries == false and payload != .void_type;
-    if (dropped) {
-        const verb = switch (rescue.kind) {
-            .optional => "orelse",
-            .error_union => "catch",
-        };
-        try check.reportUnusedValue(node, payload, try check.comp.fmt(
-            "'{s}' settles the other path, and the value still needs a home, " ++
-                "as in '_ = f() {s} 0'",
-            .{ verb, verb },
-        ));
-    }
-    const slot: Ref = if (carries) try check.emitSlot(.empty, payload) else .none;
-
-    const unwrap: IR.Inst.Tag = switch (rescue.kind) {
-        .optional => .unwrap_value,
-        .error_union => .unwrap_ok,
-    };
-    const tested = refOf(rescue.lhs);
-    const cond = try check.emitOne(switch (rescue.kind) {
-        .optional => .has_value,
-        .error_union => .is_error,
-    }, .bool_type, tested);
-
-    const payload_block = try check.newBlock();
-    const fallback_block = try check.newBlock();
-    const join = try check.newBlock();
-    // `has_value` names the payload side, `is_error` names the fallback side
-    check.endBlock(.{ .branch = switch (rescue.kind) {
-        .optional => .{
-            .cond = cond,
-            .then_block = payload_block,
-            .else_block = fallback_block,
-        },
-        .error_union => .{
-            .cond = cond,
-            .then_block = fallback_block,
-            .else_block = payload_block,
-        },
-    } });
-
-    check.startBlock(payload_block);
-    if (carries) {
-        const unwrapped = try check.emitOne(unwrap, payload, tested);
-        try check.emitStore(slot, unwrapped);
-    }
-    check.endBlock(.{ .jump = join });
-
-    check.startBlock(fallback_block);
-    try check.pushScope();
-    try check.bindCaught(rescue.capture, tested);
-    // quiet once the drop above was reported
-    const fallback_hint: Pool.Index = if (carries)
-        payload
-    else if (dropped) .poison else .void_type;
-    const fallback = try check.checkExpr(rescue.rhs, fallback_hint);
-    check.popScope();
-    if (check.blockOpen()) {
-        if (carries) {
-            const met = try check.coerce(fallback, payload, rescue.rhs);
-            try check.emitStore(slot, refOf(met));
-        } else if (dropped == false) {
-            try check.expectNothing(rescue.rhs, fallback);
-        }
-        check.endBlock(.{ .jump = join });
-    }
-
-    check.startBlock(join);
-    if (carries == false) {
-        return .void_value;
-    }
-    const loaded = try check.emitOne(.load, payload, slot);
-    return runtimeValue(loaded, payload);
-}
-
-fn rescuePayload(check: *const Check, kind: Rescue.Kind, found: Pool.Index) ?Pool.Index {
-    return switch (check.comp.pool.keyOf(found)) {
-        .type_optional => |child| if (kind == .optional) child else null,
-        .type_error_union => |child| if (kind == .error_union) child else null,
-        else => null,
-    };
-}
-
-fn reportRescue(
-    check: *Check,
-    kind: Rescue.Kind,
-    node: Node.Index,
-    found: Pool.Index,
-) Allocator.Error!void {
-    const comp = check.comp;
-    try check.fail(node, switch (kind) {
-        .optional => .{
-            .code = .not_optional,
-            .message = try comp.fmt("'orelse' needs an optional, and this is {s}", .{
-                try comp.typeName(found),
-            }),
-            .label = "never null",
-            .help = "drop the 'orelse'",
-        },
-        .error_union => .{
-            .code = .not_error_union,
-            .message = try comp.fmt("'catch' needs a value that can fail, and this is {s}", .{
-                try comp.typeName(found),
-            }),
-            .label = "cannot fail",
-            .help = "drop the 'catch'",
-        },
-    });
-}
-
-/// The `|err|` of a `catch`. Nothing to bind for an `orelse`.
-fn bindCaught(check: *Check, capture: Node.OptionalIndex, tested: Ref) Allocator.Error!void {
-    const bound = capture.unwrap() orelse return;
-    const caught = try check.emitOne(.unwrap_err, .error_type, tested);
-    try check.bindCapture(bound, caught, .error_type);
-}
-
 fn checkFieldAccess(
     check: *Check,
     node: Node.Index,
@@ -2456,37 +1957,10 @@ fn valueField(
             try check.reportNoField(node, found, name_text);
             return .poison;
         },
-        .type_optional, .type_error_union => {
-            try check.reportUnopened(node, found);
-            return .poison;
-        },
         else => {
             try check.reportNoField(node, found, name_text);
             return .poison;
         },
-    }
-}
-
-fn reportUnopened(check: *Check, node: Node.Index, found: Pool.Index) Allocator.Error!void {
-    const comp = check.comp;
-    switch (comp.pool.keyOf(found)) {
-        .type_optional => try check.fail(node, .{
-            .code = .optional_not_unwrapped,
-            .message = try comp.fmt("this is {s}, so reach inside it first", .{
-                try comp.typeName(found),
-            }),
-            .label = "may be null",
-            .help = "'if x |v| { }' and 'x orelse ...' unwrap an optional",
-        }),
-        .type_error_union => try check.fail(node, .{
-            .code = .not_error_union,
-            .message = try comp.fmt("this is {s}, and it can still fail", .{
-                try comp.typeName(found),
-            }),
-            .label = "handle the error first",
-            .help = "'try' passes the error up, 'catch' handles it here",
-        }),
-        else => unreachable,
     }
 }
 
@@ -2657,34 +2131,25 @@ fn checkBracketExpr(
     }
 }
 
-/// Type from context. Every field named, every field present.
-fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
+/// The literal names its type, so nothing infers it. Every field named, every
+/// field present.
+fn checkStructLiteral(check: *Check, node: Node.Index) Allocator.Error!Value {
     const comp = check.comp;
-    const inits = check.tree.viewOf(node).struct_literal;
+    const view = check.tree.viewOf(node).struct_literal;
 
-    // the context may be ?T or !T around the struct, which `coerce` wraps
-    var wanted = hint orelse {
-        try check.reportLiteralContext(node, null);
-        return .poison;
-    };
-    if (wanted == .void_type) {
-        try check.reportLiteralContext(node, null);
-        return .poison;
-    }
-    var peeled: u32 = 0;
-    while (peeled < type_depth_max) : (peeled += 1) {
-        switch (comp.pool.keyOf(wanted)) {
-            .type_optional => |child| wanted = child,
-            .type_error_union => |child| wanted = child,
-            else => break,
-        }
-    }
+    const wanted = try check.resolveType(view.type_expr);
     if (wanted == .poison) return .poison;
 
     const instance = switch (comp.pool.keyOf(wanted)) {
         .type_struct => |instance| instance,
         else => {
-            try check.reportLiteralContext(node, hint);
+            try check.fail(view.type_expr, .{
+                .code = .not_a_type,
+                .message = try comp.fmt("{s} has no fields to give", .{
+                    try comp.typeName(wanted),
+                }),
+                .label = "not a struct",
+            });
             return .poison;
         },
     };
@@ -2699,7 +2164,7 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     try builder.operands.appendNTimes(comp.gpa, .{ .value = .poison, .initializer = .none }, rows.len);
 
     var clean = true;
-    for (inits) |init_node| {
+    for (view.fields) |init_node| {
         if (check.tree.nodeTag(init_node) != .struct_field_init) continue;
         const field_init = check.tree.viewOf(init_node).struct_field_init;
 
@@ -2758,25 +2223,6 @@ fn checkStructLiteral(check: *Check, node: Node.Index, hint: ?Pool.Index) Alloca
     const payload = try check.emitExtra(&.{@intCast(fields.len)}, fields);
     const result = try check.emit(.struct_init, wanted, .{ .payload = payload });
     return runtimeValue(result, wanted);
-}
-
-fn reportLiteralContext(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!void {
-    if (hint) |wanted| {
-        try check.fail(node, .{
-            .code = .type_mismatch,
-            .message = try check.comp.fmt("expected {s}, and '.{{ }}' only builds a struct", .{
-                try check.comp.typeName(wanted),
-            }),
-            .label = "not a struct here",
-        });
-        return;
-    }
-    try check.fail(node, .{
-        .code = .no_literal_context,
-        .message = "nothing here says which struct this literal is",
-        .label = "no type in sight",
-        .help = "annotate the binding, or use the literal where a struct type is known",
-    });
 }
 
 /// A header, then one ref per operand, as `Func.callAt` reads it back.
@@ -3518,7 +2964,6 @@ fn reportReceiverImmutable(
         .mutable => unreachable,
         .let_bound => "was bound with 'let'",
         .param_bound => "is a parameter, a copy that dies with the call",
-        .capture_bound => "names what a capture held",
         .const_pointer => "sits behind a read-only pointer",
         .temporary => "is a temporary that no one else can see",
     };
@@ -3570,7 +3015,6 @@ const Place = struct {
         mutable,
         let_bound,
         param_bound,
-        capture_bound,
         /// The read-only pointer type the chain crossed, for the message.
         const_pointer: Pool.Index,
         temporary,
@@ -3611,7 +3055,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
                         .root_name = text,
                         .root_node = local.node,
                     },
-                    .let_value, .param, .capture => .{
+                    .let_value, .param => .{
                         .kind = .value,
                         .ref = @enumFromInt(local.payload),
                         .type = local.type,
@@ -3619,7 +3063,6 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
                         .reason = switch (local.kind) {
                             .let_value => .let_bound,
                             .param => .param_bound,
-                            .capture => .capture_bound,
                             else => unreachable,
                         },
                         .root_name = text,
@@ -3777,10 +3220,6 @@ fn placeField(
                 },
             }
         },
-        .type_optional, .type_error_union => {
-            try check.reportUnopened(node, base.type);
-            return null;
-        },
         else => {
             const text = check.tree.tokenSlice(name_token);
             try check.reportNoField(node, base.type, text);
@@ -3841,14 +3280,6 @@ fn reportImmutable(check: *Check, node: Node.Index, place: Place) Allocator.Erro
             ),
             .label = "immutable",
             .help = "take '*var T' to write the caller's value, or copy it into a 'var' first",
-        },
-        .capture_bound => .{
-            .code = .not_assignable,
-            .message = try comp.fmt("'{s}' names what the capture held, and cannot change", .{
-                place.root_name,
-            }),
-            .label = "immutable",
-            .help = "copy it into a 'var' to work on it",
         },
         .const_pointer => |crossed| report: {
             const child = comp.pool.keyOf(crossed).type_pointer.child;
@@ -3930,13 +3361,13 @@ fn wantsValue(hint: ?Pool.Index) bool {
 
 fn tagIsStatement(tag: Node.Tag) bool {
     return switch (tag) {
-        .var_decl, .assign, .while_stmt, .defer_stmt, .err => true,
+        .var_decl, .assign, .defer_stmt, .err => true,
         else => false,
     };
 }
 
-/// Constants are checked by value, `*var T` serves as `*T`, and wrapping is
-/// the only code this adds.
+/// Constants are checked by value, and `*var T` serves where `*T` is asked
+/// for. Nothing else converts.
 fn coerce(
     check: *Check,
     value: Value,
@@ -3949,7 +3380,7 @@ fn coerce(
     switch (value) {
         .poison => return .poison,
         .diverged => return .diverged,
-        .constant => |constant| return check.fitOrWrap(constant, wanted, node),
+        .constant => |constant| return check.fitValue(constant, wanted, node),
         .runtime => |runtime| {
             if (runtime.type == wanted) return value;
             if (runtime.type == .poison) return .poison;
@@ -3978,7 +3409,6 @@ fn coerce(
                 }
             }
 
-            if (try check.coerceQuiet(value, wanted, node, 0)) |met| return met;
             return check.reportMismatch(node, value, wanted);
         },
         else => {
@@ -3988,63 +3418,8 @@ fn coerce(
     }
 }
 
-/// `coerce` without the report. One wrap per level of the wanted type, so a
-/// `T` reaches `!?T` in two.
-fn coerceQuiet(
-    check: *Check,
-    value: Value,
-    wanted: Pool.Index,
-    node: Node.Index,
-    depth: u32,
-) Allocator.Error!?Value {
-    assert(depth <= type_depth_max);
-    if (depth == type_depth_max) return null;
-
-    const comp = check.comp;
-    switch (value) {
-        .constant => |constant| {
-            const met = try comp.pool.fit(comp.gpa, constant, wanted);
-            switch (met) {
-                .value => |final| return .{ .constant = final },
-                .does_not_fit, .wrong_kind => {},
-            }
-        },
-        .runtime => |runtime| {
-            if (runtime.type == wanted) return value;
-            const have = comp.pool.keyOf(runtime.type);
-            const want = comp.pool.keyOf(wanted);
-            if (have == .type_pointer and want == .type_pointer) {
-                const compatible = have.type_pointer.child == want.type_pointer.child and
-                    have.type_pointer.mutable and want.type_pointer.mutable == false;
-                if (compatible) return runtimeValue(runtime.ref, wanted);
-            }
-        },
-        else => return null,
-    }
-
-    // no match at this level, so wrap once and ask again inside
-    switch (comp.pool.keyOf(wanted)) {
-        .type_optional => |child| {
-            const inner = try check.coerceQuiet(value, child, node, depth + 1) orelse return null;
-            return try check.wrap(.wrap_optional, wanted, refOf(inner));
-        },
-        .type_error_union => |child| {
-            if (check.typeOf(value) == .error_type) {
-                return try check.wrap(.wrap_err, wanted, refOf(value));
-            }
-            const inner = try check.coerceQuiet(value, child, node, depth + 1) orelse return null;
-            return try check.wrap(.wrap_ok, wanted, refOf(inner));
-        },
-        else => return null,
-    }
-}
-
-fn wrap(check: *Check, tag: IR.Inst.Tag, wanted: Pool.Index, inner: Ref) Allocator.Error!Value {
-    return runtimeValue(try check.emitOne(tag, wanted, inner), wanted);
-}
-
-/// The wanted type may wrap, so this can produce a runtime value.
-fn fitOrWrap(
+/// A constant meets a type by value.
+fn fitValue(
     check: *Check,
     constant: Pool.Index,
     wanted: Pool.Index,
@@ -4054,36 +3429,14 @@ fn fitOrWrap(
     if (constant == .poison) return .poison;
     if (wanted == .poison) return .poison;
 
-    const met = try comp.pool.fit(comp.gpa, constant, wanted);
-    switch (met) {
-        .value => |final| return .{ .constant = final },
-        .does_not_fit => {
+    return switch (try comp.pool.fit(comp.gpa, constant, wanted)) {
+        .value => |final| .{ .constant = final },
+        .does_not_fit => fitted: {
             try check.reportDoesNotFit(node, constant, wanted);
-            return .poison;
+            break :fitted .poison;
         },
-        .wrong_kind => {},
-    }
-
-    switch (comp.pool.keyOf(wanted)) {
-        .type_optional => |child| {
-            const inner = try check.fitOrWrap(constant, child, node);
-            if (inner == .poison) return .poison;
-            if (check.builder == null) return check.needRuntime(node, "wrapping an optional");
-            return check.wrap(.wrap_optional, wanted, refOf(inner));
-        },
-        .type_error_union => |child| {
-            if (check.builder == null) return check.needRuntime(node, "wrapping an error union");
-            if (comp.pool.keyOf(constant) == .value_error) {
-                return check.wrap(.wrap_err, wanted, .fromConstant(constant));
-            }
-            const inner = try check.fitOrWrap(constant, child, node);
-            if (inner == .poison) return .poison;
-            return check.wrap(.wrap_ok, wanted, refOf(inner));
-        },
-        else => {
-            return check.reportMismatch(node, .{ .constant = constant }, wanted);
-        },
-    }
+        .wrong_kind => try check.reportMismatch(node, .{ .constant = constant }, wanted),
+    };
 }
 
 /// The result must stay a constant, for a top level binding.
@@ -4105,21 +3458,7 @@ fn fitConstant(
             return .poison;
         },
         .wrong_kind => {
-            switch (comp.pool.keyOf(wanted)) {
-                .type_optional, .type_error_union => {
-                    try check.fail(node, .{
-                        .code = .not_constant,
-                        .message = try comp.fmt(
-                            "this value only becomes {s} at run time, and a top-level " ++
-                                "binding is a constant",
-                            .{try comp.typeName(wanted)},
-                        ),
-                        .label = "not a constant",
-                        .help = "move the binding into a function, or drop the annotation",
-                    });
-                },
-                else => _ = try check.reportMismatch(node, .{ .constant = constant }, wanted),
-            }
+            _ = try check.reportMismatch(node, .{ .constant = constant }, wanted);
             return .poison;
         },
     }
@@ -4150,13 +3489,7 @@ fn reportMismatch(
 ) Allocator.Error!Value {
     const comp = check.comp;
     const found = check.typeOf(value);
-    const found_name = switch (value) {
-        .constant => |constant| switch (comp.pool.keyOf(constant)) {
-            .value_simple => |simple| if (simple == .null) "null" else try comp.typeName(found),
-            else => try comp.typeName(found),
-        },
-        else => try comp.typeName(found),
-    };
+    const found_name = try comp.typeName(found);
     try check.fail(node, .{
         .code = .type_mismatch,
         .message = try comp.fmt("expected {s}, found {s}", .{
@@ -4186,9 +3519,6 @@ fn runtimeOnly(tag: Node.Tag) ?[]const u8 {
         .return_expr => "'return'",
         .break_expr => "'break'",
         .continue_expr => "'continue'",
-        .orelse_expr => "'orelse'",
-        .catch_expr => "'catch'",
-        .try_expr => "'try'",
         .call => "a call",
         .struct_literal => "a struct literal",
         .deref => "reading through a pointer",
@@ -4315,7 +3645,6 @@ fn finishFunc(check: *Check) Allocator.Error!void {
     var live = try std.DynamicBitSet.initEmpty(comp.gpa, block_count);
     defer live.deinit();
 
-    // reachability from the entry, over the terminators
     var frontier: std.ArrayList(u32) = .empty;
     defer frontier.deinit(comp.gpa);
     try frontier.ensureTotalCapacity(comp.gpa, block_count);

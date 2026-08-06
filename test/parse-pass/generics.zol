@@ -1,8 +1,8 @@
-pub struct Box[T] {
+pub type Box[T] = {
     item: T
 }
 
-pub struct Pair[K, V] {
+pub type Pair[K, V] = {
     key: K
     value: V
 }

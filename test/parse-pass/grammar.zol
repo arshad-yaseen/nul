@@ -1,15 +1,10 @@
-//! Every production in GRAMMAR.md, once.
-
-use std.mem
-
-pub error Broken
-error Quiet
+import std.mem
 
 pub type Alias = i64
 type Pointer = *var i64
-type Nested = Box[Box[?i64]]
+type Nested = Box[Box[i64]]
 
-pub struct Box[T,] {
+pub type Box[T,] = {
     item: T
 
     fn read(self: *Box[T]) T {
@@ -21,7 +16,7 @@ pub struct Box[T,] {
     }
 }
 
-struct Empty {}
+type Empty = {}
 
 let top_level: i64 = 1 + 2 * 3
 pub let exported = 0xff_ff
@@ -33,48 +28,31 @@ fn no_return_type(a: i64,) {
     slot <<= 1
     defer slot = 0
 
-    while slot > 0 {
-        slot -= 1
-        if slot == 3 { continue }
-        if slot == 2 { break }
-    }
-    while { break }
-
     _ = slot
 }
 
-fn every_expression(m: ?i64, e: !i64, p: *var i64, b: Box[i64]) i64 {
+fn every_expression(p: *var i64, b: Box[i64], flag: bool) i64 {
     let grouped: i64 = (1 + 2) * 3
     let unary = -1 + ~2 + 1
-    let boolean = !true
+    let boolean = not true
     let address = &grouped
     let read = address.*
     no_return_type(1)
-    let literal: Box[i64] = .{ item: 1 }
-    let settled = m orelse 0
-    let block_settled = m orelse { return 0 }
-    let caught = e catch |err| 0
-    let caught_block = e catch |err| { return 0 }
-    let tried = try_it(e) catch 0
-    let captured = if m |v| { v } else { 0 }
+    let literal = Box[i64].{ item: 1 }
+    let branched: i64 = if flag { 1 } else { 2 }
     let chained = b
         .read()
     _ = literal
     _ = read
     _ = unary
     _ = boolean
-    _ = tried
     p.* = grouped
-    return settled + block_settled + caught + caught_block + captured + chained
+    return branched + chained
 }
 
-fn try_it(e: !i64) !i64 {
-    return try e
-}
-
-fn while_capture(m: ?i64) i64 {
-    while m |v| {
-        return v
+fn ways_out(limit: i64) i64 {
+    if limit > 0 {
+        return limit
     }
     return 0
 }

@@ -50,9 +50,17 @@ area: imperative summary
 - Blank line, then a body wrapped at 72 explaining **why**. The diff already says
   what changed.
 - One logical change per commit.
+- A pull request is squashed when it merges, so its title is the subject line
+  that lands on `main`. Write it to the rules above rather than as a sentence,
+  and give the description the **why** a body would have carried.
 - No trailers of any kind. No `Co-Authored-By`, no `Generated with`, no tool or
   assistant attribution. A commit is authored by whoever committed it, and the
   message is for the next reader of `git blame`, not a record of who typed it.
+
+  This holds for everything the repository publishes, not just the commit
+  message: pull request titles and descriptions, issue comments, review
+  comments, and release notes carry no attribution either. The rule is about
+  what the project says, so it does not stop at the commit.
 
 ```
 check: remove the two-arena rule

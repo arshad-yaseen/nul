@@ -59,32 +59,32 @@ root
     ret: ident i64
     body: block
       var_decl inline_literal let
-        type: ident Inline
         init: struct_literal
+          type: ident Inline
           struct_field_init x
             value: number_literal 1
           struct_field_init y
             value: number_literal 2
       var_decl spread_literal let
-        type: ident Inline
         init: struct_literal
+          type: ident Inline
           struct_field_init x
             value: number_literal 1
           struct_field_init y
             value: number_literal 2
       var_decl trailing let
-        type: ident Inline
         init: struct_literal
+          type: ident Inline
           struct_field_init x
             value: number_literal 1
           struct_field_init y
             value: number_literal 2
       var_decl pair let
-        type: bracket
-          base: ident Pair
-          arg: ident i64
-          arg: ident i64
         init: struct_literal
+          type: bracket
+            base: ident Pair
+            arg: ident i64
+            arg: ident i64
           struct_field_init first
             value: number_literal 1
           struct_field_init second

@@ -1,4 +1,4 @@
-pub struct Counter {
+pub type Counter = {
     hits: i64
 
     pub fn total(self: Counter) i64 {
@@ -10,7 +10,7 @@ pub struct Counter {
     }
 
     pub fn zero() Counter {
-        return .{ hits: 0 }
+        return Counter.{ hits: 0 }
     }
 }
 

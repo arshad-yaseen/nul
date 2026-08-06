@@ -1,4 +1,4 @@
-struct Wide {
+type Wide = {
     a: i64
 }
 

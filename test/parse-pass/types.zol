@@ -1,16 +1,14 @@
-use std.text
+import std.text
 
-struct Node {
+type Node = {
     plain: i64
     read_only: *Node
     writable: *var Node
-    maybe: ?Node
-    maybe_pointer: ?*var Node
     qualified: text.Buffer
-    deep: ?*var mem.Buffer
+    deep: *var mem.Buffer
 }
 
-fn signatures(a: *Node, b: *var Node, c: ?i64) !*var Node {
+fn signatures(a: *Node, b: *var Node, c: i64) *var Node {
     return b
 }
 

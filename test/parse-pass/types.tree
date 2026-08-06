@@ -1,5 +1,5 @@
 root
-  use_decl
+  import_decl
     path: field_access text
       lhs: ident std
   struct_decl Node
@@ -11,21 +11,13 @@ root
     field writable
       type: pointer_type var
         child: ident Node
-    field maybe
-      type: optional_type
-        child: ident Node
-    field maybe_pointer
-      type: optional_type
-        child: pointer_type var
-          child: ident Node
     field qualified
       type: field_access Buffer
         lhs: ident text
     field deep
-      type: optional_type
-        child: pointer_type var
-          child: field_access Buffer
-            lhs: ident mem
+      type: pointer_type var
+        child: field_access Buffer
+          lhs: ident mem
   fn_decl signatures
     param a
       type: pointer_type
@@ -34,11 +26,9 @@ root
       type: pointer_type var
         child: ident Node
     param c
-      type: optional_type
-        child: ident i64
-    ret: error_union_type
-      child: pointer_type var
-        child: ident Node
+      type: ident i64
+    ret: pointer_type var
+      child: ident Node
     body: block
       return_expr
         value: ident b

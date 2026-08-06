@@ -1,77 +1,74 @@
-// seventy structs nested by value, and a walk down the first three.
-// depth without instantiation is plain code, not a runaway generic.
-
-struct S0 { f: S1 }
-struct S1 { f: S2 }
-struct S2 { f: S3 }
-struct S3 { f: S4 }
-struct S4 { f: S5 }
-struct S5 { f: S6 }
-struct S6 { f: S7 }
-struct S7 { f: S8 }
-struct S8 { f: S9 }
-struct S9 { f: S10 }
-struct S10 { f: S11 }
-struct S11 { f: S12 }
-struct S12 { f: S13 }
-struct S13 { f: S14 }
-struct S14 { f: S15 }
-struct S15 { f: S16 }
-struct S16 { f: S17 }
-struct S17 { f: S18 }
-struct S18 { f: S19 }
-struct S19 { f: S20 }
-struct S20 { f: S21 }
-struct S21 { f: S22 }
-struct S22 { f: S23 }
-struct S23 { f: S24 }
-struct S24 { f: S25 }
-struct S25 { f: S26 }
-struct S26 { f: S27 }
-struct S27 { f: S28 }
-struct S28 { f: S29 }
-struct S29 { f: S30 }
-struct S30 { f: S31 }
-struct S31 { f: S32 }
-struct S32 { f: S33 }
-struct S33 { f: S34 }
-struct S34 { f: S35 }
-struct S35 { f: S36 }
-struct S36 { f: S37 }
-struct S37 { f: S38 }
-struct S38 { f: S39 }
-struct S39 { f: S40 }
-struct S40 { f: S41 }
-struct S41 { f: S42 }
-struct S42 { f: S43 }
-struct S43 { f: S44 }
-struct S44 { f: S45 }
-struct S45 { f: S46 }
-struct S46 { f: S47 }
-struct S47 { f: S48 }
-struct S48 { f: S49 }
-struct S49 { f: S50 }
-struct S50 { f: S51 }
-struct S51 { f: S52 }
-struct S52 { f: S53 }
-struct S53 { f: S54 }
-struct S54 { f: S55 }
-struct S55 { f: S56 }
-struct S56 { f: S57 }
-struct S57 { f: S58 }
-struct S58 { f: S59 }
-struct S59 { f: S60 }
-struct S60 { f: S61 }
-struct S61 { f: S62 }
-struct S62 { f: S63 }
-struct S63 { f: S64 }
-struct S64 { f: S65 }
-struct S65 { f: S66 }
-struct S66 { f: S67 }
-struct S67 { f: S68 }
-struct S68 { f: S69 }
-struct S69 { f: S70 }
-struct S70 { f: i64 }
+type S0 = { f: S1 }
+type S1 = { f: S2 }
+type S2 = { f: S3 }
+type S3 = { f: S4 }
+type S4 = { f: S5 }
+type S5 = { f: S6 }
+type S6 = { f: S7 }
+type S7 = { f: S8 }
+type S8 = { f: S9 }
+type S9 = { f: S10 }
+type S10 = { f: S11 }
+type S11 = { f: S12 }
+type S12 = { f: S13 }
+type S13 = { f: S14 }
+type S14 = { f: S15 }
+type S15 = { f: S16 }
+type S16 = { f: S17 }
+type S17 = { f: S18 }
+type S18 = { f: S19 }
+type S19 = { f: S20 }
+type S20 = { f: S21 }
+type S21 = { f: S22 }
+type S22 = { f: S23 }
+type S23 = { f: S24 }
+type S24 = { f: S25 }
+type S25 = { f: S26 }
+type S26 = { f: S27 }
+type S27 = { f: S28 }
+type S28 = { f: S29 }
+type S29 = { f: S30 }
+type S30 = { f: S31 }
+type S31 = { f: S32 }
+type S32 = { f: S33 }
+type S33 = { f: S34 }
+type S34 = { f: S35 }
+type S35 = { f: S36 }
+type S36 = { f: S37 }
+type S37 = { f: S38 }
+type S38 = { f: S39 }
+type S39 = { f: S40 }
+type S40 = { f: S41 }
+type S41 = { f: S42 }
+type S42 = { f: S43 }
+type S43 = { f: S44 }
+type S44 = { f: S45 }
+type S45 = { f: S46 }
+type S46 = { f: S47 }
+type S47 = { f: S48 }
+type S48 = { f: S49 }
+type S49 = { f: S50 }
+type S50 = { f: S51 }
+type S51 = { f: S52 }
+type S52 = { f: S53 }
+type S53 = { f: S54 }
+type S54 = { f: S55 }
+type S55 = { f: S56 }
+type S56 = { f: S57 }
+type S57 = { f: S58 }
+type S58 = { f: S59 }
+type S59 = { f: S60 }
+type S60 = { f: S61 }
+type S61 = { f: S62 }
+type S62 = { f: S63 }
+type S63 = { f: S64 }
+type S64 = { f: S65 }
+type S65 = { f: S66 }
+type S66 = { f: S67 }
+type S67 = { f: S68 }
+type S68 = { f: S69 }
+type S69 = { f: S70 }
+type S70 = { f: i64 }
 
 fn probe(s: S67) i64 {
     return s.f.f.f.f
