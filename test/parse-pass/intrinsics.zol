@@ -1,6 +1,3 @@
-// The keyword is a primary expression, so the ordinary suffix chain reads
-// the name, the type arguments, and the call.
-
 fn cast(p: *var u8) *var i64 {
     return intrinsic.ptr_cast[i64](p)
 }

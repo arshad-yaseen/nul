@@ -6,7 +6,6 @@ struct Counter {
     }
 }
 
-// the defer runs on both ways out, the early return and the one below it
 fn tidy(early: bool) i64 {
     var counter: Counter = .{ hits: 0 }
     defer counter.bump()

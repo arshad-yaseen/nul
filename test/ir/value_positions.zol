@@ -1,7 +1,3 @@
-// The four rules, checked. An 'if' is an expression, a block in value
-// position is worth its tail, the ways out never produce a value, and a
-// statement is the case where nobody wants one.
-
 struct Cell {
     value: i64
 }
@@ -46,8 +42,6 @@ fn take(n: i64) i64 {
 }
 
 fn every_arm_leaves(a: bool, b: bool) i64 {
-    // the inner 'if' produces no value on any path, so the outer one takes its
-    // type from the else arm and the inner join is dropped
     let n: i64 = if a {
         if b { return 1 } else { return 2 }
     } else {
@@ -57,12 +51,10 @@ fn every_arm_leaves(a: bool, b: bool) i64 {
 }
 
 fn leaving_from_an_operand(a: i64, c: bool) i64 {
-    // the parameter type names the arm type, and the else arm still leaves
     let n = take(if c { 1 } else { return 0 }) + 1
     return n + a
 }
 
 fn operand_that_never_arrives(a: i64, c: bool) i64 {
-    // every path through the operand leaves, so the addition never happens
     return a + (if c { return 1 } else { return 2 })
 }

@@ -1,6 +1,3 @@
-// What '_ =' drops. A value goes away on purpose, and the expression is still
-// checked and still emitted.
-
 fn quiet() i64 {
     return 5
 }
