@@ -80,6 +80,9 @@ than retrofitted.
   statement, and what it proved holds for the rest of the block: after
   `r is u32 or return 0`, `r` is `u32`. A branch that leaves narrows the
   same way, so `if r is not u32 { return 0 }` leaves `r` a `u32`.
+- A side that a constant condition already decided is never entered, so
+  it is no longer checked: `false and f()` compiles whether or not the
+  call would.
 - `bool` left the compiler. `type bool = true | false` is a declaration
   like any other, `true` and `false` are unit types rather than keywords,
   and a file that tests anything declares the three or imports them.

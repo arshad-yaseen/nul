@@ -635,46 +635,6 @@ const Builder = struct {
         return builder.blockAt(builder.current);
     }
 
-    const Mark = struct {
-        insts: usize,
-        extra: usize,
-        blocks: usize,
-        locals: usize,
-        scopes: usize,
-        narrows: usize,
-        operands: usize,
-        current: IR.Block.Index,
-    };
-
-    fn mark(builder: *const Builder) Mark {
-        return .{
-            .insts = builder.insts.len,
-            .extra = builder.extra.items.len,
-            .blocks = builder.blocks.items.len,
-            .locals = builder.locals.items.len,
-            .scopes = builder.scopes.items.len,
-            .narrows = builder.narrows.items.len,
-            .operands = builder.operands.items.len,
-            .current = builder.current,
-        };
-    }
-
-    fn rewind(builder: *Builder, to: Mark) void {
-        assert(builder.scopes.items.len == to.scopes);
-        assert(builder.narrows.items.len == to.narrows);
-        assert(builder.operands.items.len == to.operands);
-
-        builder.insts.shrinkRetainingCapacity(to.insts);
-        builder.extra.shrinkRetainingCapacity(to.extra);
-        builder.blocks.shrinkRetainingCapacity(to.blocks);
-        builder.locals.shrinkRetainingCapacity(to.locals);
-        builder.current = to.current;
-
-        const open = builder.currentBlock();
-        open.terminator = .none;
-        open.count = 0;
-    }
-
     fn deinit(builder: *Builder, gpa: Allocator) void {
         builder.insts.deinit(gpa);
         builder.extra.deinit(gpa);
@@ -2120,18 +2080,8 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
 
     if (lhs_met == .constant) {
         const truth = check.truthOf(bools, lhs_met.constant) orelse return .poison;
-        if (truth == false) {
-            // the left decides, and the right is still checked. only a body
-            // has anything to take back
-            if (check.builder) |builder| {
-                const before = builder.mark();
-                _ = try check.checkExpr(view.rhs, null);
-                builder.rewind(before);
-            } else {
-                _ = try check.checkExpr(view.rhs, null);
-            }
-            return lhs_met;
-        }
+        // a side the constant decided is never entered, so it is never checked
+        if (truth == false) return lhs_met;
         const rhs = try check.checkExpr(view.rhs, null);
         return check.coerce(rhs, bools, view.rhs);
     }
