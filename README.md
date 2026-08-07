@@ -1,13 +1,6 @@
-<h1 align="center">
-  φ
-  <br>
-  <br>
-  Phi
-</h1>
+# Phi
 
-<p align="center">
-  <strong>As simple as Go, as bare as C. Memory safe at compile time, with nothing to annotate.</strong>
-</p>
+**As simple as Go, as bare as C. Memory safe at compile time, with nothing to annotate.**
 
 A research project into systems programming without a runtime. Not usable, and not
 intended for use any time soon.
