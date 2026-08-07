@@ -14,6 +14,7 @@ const Pool = @import("Pool.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const dump = @import("util/dump.zig");
+const edit_distance = @import("util/edit_distance.zig");
 const spell = @import("util/spell.zig");
 
 const Decl = Module.Decl;
@@ -704,6 +705,14 @@ pub fn fmt(
 ) Allocator.Error![]const u8 {
     comptime assert(template.len > 0);
     return std.fmt.allocPrint(comp.arena.allocator(), template, args);
+}
+
+pub fn didYouMean(
+    comp: *Compilation,
+    closest: edit_distance.Closest,
+) Allocator.Error!?[]const u8 {
+    const found = closest.best orelse return null;
+    return try comp.fmt("did you mean '{s}'?", .{found});
 }
 
 pub fn renderAll(comp: *Compilation, writer: *Writer, color: Diagnostic.Color) !void {

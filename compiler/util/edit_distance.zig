@@ -1,5 +1,20 @@
 //! Levenshtein distance, for a "did you mean" suggestion.
 
+/// The closest candidate under the suggestion threshold, if any came close.
+pub const Closest = struct {
+    target: []const u8,
+    best: ?[]const u8 = null,
+    best_distance: u32 = 3,
+
+    pub fn consider(closest: *Closest, candidate: []const u8) void {
+        const distance = between(closest.target, candidate);
+        if (distance < closest.best_distance) {
+            closest.best_distance = distance;
+            closest.best = candidate;
+        }
+    }
+};
+
 /// Both names are cut to forty bytes.
 pub fn between(a: []const u8, b: []const u8) u32 {
     const cap = 40;

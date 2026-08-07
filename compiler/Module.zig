@@ -651,18 +651,10 @@ fn suggestIn(
     module: *const Module,
     name: []const u8,
 ) Allocator.Error!?[]const u8 {
-    var best: ?[]const u8 = null;
-    var best_distance: u32 = 3;
-
+    var closest: edit_distance.Closest = .{ .target = name };
     for (comp.decls.items[module.decls.start..module.decls.end()]) |decl| {
         if (decl.owner != .none) continue;
-        const candidate = comp.pool.stringText(decl.name);
-        const distance = edit_distance.between(name, candidate);
-        if (distance < best_distance) {
-            best_distance = distance;
-            best = candidate;
-        }
+        closest.consider(comp.pool.stringText(decl.name));
     }
-    const found = best orelse return null;
-    return try comp.fmt("did you mean '{s}'?", .{found});
+    return comp.didYouMean(closest);
 }

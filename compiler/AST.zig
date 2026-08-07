@@ -397,7 +397,6 @@ pub const View = union(enum) {
     };
     pub const TypedName = struct { name_token: Token.Index, type_expr: Node.Index };
     pub const NamedValue = struct { name_token: Token.Index, value: Node.Index };
-    pub const Pair = struct { lhs: Node.Index, rhs: Node.Index };
     pub const Assign = struct {
         op: ?BinaryOp,
         op_token: Token.Index,

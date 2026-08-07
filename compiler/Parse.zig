@@ -752,8 +752,7 @@ fn errTypeParams(self: *Parse, lbracket: Token.Index, top: usize) Allocator.Erro
 
 fn parseTypeParam(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.ident));
-    const name = self.nextToken();
-    return self.addNode(.{ .tag = .type_param, .main_token = name, .data = .{ .none = {} } });
+    return self.addLeaf(.type_param);
 }
 
 fn parseParam(self: *Parse) Allocator.Error!Node.Index {

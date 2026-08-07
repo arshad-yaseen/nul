@@ -31,6 +31,11 @@ demand_embedding: bool,
 
 const Check = @This();
 
+/// The body under check. Only constants-only mode has none.
+fn body(check: *const Check) *Builder {
+    return check.builder.?;
+}
+
 const type_params_max = AST.type_params_max;
 const bindings_max = type_params_max * 2;
 const call_args_max = 255;
@@ -93,7 +98,10 @@ pub fn topLevelLet(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!b
     var met = constant;
     if (view.type_expr.unwrap()) |type_expr| {
         const annotation = try check.resolveType(type_expr);
-        met = try check.fitConstant(constant, annotation, view.init_expr);
+        met = switch (try check.fitValue(constant, annotation, view.init_expr)) {
+            .constant => |final| final,
+            else => .poison,
+        };
     }
 
     comp.declPtr(decl_index).result = met.int();
@@ -248,12 +256,20 @@ fn bindTypeParams(
     const args = comp.instanceArgs(instance);
     const tree = comp.treeOf(decl.module);
 
+    const owner_params: []const Node.Index = if (decl.owner.unwrap()) |owner_index|
+        tree.viewOf(comp.declAt(owner_index).node).struct_decl.type_params
+    else
+        &.{};
+    const own = switch (tree.viewOf(decl.node)) {
+        .struct_decl => |view| view.type_params,
+        .fn_decl => |view| view.type_params,
+        else => unreachable,
+    };
+
     var count: u32 = 0;
-    if (decl.owner.unwrap()) |owner_index| {
-        const owner = comp.declAt(owner_index);
-        const owner_view = tree.viewOf(owner.node).struct_decl;
-        assert(owner_view.type_params.len <= type_params_max);
-        for (owner_view.type_params) |param| {
+    for ([_][]const Node.Index{ owner_params, own }) |params| {
+        assert(params.len <= type_params_max);
+        for (params) |param| {
             assert(count < buffer.len);
             buffer[count] = .{
                 .name = try comp.pool.string(comp.gpa, tree.tokenSlice(tree.nodeMainToken(param))),
@@ -261,21 +277,6 @@ fn bindTypeParams(
             };
             count += 1;
         }
-    }
-
-    const own = switch (tree.viewOf(decl.node)) {
-        .struct_decl => |view| view.type_params,
-        .fn_decl => |view| view.type_params,
-        else => unreachable,
-    };
-    assert(own.len <= type_params_max);
-    for (own) |param| {
-        assert(count < buffer.len);
-        buffer[count] = .{
-            .name = try comp.pool.string(comp.gpa, tree.tokenSlice(tree.nodeMainToken(param))),
-            .type = args[count],
-        };
-        count += 1;
     }
 
     assert(count == args.len);
@@ -437,6 +438,14 @@ fn resolveTypeName(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     return check.declAsType(decl_index, node);
 }
 
+/// Analyzed on demand. Null is poisoned, already reported.
+fn ensured(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator.Error!?u32 {
+    try check.comp.ensure(.forDecl(decl_index), check.origin(node));
+    const decl = check.comp.declAt(decl_index);
+    if (decl.state != .done) return null;
+    return decl.result;
+}
+
 fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
     const decl = comp.declAt(decl_index);
@@ -457,17 +466,15 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
             return comp.instanceType(instance);
         },
         .type_alias => {
-            try comp.ensure(.forDecl(decl_index), check.origin(node));
-            if (comp.declAt(decl_index).state != .done) return .poison;
-            return @enumFromInt(comp.declAt(decl_index).result);
+            const result = try check.ensured(decl_index, node) orelse return .poison;
+            return @enumFromInt(result);
         },
         .unit_decl => {
             assert(comp.typeParamCount(decl_index) == 0);
             return comp.pool.intern(comp.gpa, .{ .type_unit = decl_index });
         },
         .import => {
-            try comp.ensure(.forDecl(decl_index), check.origin(node));
-            if (comp.declAt(decl_index).state != .done) return .poison;
+            if (try check.ensured(decl_index, node) == null) return .poison;
             switch (Module.importTarget(comp, decl_index)) {
                 .decl => |target| return check.declAsType(target, node),
                 .module => {
@@ -761,7 +768,7 @@ fn emit(
     type_index: Pool.Index,
     data: IR.Inst.Data,
 ) Allocator.Error!Ref {
-    const builder = check.builder.?;
+    const builder = check.body();
     // control may have left inside a subexpression, so what follows lands in
     // a block nothing jumps to, which `finish` drops
     if (builder.currentBlock().terminator != .none) {
@@ -803,7 +810,7 @@ fn emitStore(check: *Check, place: Ref, value: Ref) Allocator.Error!void {
 }
 
 fn newBlock(check: *Check) Allocator.Error!IR.Block.Index {
-    const builder = check.builder.?;
+    const builder = check.body();
     if (builder.blocks.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
     const index: IR.Block.Index = .from(builder.blocks.items.len);
     try builder.blocks.append(check.comp.gpa, .{
@@ -815,7 +822,7 @@ fn newBlock(check: *Check) Allocator.Error!IR.Block.Index {
 }
 
 fn startBlock(check: *Check, block: IR.Block.Index) void {
-    const builder = check.builder.?;
+    const builder = check.body();
     const opened = builder.blockAt(block);
     assert(opened.terminator == .none);
 
@@ -824,7 +831,7 @@ fn startBlock(check: *Check, block: IR.Block.Index) void {
 }
 
 fn endBlock(check: *Check, terminator: IR.Terminator) void {
-    const builder = check.builder.?;
+    const builder = check.body();
     const block = builder.currentBlock();
     assert(terminator != .none);
     assert(block.terminator == .none);
@@ -834,14 +841,14 @@ fn endBlock(check: *Check, terminator: IR.Terminator) void {
 }
 
 fn blockOpen(check: *const Check) bool {
-    const builder = check.builder.?;
+    const builder = check.body();
     return builder.currentBlock().terminator == .none;
 }
 
 // scopes, locals, and every way out
 
 fn pushScope(check: *Check) Allocator.Error!void {
-    const builder = check.builder.?;
+    const builder = check.body();
     try builder.scopes.append(check.comp.gpa, .{
         .locals_start = @intCast(builder.locals.items.len),
         .defers_start = @intCast(builder.defer_nodes.items.len),
@@ -849,7 +856,7 @@ fn pushScope(check: *Check) Allocator.Error!void {
 }
 
 fn popScope(check: *Check) void {
-    const builder = check.builder.?;
+    const builder = check.body();
     const scope = builder.scopes.pop().?;
     builder.locals.shrinkRetainingCapacity(scope.locals_start);
     builder.defer_nodes.shrinkRetainingCapacity(scope.defers_start);
@@ -858,7 +865,7 @@ fn popScope(check: *Check) void {
 /// Every scope from the innermost down to `target`, defers in reverse.
 /// Every way out goes through here.
 fn unwindScopesTo(check: *Check, target: u32) Allocator.Error!void {
-    const builder = check.builder.?;
+    const builder = check.body();
     assert(target <= builder.scopes.items.len);
 
     var index = builder.scopes.items.len;
@@ -880,7 +887,7 @@ fn unwindScopesTo(check: *Check, target: u32) Allocator.Error!void {
 }
 
 fn emitDefer(check: *Check, node: Node.Index) Allocator.Error!void {
-    const builder = check.builder.?;
+    const builder = check.body();
     const outer = builder.in_defer;
 
     builder.in_defer = true;
@@ -889,7 +896,7 @@ fn emitDefer(check: *Check, node: Node.Index) Allocator.Error!void {
 }
 
 fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator.Error!void {
-    const builder = check.builder.?;
+    const builder = check.body();
     const text = check.comp.pool.stringText(local.name);
 
     // locals may not shadow anything visible
@@ -961,13 +968,13 @@ fn findLocalIndex(check: *const Check, name: []const u8) ?Builder.Local.Index {
 }
 
 fn localAt(check: *const Check, index: Builder.Local.Index) Builder.Local {
-    const builder = check.builder.?;
+    const builder = check.body();
     assert(index.int() < builder.locals.items.len);
     return builder.locals.items[index.int()];
 }
 
 fn activeNarrow(check: *const Check, local: Builder.Local.Index) ?Builder.Narrow {
-    const builder = check.builder.?;
+    const builder = check.body();
     var index = builder.narrows.items.len;
     while (index > 0) {
         index -= 1;
@@ -982,7 +989,7 @@ fn activeNarrow(check: *const Check, local: Builder.Local.Index) ?Builder.Narrow
 /// One block with its own scope, worth its final expression.
 fn checkBlockValue(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     assert(check.tree.nodeTag(node) == .block);
-    const builder = check.builder.?;
+    const builder = check.body();
     const statements = check.tree.viewOf(node).block;
 
     try check.pushScope();
@@ -1037,7 +1044,7 @@ fn checkStatement(check: *Check, node: Node.Index) Allocator.Error!void {
     switch (check.tree.viewOf(node)) {
         .var_decl => try check.checkVarDecl(node),
         .assign => |assign| try check.checkAssign(assign),
-        .defer_stmt => |body| try check.checkDefer(body),
+        .defer_stmt => |deferred| try check.checkDefer(deferred),
         .err => {},
         // a void hint tells an `if` to drop its value
         else => {
@@ -1089,18 +1096,8 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
     const value = try check.checkExpr(view.init_expr, annotation);
 
     switch (value) {
-        .diverged => try check.declarePoisoned(name, node),
-        .poison => {
-            // a broken binding poisons its uses silently
-            try check.declareLocal(.{
-                .name = name,
-                .node = node,
-                .kind = .let_constant,
-                .payload = .{ .constant = .poison },
-                .type = .poison,
-            }, node);
-            return;
-        },
+        // a broken binding poisons its uses silently
+        .diverged, .poison => try check.declarePoisoned(name, node),
         .constant => {
             const met = if (annotation) |wanted|
                 try check.coerce(value, wanted, view.init_expr)
@@ -1266,7 +1263,7 @@ fn checkIf(
     view: AST.View.If,
     hint: ?Pool.Index,
 ) Allocator.Error!Value {
-    const builder = check.builder.?;
+    const builder = check.body();
     const entry_reachable = builder.reachable;
 
     const wants = wantsValue(hint);
@@ -1405,7 +1402,7 @@ fn storeArm(
 /// The one place a built instruction is rewritten. An `if` needs its slot
 /// before its arms have said what type it is.
 fn setSlotType(check: *Check, slot: Ref, value_type: Pool.Index) Allocator.Error!void {
-    const builder = check.builder.?;
+    const builder = check.body();
     const index = switch (slot.unwrap()) {
         .inst => |inst| inst.int(),
         .constant => unreachable,
@@ -1413,6 +1410,8 @@ fn setSlotType(check: *Check, slot: Ref, value_type: Pool.Index) Allocator.Error
     assert(builder.insts.items(.tag)[index] == .local);
     builder.insts.items(.type)[index] = try check.pointerTo(value_type, true);
 }
+
+// narrowing, the facts a condition proves
 
 const facts_max = 8;
 
@@ -1516,7 +1515,7 @@ fn factsOfIs(
 }
 
 fn applyFacts(check: *Check, facts: []const Fact) Allocator.Error!void {
-    const builder = check.builder.?;
+    const builder = check.body();
     for (facts) |fact| {
         const local = check.localAt(fact.local);
         const source: Ref = if (check.activeNarrow(fact.local)) |narrow|
@@ -1647,7 +1646,7 @@ fn checkReturn(
     node: Node.Index,
     operand: Node.OptionalIndex,
 ) Allocator.Error!Value {
-    const builder = check.builder.?;
+    const builder = check.body();
     if (builder.in_defer) {
         try check.fail(node, .{
             .code = .defer_cannot_leave,
@@ -1693,7 +1692,7 @@ fn checkReturn(
 }
 
 fn checkLoopJump(check: *Check, node: Node.Index) Allocator.Error!Value {
-    if (check.builder.?.in_defer) {
+    if (check.body().in_defer) {
         try check.fail(node, .{
             .code = .defer_cannot_leave,
             .message = "a 'defer' runs on the way out, so it cannot leave again",
@@ -1709,8 +1708,8 @@ fn checkLoopJump(check: *Check, node: Node.Index) Allocator.Error!Value {
     return .poison;
 }
 
-fn checkDefer(check: *Check, body: Node.Index) Allocator.Error!void {
-    try check.builder.?.defer_nodes.append(check.comp.gpa, body);
+fn checkDefer(check: *Check, deferred: Node.Index) Allocator.Error!void {
+    try check.body().defer_nodes.append(check.comp.gpa, deferred);
 }
 
 /// A statement expression must amount to nothing.
@@ -1842,9 +1841,8 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
         .let => {
-            try comp.ensure(.forDecl(decl_index), check.origin(node));
-            if (comp.declAt(decl_index).state != .done) return .poison;
-            return .{ .constant = @enumFromInt(comp.declAt(decl_index).result) };
+            const result = try check.ensured(decl_index, node) orelse return .poison;
+            return .{ .constant = @enumFromInt(result) };
         },
         .fn_decl => return .{ .named_fn = decl_index },
         .struct_decl => {
@@ -1853,9 +1851,8 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             return .{ .named_type = comp.instanceType(instance) };
         },
         .type_alias => {
-            try comp.ensure(.forDecl(decl_index), check.origin(node));
-            if (comp.declAt(decl_index).state != .done) return .poison;
-            return .{ .named_type = @enumFromInt(comp.declAt(decl_index).result) };
+            const result = try check.ensured(decl_index, node) orelse return .poison;
+            return .{ .named_type = @enumFromInt(result) };
         },
         // a unit type in a value position is its one value
         .unit_decl => {
@@ -1864,8 +1861,7 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             return .{ .constant = value };
         },
         .import => {
-            try comp.ensure(.forDecl(decl_index), check.origin(node));
-            if (comp.declAt(decl_index).state != .done) return .poison;
+            if (try check.ensured(decl_index, node) == null) return .poison;
             switch (Module.importTarget(comp, decl_index)) {
                 .module => |target| return .{ .named_module = target },
                 .decl => |target| return check.declAsValue(target, node),
@@ -2143,7 +2139,7 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     const slot = try check.emitSlot(.empty, bools);
     try check.emitStore(slot, refOf(lhs_met));
 
-    const entry_reachable = check.builder.?.reachable;
+    const entry_reachable = check.body().reachable;
     const rhs_block = try check.newBlock();
     const join = try check.newBlock();
     check.endBlock(.{ .branch = .{
@@ -2155,17 +2151,17 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     check.startBlock(rhs_block);
     // the right side runs knowing the left held, so its proof holds here
     var facts: Facts = .{};
-    const narrows_mark = check.builder.?.narrows.items.len;
+    const narrows_mark = check.body().narrows.items.len;
     try check.gatherWhenTrue(view.lhs, &facts.when_true);
     try check.applyFacts(facts.when_true.slice());
     const rhs = try check.checkExpr(view.rhs, null);
     const rhs_met = try check.coerce(rhs, bools, view.rhs);
     if (rhs_met != .diverged) try check.emitStore(slot, refOf(rhs_met));
-    check.builder.?.narrows.shrinkRetainingCapacity(narrows_mark);
+    check.body().narrows.shrinkRetainingCapacity(narrows_mark);
     if (check.blockOpen()) check.endBlock(.{ .jump = join });
 
     check.startBlock(join);
-    check.builder.?.reachable = entry_reachable;
+    check.body().reachable = entry_reachable;
     const loaded = try check.emitOne(.load, bools, slot);
     return runtimeValue(loaded, bools);
 }
@@ -2229,7 +2225,7 @@ fn checkOrSplit(
     binder: Node.OptionalIndex,
 ) Allocator.Error!Value {
     const comp = check.comp;
-    const builder = check.builder.?;
+    const builder = check.body();
     const first = comp.pool.unionMemberAt(lhs_type, 0);
     const rest = try comp.pool.unionWithout(comp.gpa, lhs_type, first);
 
@@ -2260,7 +2256,10 @@ fn checkOrSplit(
         try check.gatherFacts(lhs_node, &facts);
         try check.applyFacts(facts.when_false.slice());
 
-        if (binder.unwrap()) |binder_node| try check.bindRest(binder_node, lhs, rest);
+        if (binder.unwrap()) |binder_node| {
+            try check.pushScope();
+            try check.bindRest(binder_node, lhs, rest);
+        }
         const rhs = try check.checkExpr(rhs_node, first);
         if (binder != .none) check.popScope();
 
@@ -2288,8 +2287,8 @@ fn checkOrSplit(
 /// A bare `return` after `or`, in a function with something to send up.
 fn orPropagates(check: *const Check, node: Node.Index) bool {
     if (check.tree.nodeTag(node) != .return_expr) return false;
-    if (check.builder.?.return_type == .void_type) return false;
-    if (check.builder.?.in_defer) return false;
+    if (check.body().return_type == .void_type) return false;
+    if (check.body().in_defer) return false;
     return check.tree.viewOf(node).return_expr == .none;
 }
 
@@ -2299,7 +2298,6 @@ fn bindRest(
     lhs: Ref,
     rest: Pool.Index,
 ) Allocator.Error!void {
-    try check.pushScope();
     const text = check.tree.tokenSlice(check.tree.nodeMainToken(binder_node));
     if (std.mem.eql(u8, text, "_")) {
         try check.fail(binder_node, .{
@@ -2608,15 +2606,11 @@ fn suggestField(
     name_text: []const u8,
 ) Allocator.Error!?[]const u8 {
     const comp = check.comp;
-    var best: ?[]const u8 = null;
-    var best_distance: u32 = 3;
-
+    var closest: edit_distance.Closest = .{ .target = name_text };
     for (comp.instanceRows(instance)) |row| {
-        const candidate = comp.pool.stringText(row.name);
-        considerName(candidate, name_text, &best, &best_distance);
+        closest.consider(comp.pool.stringText(row.name));
     }
-    const found = best orelse return null;
-    return try comp.fmt("did you mean '{s}'?", .{found});
+    return comp.didYouMean(closest);
 }
 
 fn checkDeref(check: *Check, node: Node.Index) Allocator.Error!Value {
@@ -2698,7 +2692,7 @@ fn checkStructLiteral(check: *Check, node: Node.Index) Allocator.Error!Value {
     const rows = comp.instanceAt(instance).rows;
 
     // one slot per field, in declaration order
-    const builder = check.builder.?;
+    const builder = check.body();
     const start: u32 = @intCast(builder.operands.items.len);
     defer builder.operands.shrinkRetainingCapacity(start);
     try builder.operands.appendNTimes(comp.gpa, .{ .value = .poison, .initializer = .none }, rows.len);
@@ -2771,7 +2765,7 @@ fn emitExtra(
     header: []const u32,
     operands: []const Builder.Operand,
 ) Allocator.Error!IR.ExtraIndex {
-    const builder = check.builder.?;
+    const builder = check.body();
     if (builder.extra.items.len + header.len + operands.len > std.math.maxInt(u32)) {
         return error.OutOfMemory;
     }
@@ -3022,7 +3016,7 @@ fn checkCallResolved(
     args: []const Node.Index,
 ) Allocator.Error!Value {
     const comp = check.comp;
-    const builder = check.builder.?;
+    const builder = check.body();
 
     // the receiver is written first, so it is evaluated first
     var receiver_place: ?Place = null;
@@ -3279,12 +3273,9 @@ fn failIntrinsicNotValue(check: *Check, node: Node.Index) Allocator.Error!void {
 }
 
 fn suggestIntrinsic(check: *Check, text: []const u8) Allocator.Error!?[]const u8 {
-    var best: ?[]const u8 = null;
-    var best_distance: u32 = 3;
-
-    for (Intrinsic.names) |candidate| considerName(candidate, text, &best, &best_distance);
-    const found = best orelse return null;
-    return try check.comp.fmt("did you mean '{s}'?", .{found});
+    var closest: edit_distance.Closest = .{ .target = text };
+    for (Intrinsic.names) |candidate| closest.consider(candidate);
+    return check.comp.didYouMean(closest);
 }
 
 fn plural(count: u32) []const u8 {
@@ -3334,7 +3325,7 @@ fn inferTypeArguments(
     out: []Pool.Index,
 ) Allocator.Error!bool {
     const comp = check.comp;
-    const builder = check.builder.?;
+    const builder = check.body();
     const decl = comp.declAt(decl_index);
     const owner_tree = comp.treeOf(decl.module);
     const fn_view = owner_tree.viewOf(decl.node).fn_decl;
@@ -3992,31 +3983,6 @@ fn fitValue(
     };
 }
 
-/// The result must stay a constant, for a top level binding.
-fn fitConstant(
-    check: *Check,
-    constant: Pool.Index,
-    wanted: Pool.Index,
-    node: Node.Index,
-) Allocator.Error!Pool.Index {
-    const comp = check.comp;
-    if (constant == .poison) return .poison;
-    if (wanted == .poison) return .poison;
-
-    const met = try comp.pool.fit(comp.gpa, constant, wanted);
-    switch (met) {
-        .value => |final| return final,
-        .does_not_fit => {
-            try check.reportDoesNotFit(node, constant, wanted);
-            return .poison;
-        },
-        .wrong_kind => {
-            _ = try check.reportMismatch(node, .{ .constant = constant }, wanted);
-            return .poison;
-        },
-    }
-}
-
 fn reportDoesNotFit(
     check: *Check,
     node: Node.Index,
@@ -4161,34 +4127,24 @@ fn reportUndefined(check: *Check, node: Node.Index, text: []const u8) Allocator.
 /// Among locals, type parameters, this file's declarations, and the prelude.
 fn suggestName(check: *Check, text: []const u8) Allocator.Error!?[]const u8 {
     const comp = check.comp;
-    var best: ?[]const u8 = null;
-    var best_distance: u32 = 3;
+    var closest: edit_distance.Closest = .{ .target = text };
 
     if (check.builder) |builder| {
         for (builder.locals.items) |local| {
-            considerName(comp.pool.stringText(local.name), text, &best, &best_distance);
+            closest.consider(comp.pool.stringText(local.name));
         }
     }
     for (check.bindings) |binding| {
-        considerName(comp.pool.stringText(binding.name), text, &best, &best_distance);
+        closest.consider(comp.pool.stringText(binding.name));
     }
     const decls_end = check.module.decls.end();
     for (comp.decls.items[check.module.decls.start..decls_end]) |decl| {
         if (decl.owner != .none) continue;
-        considerName(comp.pool.stringText(decl.name), text, &best, &best_distance);
+        closest.consider(comp.pool.stringText(decl.name));
     }
-    for (Pool.prelude_names) |name| considerName(name, text, &best, &best_distance);
+    for (Pool.prelude_names) |name| closest.consider(name);
 
-    const found = best orelse return null;
-    return try comp.fmt("did you mean '{s}'?", .{found});
-}
-
-fn considerName(candidate: []const u8, text: []const u8, best: *?[]const u8, distance: *u32) void {
-    const measured = edit_distance.between(text, candidate);
-    if (measured < distance.*) {
-        distance.* = measured;
-        best.* = candidate;
-    }
+    return comp.didYouMean(closest);
 }
 
 fn origin(check: *const Check, node: Node.Index) Compilation.Origin {
@@ -4206,7 +4162,7 @@ fn failToken(check: *Check, token: Token.Index, report: Compilation.Report) Allo
 /// Blocks nothing jumps to are dropped, then the body is committed.
 fn finishFunc(check: *Check) Allocator.Error!void {
     const comp = check.comp;
-    const builder = check.builder.?;
+    const builder = check.body();
     const block_count = builder.blocks.items.len;
     assert(block_count > 0);
 
