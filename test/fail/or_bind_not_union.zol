@@ -1,0 +1,7 @@
+fn guard(flag: bool) u32 {
+    let x = flag or e {
+        _ = e
+        return 0
+    }
+    return x
+}

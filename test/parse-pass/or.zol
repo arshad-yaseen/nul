@@ -1,0 +1,14 @@
+type none
+
+fn forms(r: u32 | none, flag: bool, other: bool) u32 {
+    let direct = r or 0
+    let handled = r or e {
+        _ = e
+        1
+    }
+    if flag or other {
+        return direct
+    }
+    r is u32 or return 0
+    return handled
+}

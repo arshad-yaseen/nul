@@ -147,6 +147,8 @@ pub const Node = struct {
         unary,
         /// `e is T` and `e is not T`, negation read off the token after `is`.
         is_expr,
+        /// `e or name { ... }`, the handler form of `or`.
+        or_bind,
 
         pointer_type,
         /// `A | B`, only in type position. Members are never unions.
@@ -362,6 +364,7 @@ pub const View = union(enum) {
     binary: Binary,
     unary: Unary,
     is_expr: Is,
+    or_bind: OrBind,
 
     pointer_type: Pointer,
     union_type: []const Node.Index,
@@ -426,6 +429,7 @@ pub const View = union(enum) {
     };
     pub const Unary = struct { op: UnaryOp, op_token: Token.Index, operand: Node.Index };
     pub const Is = struct { negated: bool, operand: Node.Index, type_expr: Node.Index };
+    pub const OrBind = struct { lhs: Node.Index, binder: Node.Index, block: Node.Index };
 };
 
 pub fn viewOf(tree: AST, node: Node.Index) View {
@@ -551,6 +555,14 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
             .operand = data.node_and_node[0],
             .type_expr = data.node_and_node[1],
         } },
+        .or_bind => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .or_bind = .{
+                .lhs = payload.node(),
+                .binder = payload.node(),
+                .block = payload.node(),
+            } };
+        },
 
         .pointer_type => .{ .pointer_type = .{
             .is_mutable = tree.tokenTag(main.after(1)) == .kw_var,
@@ -782,6 +794,9 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             },
             .is_expr => |it| {
                 current = if (side == .leftmost) it.operand else it.type_expr;
+            },
+            .or_bind => |it| {
+                current = if (side == .leftmost) it.lhs else it.block;
             },
             .unary => |it| switch (side) {
                 .leftmost => return it.op_token,

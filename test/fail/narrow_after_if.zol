@@ -1,0 +1,8 @@
+type none
+
+fn after(r: u32 | none) u32 {
+    if r is not u32 {
+        return 0
+    }
+    return r
+}

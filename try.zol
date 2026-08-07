@@ -81,14 +81,10 @@ fn grade(level: Channel) Reading {
 }
 
 fn settle(level: Channel) Channel {
+    let eased = grade(level) or 1
     let read = grade(level)
-    if read is Channel and read > 0 {
-        return read
-    }
-    if read is not Clipped {
-        return 0
-    }
-    return 255
+    read is Channel or return eased
+    return read
 }
 
 fn shade(level: Channel) i64 {

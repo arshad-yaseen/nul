@@ -989,6 +989,9 @@ fn checkBlockValue(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator
     const depth: u32 = @intCast(builder.scopes.items.len - 1);
     defer check.popScope();
 
+    const narrows_mark = builder.narrows.items.len;
+    defer builder.narrows.shrinkRetainingCapacity(narrows_mark);
+
     var value: Value = .void_value;
     for (statements, 0..) |statement, position| {
         if (check.blockOpen() == false or builder.reachable == false) {
@@ -1039,9 +1042,27 @@ fn checkStatement(check: *Check, node: Node.Index) Allocator.Error!void {
         // a void hint tells an `if` to drop its value
         else => {
             const value = try check.checkExpr(node, .void_type);
+            if (check.guardStatement(node)) |lhs| {
+                var facts: Facts = .{};
+                try check.gatherFacts(lhs, &facts);
+                try check.applyFacts(facts.when_true.slice());
+                return;
+            }
             try check.expectNothing(node, value);
         },
     }
+}
+
+/// `a or return`, standing alone. Its value is the proof, and what the left
+/// side settled holds for the rest of the block.
+fn guardStatement(check: *const Check, node: Node.Index) ?Node.Index {
+    if (check.tree.nodeTag(node) != .binary) return null;
+    const view = check.tree.viewOf(node).binary;
+    if (view.op != .bool_or) return null;
+    return switch (check.tree.nodeTag(view.rhs)) {
+        .return_expr, .break_expr, .continue_expr => view.lhs,
+        else => null,
+    };
 }
 
 fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
@@ -1703,6 +1724,7 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .binary => |view| return check.checkBinary(view),
         .unary => |view| return check.checkUnary(view),
         .is_expr => |view| return check.checkIs(node, view),
+        .or_bind => |view| return check.checkOrBind(node, view),
         .field_access => |view| return check.checkFieldAccess(node, view),
         .deref => return check.checkDeref(node),
         .call => return check.checkCall(node),
@@ -1868,9 +1890,8 @@ const Operation = struct {
 };
 
 fn checkBinary(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
-    if (view.op == .bool_and or view.op == .bool_or) {
-        return check.checkShortCircuit(view);
-    }
+    if (view.op == .bool_and) return check.checkShortCircuit(view);
+    if (view.op == .bool_or) return check.checkOr(view);
 
     const lhs = try check.checkExpr(view.lhs, null);
     const rhs = try check.checkExpr(view.rhs, null);
@@ -2029,7 +2050,135 @@ fn emitBinary(check: *Check, it: Operation) Allocator.Error!Value {
 
 /// `and` and `or` are control flow, so the lowering is a branch and a slot.
 fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
+    assert(view.op == .bool_and);
     const lhs = try check.checkExpr(view.lhs, null);
+    return check.shortCircuitWith(lhs, view);
+}
+
+/// `e or f` splits a union at its first member. On a bool that degenerates
+/// to logical or, and `and` is always this.
+fn checkOr(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
+    assert(view.op == .bool_or);
+    const lhs = try check.checkExpr(view.lhs, null);
+    if (lhs == .diverged) return .diverged;
+
+    const found = check.typeOf(lhs);
+    if (check.comp.pool.isUnion(found)) {
+        return check.checkOrSplit(refOf(lhs), found, view.rhs, .none);
+    }
+    return check.shortCircuitWith(lhs, view);
+}
+
+fn checkOrBind(check: *Check, node: Node.Index, view: AST.View.OrBind) Allocator.Error!Value {
+    const comp = check.comp;
+    const lhs = try check.checkExpr(view.lhs, null);
+    if (lhs == .diverged) return .diverged;
+    if (lhs == .poison) return .poison;
+    if (try check.valueOnly(view.lhs, lhs) == false) return .poison;
+
+    const found = check.typeOf(lhs);
+    if (comp.pool.isUnion(found) == false) {
+        try check.fail(node, .{
+            .code = .not_a_union,
+            .message = try comp.fmt("'or' with a handler splits a union, and this is {s}", .{
+                try comp.typeName(found),
+            }),
+            .label = "not a union",
+        });
+        return .poison;
+    }
+    return check.checkOrSplit(refOf(lhs), found, view.block, view.binder.toOptional());
+}
+
+/// The first member, or else the right side, which sees the rest through
+/// the binder when the handler form wrote one.
+fn checkOrSplit(
+    check: *Check,
+    lhs: Ref,
+    lhs_type: Pool.Index,
+    rhs_node: Node.Index,
+    binder: Node.OptionalIndex,
+) Allocator.Error!Value {
+    const comp = check.comp;
+    const builder = check.builder.?;
+    const first = comp.pool.unionMemberAt(lhs_type, 0);
+    const rest = try comp.pool.unionWithout(comp.gpa, lhs_type, first);
+
+    const held = try check.emit(.union_is, .bool_type, .{
+        .probe = .{ .operand = lhs, .member = first },
+    });
+    const slot = try check.emitSlot(.empty, first);
+    const narrowed = try check.emitOne(.union_narrow, first, lhs);
+    try check.emitStore(slot, narrowed);
+
+    const entry_reachable = builder.reachable;
+    const rhs_block = try check.newBlock();
+    const join = try check.newBlock();
+    check.endBlock(.{ .branch = .{
+        .cond = held,
+        .then_block = join,
+        .else_block = rhs_block,
+    } });
+
+    check.startBlock(rhs_block);
+    if (binder == .none and check.orPropagates(rhs_node)) {
+        // `or return` sends the rest up, unchanged
+        const rest_value = try check.emitOne(.union_narrow, rest, lhs);
+        const met = try check.coerce(runtimeValue(rest_value, rest), builder.return_type, rhs_node);
+        try check.unwindScopesTo(0);
+        check.endBlock(.{ .ret = refOf(met) });
+    } else {
+        if (binder.unwrap()) |binder_node| try check.bindRest(binder_node, lhs, rest);
+        const rhs = try check.checkExpr(rhs_node, first);
+        const met = try check.coerce(rhs, first, rhs_node);
+        if (binder != .none) check.popScope();
+        if (met != .diverged) try check.emitStore(slot, refOf(met));
+        if (check.blockOpen()) check.endBlock(.{ .jump = join });
+    }
+
+    check.startBlock(join);
+    builder.reachable = entry_reachable;
+    const loaded = try check.emitOne(.load, first, slot);
+    return runtimeValue(loaded, first);
+}
+
+/// A bare `return` after `or`, in a function with something to send up.
+fn orPropagates(check: *const Check, node: Node.Index) bool {
+    if (check.tree.nodeTag(node) != .return_expr) return false;
+    if (check.builder.?.return_type == .void_type) return false;
+    if (check.builder.?.in_defer) return false;
+    return check.tree.viewOf(node).return_expr == .none;
+}
+
+fn bindRest(
+    check: *Check,
+    binder_node: Node.Index,
+    lhs: Ref,
+    rest: Pool.Index,
+) Allocator.Error!void {
+    try check.pushScope();
+    const text = check.tree.tokenSlice(check.tree.nodeMainToken(binder_node));
+    if (std.mem.eql(u8, text, "_")) {
+        try check.fail(binder_node, .{
+            .code = .discard_reserved,
+            .message = "'_' cannot be bound, because it is how a value is discarded",
+            .label = "not a name",
+        });
+        return;
+    }
+    const name = try check.comp.pool.string(check.comp.gpa, text);
+    const ref = try check.emitOne(.union_narrow, rest, lhs);
+    try check.declareLocal(.{
+        .name = name,
+        .node = binder_node,
+        .kind = .let_value,
+        .payload = .{ .ref = ref },
+        .type = rest,
+    }, binder_node);
+}
+
+/// `or` that reached a bool, and every `and`.
+fn shortCircuitWith(check: *Check, lhs: Value, view: AST.View.Binary) Allocator.Error!Value {
     const lhs_met = try check.coerce(lhs, .bool_type, view.lhs);
     if (lhs_met == .poison) {
         _ = try check.checkExpr(view.rhs, null);
@@ -2058,6 +2207,7 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     const slot = try check.emitSlot(.empty, .bool_type);
     try check.emitStore(slot, refOf(lhs_met));
 
+    const entry_reachable = check.builder.?.reachable;
     const rhs_block = try check.newBlock();
     const join = try check.newBlock();
     check.endBlock(.{ .branch = switch (view.op) {
@@ -2083,11 +2233,12 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     }
     const rhs = try check.checkExpr(view.rhs, null);
     const rhs_met = try check.coerce(rhs, .bool_type, view.rhs);
-    try check.emitStore(slot, refOf(rhs_met));
+    if (rhs_met != .diverged) try check.emitStore(slot, refOf(rhs_met));
     check.builder.?.narrows.shrinkRetainingCapacity(narrows_mark);
-    check.endBlock(.{ .jump = join });
+    if (check.blockOpen()) check.endBlock(.{ .jump = join });
 
     check.startBlock(join);
+    check.builder.?.reachable = entry_reachable;
     const loaded = try check.emitOne(.load, .bool_type, slot);
     return runtimeValue(loaded, .bool_type);
 }
@@ -3821,8 +3972,10 @@ fn reportMismatch(
         comp.pool.isUnion(found) and comp.pool.isUnion(wanted) == false and
         comp.pool.unionHas(found, wanted);
     const help: []const u8 = if (narrowable)
-        try comp.fmt("an 'is' branch narrows this to {s} on a 'let' or a parameter, " ++
-            "never on a 'var'", .{try comp.typeName(wanted)})
+        try comp.fmt("narrow it first, with a guard 'is {s} or return' or inside " ++
+            "the branch that proved it, and never through a 'var'", .{
+            try comp.typeName(wanted),
+        })
     else
         "nothing converts on its own";
 
@@ -3859,6 +4012,7 @@ fn runtimeOnly(tag: Node.Tag) ?[]const u8 {
         .struct_literal => "a struct literal",
         .deref => "reading through a pointer",
         .is_expr => "an 'is' test",
+        .or_bind => "an 'or' handler",
         else => null,
     };
 }

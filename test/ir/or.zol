@@ -1,0 +1,54 @@
+type none
+type Timeout
+type NotFound
+
+type LoadError = Timeout | NotFound
+
+fn fetch(flag: bool) u32 | Timeout | NotFound {
+    if flag {
+        return 1
+    }
+    return Timeout
+}
+
+fn lookup(flag: bool) u32 | none {
+    if flag {
+        return 7
+    }
+    return none
+}
+
+fn substitute(flag: bool) u32 {
+    return lookup(flag) or 8080
+}
+
+fn propagate(flag: bool) u32 | Timeout | NotFound {
+    let value = fetch(flag) or return
+    return value + 1
+}
+
+fn consume(errors: LoadError) u32 {
+    _ = errors
+    return 9
+}
+
+fn handle(flag: bool) u32 {
+    let value = fetch(flag) or e {
+        consume(e)
+    }
+    return value
+}
+
+fn handle_leaving(flag: bool) u32 {
+    let value = fetch(flag) or e {
+        _ = e
+        return 0
+    }
+    return value
+}
+
+fn guarded(flag: bool) u32 {
+    let r = lookup(flag)
+    r is u32 or return 0
+    return r
+}

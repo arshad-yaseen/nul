@@ -32,6 +32,8 @@ extra: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Diagnostic),
 depth: u32,
+/// In an `if` header, where a block after `or` belongs to the `if`.
+in_condition: bool,
 /// Set when the parser gave up.
 bailed: bool,
 
@@ -60,6 +62,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
         .scratch = .empty,
         .errors = .empty,
         .depth = 0,
+        .in_condition = false,
         .bailed = false,
     };
     defer parse.scratch.deinit(gpa);
@@ -898,7 +901,10 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     defer self.leave();
 
     const if_token = self.nextToken();
+    const outer = self.in_condition;
+    self.in_condition = true;
     const cond = try self.parseExpr();
+    self.in_condition = outer;
     const then_block = try self.parseBlock();
     const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
         (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
@@ -952,7 +958,26 @@ fn parseExprPrec(self: *Parse, min_prec: u8) Allocator.Error!Node.Index {
         if (info.prec == banned_prec) try self.errChainedComparison();
 
         const op_token = self.nextToken();
-        node = try self.addPair(.binary, op_token, node, try self.parseExprPrec(info.prec + 1));
+        const rhs = try self.parseExprPrec(info.prec + 1);
+
+        // a bare name and a block after `or` is the handler form
+        if (op_tag == .kw_or and self.at(.l_brace) and self.in_condition == false and
+            self.nodes.items(.tag)[@intFromEnum(rhs)] == .ident)
+        {
+            const block = try self.parseBlock();
+            const start = self.extraStart();
+            try self.extraNode(node);
+            try self.extraNode(rhs);
+            try self.extraNode(block);
+            node = try self.addNode(.{
+                .tag = .or_bind,
+                .main_token = op_token,
+                .data = .{ .extra = start },
+            });
+            banned_prec = 0;
+            continue;
+        }
+        node = try self.addPair(.binary, op_token, node, rhs);
 
         banned_prec = if (info.assoc == .none) info.prec else 0;
     }
@@ -1120,7 +1145,10 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         // parentheses group, and the tree already holds the grouping
         .l_paren => {
             const lparen = self.nextToken();
+            const outer = self.in_condition;
+            self.in_condition = false;
             const inner = try self.parseExpr();
+            self.in_condition = outer;
             try self.expectClosing(.r_paren, lparen);
             return inner;
         },

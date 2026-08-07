@@ -1,0 +1,41 @@
+root
+  unit_decl none
+  fn_decl forms
+    param r
+      type: union_type
+        ident u32
+        ident none
+    param flag
+      type: ident bool
+    param other
+      type: ident bool
+    ret: ident u32
+    body: block
+      var_decl direct let
+        init: binary bool_or
+          lhs: ident r
+          rhs: number_literal 0
+      var_decl handled let
+        init: or_bind
+          lhs: ident r
+          binds: ident e
+          handler: block
+            assign =
+              lhs: ident _
+              rhs: ident e
+            number_literal 1
+      if_expr
+        cond: binary bool_or
+          lhs: ident flag
+          rhs: ident other
+        then: block
+          return_expr
+            value: ident direct
+      binary bool_or
+        lhs: is_expr
+          operand: ident r
+          type: ident u32
+        rhs: return_expr
+          value: number_literal 0
+      return_expr
+        value: ident handled

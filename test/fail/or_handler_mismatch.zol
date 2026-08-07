@@ -1,0 +1,8 @@
+type none
+
+fn take(r: u32 | none) u32 {
+    return r or e {
+        _ = e
+        3.5
+    }
+}

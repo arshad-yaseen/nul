@@ -1,0 +1,6 @@
+type none
+
+fn drop(r: u32 | none) u32 {
+    r or 0
+    return 1
+}

@@ -72,6 +72,14 @@ than retrofitted.
   and parameters only, in both arms, holding across `and`, and to the
   rest of the union where a member was denied. A `var` never narrows, so
   bind it to a `let` first.
+- `e or f` on a union is the first member of `e`, or else `f`. `or 8080`
+  substitutes, `or return` sends the rest up unchanged, `or e { ... }`
+  binds the rest and handles it, and `or` on a bool stays logical or.
+  `E0256` refuses the handler form off a union.
+- An `or` that ends in `return`, `break`, or `continue` may stand as a
+  statement, and what it proved holds for the rest of the block: after
+  `r is u32 or return 0`, `r` is `u32`. The guard is the one way to carry
+  a proof forward, so a branch that leaves narrows nothing past itself.
 - Every commit on `main` that passes CI is now cross-compiled and published as
   a dev build, under the version it reports, at the `dev` tag. Numbered
   releases stay the only supported builds. Both channels ship an `index.json`

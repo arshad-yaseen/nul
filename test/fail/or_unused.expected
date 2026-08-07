@@ -1,0 +1,8 @@
+error[E0230]: this u32 goes nowhere
+ --> test/fail/or_unused.zol:4:5
+  |
+4 |     r or 0
+  |     ^^^^^^ unused value
+  |
+  = help: bind it, return it, or drop it with '_ ='
+

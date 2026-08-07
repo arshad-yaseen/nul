@@ -158,6 +158,12 @@ fn node(
             try node(ast, writer, it.operand, below, "operand");
             try node(ast, writer, it.type_expr, below, "type");
         },
+        .or_bind => |it| {
+            try writer.writeByte('\n');
+            try node(ast, writer, it.lhs, below, "lhs");
+            try node(ast, writer, it.binder, below, "binds");
+            try node(ast, writer, it.block, below, "handler");
+        },
         .pointer_type => |it| {
             try flag(writer, it.is_mutable, "var");
             try writer.writeByte('\n');
