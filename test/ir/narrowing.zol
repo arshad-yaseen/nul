@@ -59,3 +59,11 @@ fn rest(flag: bool) u32 {
         return r
     }
 }
+
+fn after_if(flag: bool) u32 {
+    let r = find(flag)
+    if r is not u32 {
+        return 0
+    }
+    return r
+}

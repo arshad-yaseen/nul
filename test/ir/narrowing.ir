@@ -73,6 +73,7 @@ b1:
 b2:
   jump b3
 b3:
+  %5 = union_narrow %1 : none
   return 0:u32
 
 fn fetch(flag: bool) u32 | Timeout | none
@@ -99,5 +100,21 @@ b1:
   %4 = union_narrow %1 : Timeout | none
   return 0:u32
 b2:
+  %5 = union_narrow %1 : u32
+  return %5
+
+fn after_if(flag: bool) u32
+b0:
+  %0 = param flag : bool
+  %1 = call find(%0) : u32 | none
+  %2 = union_is %1, u32 : bool
+  %3 = not %2 : bool
+  branch %3, b1, b2
+b1:
+  %4 = union_narrow %1 : none
+  return 0:u32
+b2:
+  jump b3
+b3:
   %5 = union_narrow %1 : u32
   return %5

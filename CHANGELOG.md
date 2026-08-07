@@ -78,8 +78,8 @@ than retrofitted.
   `E0256` refuses the handler form off a union.
 - An `or` that ends in `return`, `break`, or `continue` may stand as a
   statement, and what it proved holds for the rest of the block: after
-  `r is u32 or return 0`, `r` is `u32`. The guard is the one way to carry
-  a proof forward, so a branch that leaves narrows nothing past itself.
+  `r is u32 or return 0`, `r` is `u32`. A branch that leaves narrows the
+  same way, so `if r is not u32 { return 0 }` leaves `r` a `u32`.
 - Every commit on `main` that passes CI is now cross-compiled and published as
   a dev build, under the version it reports, at the `dev` tag. Numbered
   releases stay the only supported builds. Both channels ship an `index.json`

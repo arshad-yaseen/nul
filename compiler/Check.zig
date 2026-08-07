@@ -1346,6 +1346,14 @@ fn checkIf(
     check.startBlock(join);
     builder.reachable = join_reachable;
 
+    // one door into the join leaves its proof standing past the `if`
+    if (then_value == .diverged and (view.else_node == .none or else_value != .diverged)) {
+        try check.applyFacts(facts.when_false.slice());
+    }
+    if (then_value != .diverged and view.else_node != .none and else_value == .diverged) {
+        try check.applyFacts(facts.when_true.slice());
+    }
+
     if (carries == false) return .void_value;
 
     // a later stage reads every type, so the slot is typed on every path
