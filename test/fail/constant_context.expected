@@ -1,47 +1,47 @@
 error[E0214]: a top-level binding must be a constant, and an 'if' happens at run time
- --> test/fail/constant_context.zol:5:16
+ --> test/fail/constant_context.zol:9:16
   |
-5 | let branched = if true { 1 } else { 2 }
+9 | let branched = if true { 1 } else { 2 }
   |                ^^^^^^^^^^^^^^^^^^^^^^ not a constant
   |
   = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and 'return' happens at run time
- --> test/fail/constant_context.zol:6:12
-  |
-6 | let left = return 1
-  |            ^^^^^^^^ not a constant
-  |
-  = help: the constant set is literals, names of constants, operators, and parentheses
+  --> test/fail/constant_context.zol:10:12
+   |
+10 | let left = return 1
+   |            ^^^^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and 'break' happens at run time
- --> test/fail/constant_context.zol:7:15
-  |
-7 | let escaped = break
-  |               ^^^^^ not a constant
-  |
-  = help: the constant set is literals, names of constants, operators, and parentheses
+  --> test/fail/constant_context.zol:11:15
+   |
+11 | let escaped = break
+   |               ^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and 'continue' happens at run time
- --> test/fail/constant_context.zol:8:15
-  |
-8 | let carried = continue
-  |               ^^^^^^^^ not a constant
-  |
-  = help: the constant set is literals, names of constants, operators, and parentheses
+  --> test/fail/constant_context.zol:12:15
+   |
+12 | let carried = continue
+   |               ^^^^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and a call happens at run time
- --> test/fail/constant_context.zol:9:14
-  |
-9 | let called = answer()
-  |              ^^^^^^^^ not a constant
-  |
-  = help: the constant set is literals, names of constants, operators, and parentheses
+  --> test/fail/constant_context.zol:13:14
+   |
+13 | let called = answer()
+   |              ^^^^^^^^ not a constant
+   |
+   = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and a struct literal happens at run time
-  --> test/fail/constant_context.zol:10:13
+  --> test/fail/constant_context.zol:14:13
    |
-10 | let built = i64.{ x: 1 }
+14 | let built = i64.{ x: 1 }
    |             ^^^^^^^^^^ not a constant
    |
    = help: the constant set is literals, names of constants, operators, and parentheses

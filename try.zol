@@ -1,3 +1,7 @@
+type true
+type false
+type bool = true | false
+
 pub type Channel = u32
 type Cursor = *var Channel
 

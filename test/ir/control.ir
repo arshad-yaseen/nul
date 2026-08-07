@@ -1,69 +1,69 @@
 fn classify(value: i64) i64
 b0:
   %0 = param value : i64
-  %1 = cmp_gt %0, 100:i64 : bool
+  %1 = cmp_gt %0, 100:i64 : true | false
   branch %1, b1, b2
 b1:
   return 3:i64
 b2:
-  %2 = cmp_gt %0, 10:i64 : bool
+  %2 = cmp_gt %0, 10:i64 : true | false
   branch %2, b3, b4
 b3:
   return 2:i64
 b4:
-  %3 = cmp_gt %0, 0:i64 : bool
+  %3 = cmp_gt %0, 0:i64 : true | false
   branch %3, b5, b6
 b5:
   return 1:i64
 b6:
   return 0:i64
 
-fn shorted(a: bool, value: i64) bool
+fn shorted(a: true | false, value: i64) true | false
 b0:
-  %0 = param a : bool
+  %0 = param a : true | false
   %1 = param value : i64
-  %2 = local : *var bool
+  %2 = local : *var true | false
   %3 = store %2, %0
   branch %0, b1, b2
 b1:
-  %4 = cmp_gt %1, 0:i64 : bool
+  %4 = cmp_gt %1, 0:i64 : true | false
   %5 = store %2, %4
   jump b2
 b2:
-  %6 = load %2 : bool
-  %7 = local : *var bool
+  %6 = load %2 : true | false
+  %7 = local : *var true | false
   %8 = store %7, %0
   branch %0, b4, b3
 b3:
-  %9 = cmp_gt %1, 0:i64 : bool
+  %9 = cmp_gt %1, 0:i64 : true | false
   %10 = store %7, %9
   jump b4
 b4:
-  %11 = load %7 : bool
-  %12 = local : *var bool
+  %11 = load %7 : true | false
+  %12 = local : *var true | false
   %13 = store %12, %6
   branch %6, b6, b5
 b5:
-  %14 = local : *var bool
+  %14 = local : *var true | false
   %15 = store %14, %11
   branch %11, b7, b8
 b6:
-  %20 = load %12 : bool
-  %21 = local : *var bool
+  %20 = load %12 : true | false
+  %21 = local : *var true | false
   %22 = store %21, %20
   branch %20, b10, b9
 b7:
-  %16 = cmp_lt %1, 10:i64 : bool
+  %16 = cmp_lt %1, 10:i64 : true | false
   %17 = store %14, %16
   jump b8
 b8:
-  %18 = load %14 : bool
+  %18 = load %14 : true | false
   %19 = store %12, %18
   jump b6
 b9:
-  %23 = not %0 : bool
+  %23 = not %0 : true | false
   %24 = store %21, %23
   jump b10
 b10:
-  %25 = load %21 : bool
+  %25 = load %21 : true | false
   return %25

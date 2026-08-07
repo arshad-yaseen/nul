@@ -20,14 +20,14 @@ root
           type: ident u32
         then: block
           return_expr
-            value: bool_literal true
+            value: ident true
       if_expr
         cond: is_expr not
           operand: ident r
           type: ident none
         then: block
           return_expr
-            value: bool_literal true
+            value: ident true
       if_expr
         cond: binary bool_and
           lhs: is_expr
@@ -37,7 +37,7 @@ root
           rhs: ident flag
         then: block
           return_expr
-            value: bool_literal true
+            value: ident true
       var_decl direct let
         init: is_expr
           operand: ident r

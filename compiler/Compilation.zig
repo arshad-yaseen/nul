@@ -380,7 +380,9 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
         .rows, .signature, .body => "this definition goes in a circle",
     };
     const help: ?[]const u8 = switch (unit.kind) {
-        .embedding => try comp.fmt("break the cycle with a pointer: '*{s}'", .{name}),
+        .embedding => try comp.fmt("break the cycle with a pointer: '*{s}' or '*{s} | none'", .{
+            name, name,
+        }),
         else => null,
     };
 

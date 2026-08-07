@@ -1,3 +1,7 @@
+type true
+type false
+type bool = true | false
+
 type none
 
 fn hold(v: u32 | none) u32 {

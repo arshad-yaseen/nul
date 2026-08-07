@@ -24,7 +24,6 @@ pub const Tag = enum(u8) {
     kw_continue,
     kw_defer,
     kw_else,
-    kw_false,
     kw_fn,
     kw_if,
     kw_import,
@@ -35,7 +34,6 @@ pub const Tag = enum(u8) {
     kw_or,
     kw_pub,
     kw_return,
-    kw_true,
     kw_type,
     kw_var,
 
@@ -94,7 +92,6 @@ pub const Tag = enum(u8) {
             .kw_continue => "continue",
             .kw_defer => "defer",
             .kw_else => "else",
-            .kw_false => "false",
             .kw_fn => "fn",
             .kw_if => "if",
             .kw_import => "import",
@@ -105,7 +102,6 @@ pub const Tag = enum(u8) {
             .kw_or => "or",
             .kw_pub => "pub",
             .kw_return => "return",
-            .kw_true => "true",
             .kw_type => "type",
             .kw_var => "var",
 
@@ -221,7 +217,6 @@ pub fn endsStatement(tag: Tag) bool {
         .kw_intrinsic => true,
         .r_paren, .r_brace, .r_bracket => true,
         .dot_star => true,
-        .kw_true, .kw_false => true,
         .kw_return, .kw_break, .kw_continue => true,
         else => false,
     };

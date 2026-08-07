@@ -1,7 +1,7 @@
 error[E0231]: not every path through 'sometimes' returns its i64
- --> test/fail/missing_return.zol:1:4
+ --> test/fail/missing_return.zol:5:4
   |
-1 | fn sometimes(flag: bool) i64 {
+5 | fn sometimes(flag: bool) i64 {
   |    ^^^^^^^^^ a path falls off the end
   |
   = help: every path must end in 'return', or loop forever

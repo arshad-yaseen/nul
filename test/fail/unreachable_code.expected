@@ -1,22 +1,22 @@
 error[E0250]: this cannot be reached
- --> test/fail/unreachable_code.zol:3:5
+ --> test/fail/unreachable_code.zol:7:5
   |
-3 |     let ignored = a + 1
+7 |     let ignored = a + 1
   |     ^^^^^^^^^^^^^^^^^^^ never runs
 note: the block already left here
- --> test/fail/unreachable_code.zol:2:5
+ --> test/fail/unreachable_code.zol:6:5
   |
-2 |     return 1
+6 |     return 1
   |     ^^^^^^^^
 
 error[E0250]: this cannot be reached
-  --> test/fail/unreachable_code.zol:13:5
+  --> test/fail/unreachable_code.zol:17:5
    |
-13 |     let ignored = 3
+17 |     let ignored = 3
    |     ^^^^^^^^^^^^^^^ never runs
 note: the block already left here
-  --> test/fail/unreachable_code.zol:8:5
+  --> test/fail/unreachable_code.zol:12:5
    |
- 8 |     if c {
+12 |     if c {
    |     ^^^^^^
 

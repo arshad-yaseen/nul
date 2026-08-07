@@ -1,6 +1,8 @@
-error[E0256]: 'or' with a handler splits a union, and this is bool
- --> test/fail/or_bind_not_union.zol:2:13
-  |
-2 |     let x = flag or e {
-  |             ^^^^^^^^^^^ not a union
+error[E0206]: expected u32, found true
+  --> test/fail/or_bind_not_union.zol:10:12
+   |
+10 |     return x
+   |            ^ the wrong type
+   |
+   = help: nothing converts on its own
 

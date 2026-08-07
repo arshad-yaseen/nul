@@ -1,0 +1,16 @@
+error[E0256]: this condition is i64, and a condition is a union
+ --> test/fail/condition_not_union.zol:2:8
+  |
+2 |     if n {
+  |        ^ cannot answer
+  |
+  = help: a condition asks whether a union holds its first member
+
+error[E0256]: this condition is *i64, and a condition is a union
+ --> test/fail/condition_not_union.zol:9:8
+  |
+9 |     if p {
+  |        ^ cannot answer
+  |
+  = help: a condition asks whether a union holds its first member
+

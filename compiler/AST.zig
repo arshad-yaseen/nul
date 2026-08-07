@@ -131,7 +131,6 @@ pub const Node = struct {
         intrinsic,
         ident,
         number_literal,
-        bool_literal,
 
         field_access,
         /// `p.*`, what a pointer points at.
@@ -352,7 +351,6 @@ pub const View = union(enum) {
     intrinsic: Token.Index,
     ident: Token.Index,
     number_literal: Token.Index,
-    bool_literal: Bool,
 
     field_access: FieldAccess,
     deref: Node.Index,
@@ -420,7 +418,6 @@ pub const View = union(enum) {
     pub const Call = struct { callee: Node.Index, args: []const Node.Index };
     pub const FieldAccess = struct { lhs: Node.Index, name_token: Token.Index };
     pub const Pointer = struct { is_mutable: bool, child: Node.Index };
-    pub const Bool = struct { value: bool, token: Token.Index };
     pub const Binary = struct {
         op: BinaryOp,
         op_token: Token.Index,
@@ -512,10 +509,6 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
         .intrinsic => .{ .intrinsic = main },
         .ident => .{ .ident = main },
         .number_literal => .{ .number_literal = main },
-        .bool_literal => .{ .bool_literal = .{
-            .value = tree.tokenTag(main) == .kw_true,
-            .token = main,
-        } },
         .field_access => .{ .field_access = .{ .lhs = data.node, .name_token = main.after(1) } },
         .deref => .{ .deref = data.node },
         .bracket => blk: {
@@ -700,7 +693,6 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             .root => return if (side == .leftmost) .first else main,
             .err, .type_param, .break_expr, .continue_expr => return main,
             .intrinsic, .ident, .number_literal => return main,
-            .bool_literal => |it| return it.token,
             .import_decl => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.path,

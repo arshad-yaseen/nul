@@ -445,10 +445,13 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,     .number,    .kw_true,     .kw_false,
-    .l_paren,   .dot,       .minus,       .kw_not,
-    .tilde,     .ampersand, .invalid,     .kw_if,
-    .kw_return, .kw_break,  .kw_continue, .kw_intrinsic,
+    .ident,       .number,
+    .l_paren,     .dot,
+    .minus,       .kw_not,
+    .tilde,       .ampersand,
+    .invalid,     .kw_if,
+    .kw_return,   .kw_break,
+    .kw_continue, .kw_intrinsic,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
@@ -1127,7 +1130,6 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
         .kw_intrinsic => return self.addLeaf(.intrinsic),
         .ident => return self.addLeaf(.ident),
         .number => return self.addLeaf(.number_literal),
-        .kw_true, .kw_false => return self.addLeaf(.bool_literal),
         // a literal with no type in front of it, which the checker cannot place
         .dot => {
             try self.err(.{

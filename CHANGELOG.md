@@ -51,8 +51,8 @@ than retrofitted.
   declaration already was.
 - `-x` on the smallest value of a signed type reports that it does not fit,
   where it used to crash the compiler.
-- The help for a size cycle suggests breaking it with `*T`, and no longer
-  with `?*T`, which stopped being syntax when optionals left.
+- The help for a size cycle suggests breaking it with `*T` or `*T | none`,
+  and no longer with `?*T`, which stopped being syntax when optionals left.
 - `type Name` with nothing assigned declares a unit type, whose only value
   is its name. `type none` and an error such as `type Timeout` are both
   this and nothing more.
@@ -80,6 +80,19 @@ than retrofitted.
   statement, and what it proved holds for the rest of the block: after
   `r is u32 or return 0`, `r` is `u32`. A branch that leaves narrows the
   same way, so `if r is not u32 { return 0 }` leaves `r` a `u32`.
+- `bool` left the compiler. `type bool = true | false` is a declaration
+  like any other, `true` and `false` are unit types rather than keywords,
+  and a file that tests anything declares the three or imports them.
+  Comparisons find `bool` by name and refuse to fold without it, with
+  `E0258`.
+- A condition is a union, and asks whether it holds its first member.
+  `if`, `and`, and `or` all branch on that one question, so the
+  special-cased boolean lowering is gone. A condition that cannot answer
+  reports `E0256`, the same refusal `is` and `or` give, and `E0229`
+  retires.
+- A constant can hold a union's value: `let truth = 1 < 2` is a `bool`
+  constant, folded, and `if truth` branches on it the way it branches on
+  any union.
 - Every commit on `main` that passes CI is now cross-compiled and published as
   a dev build, under the version it reports, at the `dev` tag. Numbered
   releases stay the only supported builds. Both channels ship an `index.json`

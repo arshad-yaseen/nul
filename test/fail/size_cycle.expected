@@ -4,5 +4,5 @@ error[E0233]: 'Tree' holds itself by value, so it has no size
 3 |     left: Tree
   |     ^^^^^^^^^^ the circle closes here
   |
-  = help: break the cycle with a pointer: '*Tree'
+  = help: break the cycle with a pointer: '*Tree' or '*Tree | none'
 

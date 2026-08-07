@@ -118,7 +118,6 @@ fn node(
         .ident, .number_literal => |token| {
             try writer.print(" {s}\n", .{ast.tokenSlice(token)});
         },
-        .bool_literal => |it| try writer.print(" {s}\n", .{if (it.value) "true" else "false"}),
 
         .field_access => |it| {
             try writer.print(" {s}\n", .{ast.tokenSlice(it.name_token)});

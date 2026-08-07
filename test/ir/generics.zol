@@ -1,3 +1,7 @@
+type true
+type false
+type bool = true | false
+
 pub type Pair[K, V] = {
     key: K
     value: V

@@ -21,14 +21,12 @@ const load_percentage = std.hash_map.default_max_load_percentage;
 const Pool = @This();
 
 /// Interned before any source is read.
-const statics = @typeInfo(SimpleType).@"enum".fields.len +
-    @typeInfo(SimpleValue).@"enum".fields.len;
+const statics = @typeInfo(SimpleType).@"enum".fields.len;
 
 /// A type or a constant. `init` interns the named items in this order.
 pub const Index = enum(u32) {
     /// A broken type and a broken value, which stays silent.
     poison,
-    bool_type,
     i8_type,
     i16_type,
     i32_type,
@@ -44,8 +42,6 @@ pub const Index = enum(u32) {
     /// A number that has not met a type yet.
     untyped_int_type,
     untyped_float_type,
-    true_value,
-    false_value,
     _,
 
     pub fn from(raw: usize) Index {
@@ -90,7 +86,6 @@ pub const String = enum(u32) {
 /// A type with no payload, pinned to the static item it occupies.
 pub const SimpleType = enum(u32) {
     poison = @intFromEnum(Index.poison),
-    bool = @intFromEnum(Index.bool_type),
     i8 = @intFromEnum(Index.i8_type),
     i16 = @intFromEnum(Index.i16_type),
     i32 = @intFromEnum(Index.i32_type),
@@ -112,22 +107,11 @@ pub const SimpleType = enum(u32) {
     /// Whether source may write this name.
     fn isSpellable(simple: SimpleType) bool {
         return switch (simple) {
-            .bool => true,
             .i8, .i16, .i32, .i64 => true,
             .u8, .u16, .u32, .u64 => true,
             .f32, .f64 => true,
             .poison, .void, .untyped_int, .untyped_float => false,
         };
-    }
-};
-
-/// A value with no payload, pinned the same way.
-pub const SimpleValue = enum(u32) {
-    true = @intFromEnum(Index.true_value),
-    false = @intFromEnum(Index.false_value),
-
-    pub fn index(simple: SimpleValue) Index {
-        return @enumFromInt(@intFromEnum(simple));
     }
 };
 
@@ -165,21 +149,23 @@ pub const Key = union(enum) {
     /// `extra`, so stale at the next intern.
     type_union: []const Index,
 
-    value_simple: SimpleValue,
     value_int: Int,
     value_float: Float,
     /// The one value of a unit type.
     value_unit: Index,
+    /// A constant that knows which union it sits in: the union, then the
+    /// member constant it holds.
+    value_union: Wrapped,
 
     pub const Pointer = struct { child: Index, mutable: bool };
     pub const Int = struct { type: Index, value: i128 };
     pub const Float = struct { type: Index, value: f64 };
+    pub const Wrapped = struct { type: Index, value: Index };
 
     fn hash(key: Key) u64 {
         var hasher = std.hash.Wyhash.init(@intFromEnum(std.meta.activeTag(key)));
         switch (key) {
             .type_simple => |simple| hasher.update(std.mem.asBytes(&simple)),
-            .value_simple => |simple| hasher.update(std.mem.asBytes(&simple)),
             .type_pointer => |pointer| {
                 hasher.update(std.mem.asBytes(&pointer.child));
                 hasher.update(std.mem.asBytes(&pointer.mutable));
@@ -188,6 +174,10 @@ pub const Key = union(enum) {
             .type_unit => |decl| hasher.update(std.mem.asBytes(&decl)),
             .type_union => |members| hasher.update(std.mem.sliceAsBytes(members)),
             .value_unit => |unit_type| hasher.update(std.mem.asBytes(&unit_type)),
+            .value_union => |it| {
+                hasher.update(std.mem.asBytes(&it.type));
+                hasher.update(std.mem.asBytes(&it.value));
+            },
             .value_int => |it| {
                 hasher.update(std.mem.asBytes(&it.type));
                 hasher.update(std.mem.asBytes(&it.value));
@@ -205,13 +195,14 @@ pub const Key = union(enum) {
         if (std.meta.activeTag(key) != std.meta.activeTag(other)) return false;
         return switch (key) {
             .type_simple => |simple| simple == other.type_simple,
-            .value_simple => |simple| simple == other.value_simple,
             .type_pointer => |pointer| pointer.child == other.type_pointer.child and
                 pointer.mutable == other.type_pointer.mutable,
             .type_struct => |instance| instance == other.type_struct,
             .type_unit => |decl| decl == other.type_unit,
             .type_union => |members| std.mem.eql(Index, members, other.type_union),
             .value_unit => |unit_type| unit_type == other.value_unit,
+            .value_union => |it| it.type == other.value_union.type and
+                it.value == other.value_union.value,
             .value_int => |it| it.type == other.value_int.type and it.value == other.value_int.value,
             // by bits, so float equality is never asked
             .value_float => |it| it.type == other.value_float.type and
@@ -232,13 +223,14 @@ const Item = struct {
         type_unit,
         /// `data` points at `extra`: the member count, then the members.
         type_union,
-        value_simple,
         /// `data` points at `extra`.
         value_int,
         /// `data` points at `extra`.
         value_float,
         /// `data` is its unit type.
         value_unit,
+        /// `data` points at `extra`: the union, then the member constant.
+        value_union,
     };
 };
 
@@ -265,10 +257,6 @@ pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
 
     for (std.enums.values(SimpleType)) |simple| {
         const index = try pool.intern(gpa, .{ .type_simple = simple });
-        assert(index == simple.index());
-    }
-    for (std.enums.values(SimpleValue)) |simple| {
-        const index = try pool.intern(gpa, .{ .value_simple = simple });
         assert(index == simple.index());
     }
     assert(pool.items.len == statics);
@@ -299,7 +287,6 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
 
     const item: Item = switch (key) {
         .type_simple => |simple| .{ .tag = .type_simple, .data = @intFromEnum(simple) },
-        .value_simple => |simple| .{ .tag = .value_simple, .data = @intFromEnum(simple) },
         .type_pointer => |pointer| .{
             .tag = if (pointer.mutable) .type_pointer_var else .type_pointer,
             .data = pointer.child.int(),
@@ -317,6 +304,16 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
             break :item .{
                 .tag = .type_union,
                 .data = try pool.addExtra(gpa, @intCast(members.len), @ptrCast(members)),
+            };
+        },
+        .value_union => |it| item: {
+            assert(pool.isUnion(it.type));
+            assert(pool.isType(it.value) == false);
+            assert(pool.keyOf(it.value) != .value_union);
+            assert(pool.unionHas(it.type, pool.typeOfValue(it.value)));
+            break :item .{
+                .tag = .value_union,
+                .data = try pool.addExtra(gpa, it.type.int(), &.{it.value.int()}),
             };
         },
         .value_unit => |unit_type| item: {
@@ -346,7 +343,6 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
     const data = pool.items.items(.data)[index.int()];
     return switch (pool.items.items(.tag)[index.int()]) {
         .type_simple => .{ .type_simple = @enumFromInt(data) },
-        .value_simple => .{ .value_simple = @enumFromInt(data) },
         .type_pointer => .{ .type_pointer = .{ .child = @enumFromInt(data), .mutable = false } },
         .type_pointer_var => .{ .type_pointer = .{ .child = @enumFromInt(data), .mutable = true } },
         .type_struct => .{ .type_struct = @enumFromInt(data) },
@@ -355,6 +351,10 @@ pub fn keyOf(pool: *const Pool, index: Index) Key {
             .type_union = @ptrCast(pool.extra.items[data + 1 ..][0..pool.extra.items[data]]),
         },
         .value_unit => .{ .value_unit = @enumFromInt(data) },
+        .value_union => .{ .value_union = .{
+            .type = @enumFromInt(pool.extra.items[data]),
+            .value = @enumFromInt(pool.extra.items[data + 1]),
+        } },
         .value_int => .{ .value_int = .{
             .type = @enumFromInt(pool.extra.items[data]),
             .value = @bitCast(pool.extraWords(data + 1, 4).*),
@@ -519,12 +519,10 @@ pub fn stringText(pool: *const Pool, index: String) [:0]const u8 {
 /// Only a value has one. `poison` is both, and answers with itself.
 pub fn typeOfValue(pool: *const Pool, value: Index) Index {
     return switch (pool.keyOf(value)) {
-        .value_simple => |simple| switch (simple) {
-            .true, .false => .bool_type,
-        },
         .value_int => |it| it.type,
         .value_float => |it| it.type,
         .value_unit => |unit_type| unit_type,
+        .value_union => |it| it.type,
         .type_simple => |simple| simple: {
             assert(simple == .poison);
             break :simple .poison;
@@ -536,7 +534,7 @@ pub fn typeOfValue(pool: *const Pool, value: Index) Index {
 pub fn isType(pool: *const Pool, index: Index) bool {
     return switch (pool.keyOf(index)) {
         .type_simple, .type_pointer, .type_struct, .type_unit, .type_union => true,
-        .value_simple, .value_int, .value_float, .value_unit => false,
+        .value_int, .value_float, .value_unit, .value_union => false,
     };
 }
 
@@ -593,6 +591,9 @@ pub const Fold = union(enum) {
     does_not_fit: struct { value: i128, type: Index },
     mismatch: struct { left: Index, right: Index },
     bad_operand: Index,
+    /// A comparison's answer. The checker spells it, because `bool` is a
+    /// declared type the pool does not know.
+    truth: bool,
 };
 
 /// The width constants fold in, which bounds every shift.
@@ -611,15 +612,8 @@ pub fn fold(
     const left = pool.keyOf(lhs);
     const right = pool.keyOf(rhs);
 
-    switch (op) {
-        .bool_and, .bool_or => {
-            const a = boolOf(left) orelse return .{ .bad_operand = pool.typeOfValue(lhs) };
-            const b = boolOf(right) orelse return .{ .bad_operand = pool.typeOfValue(rhs) };
-            const result = if (op == .bool_and) a and b else a or b;
-            return .{ .value = if (result) .true_value else .false_value };
-        },
-        else => {},
-    }
+    assert(op != .bool_and);
+    assert(op != .bool_or);
 
     const a = numberOf(left) orelse return .{ .bad_operand = pool.typeOfValue(lhs) };
     const b = numberOf(right) orelse return .{ .bad_operand = pool.typeOfValue(rhs) };
@@ -645,15 +639,6 @@ pub fn foldNegate(pool: *Pool, gpa: Allocator, operand: Index) Allocator.Error!F
     }
     const negated = std.math.negate(number.int) catch return .overflow;
     return pool.internInt(gpa, negated, number.type);
-}
-
-pub fn foldNot(pool: *const Pool, operand: Index) Fold {
-    if (operand == .poison) return .{ .value = .poison };
-
-    const value = boolOf(pool.keyOf(operand)) orelse {
-        return .{ .bad_operand = pool.typeOfValue(operand) };
-    };
-    return .{ .value = if (value) .false_value else .true_value };
 }
 
 /// The complement inside the operand's own type.
@@ -713,7 +698,9 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
             const member = pool.unionMemberAt(type_index, at);
             assert(pool.isUnion(member) == false);
             switch (try pool.fit(gpa, value, member)) {
-                .value => |fitted| return .{ .value = fitted },
+                .value => |fitted| return .{ .value = try pool.intern(gpa, .{
+                    .value_union = .{ .type = type_index, .value = fitted },
+                }) },
                 .does_not_fit => wrong_size = true,
                 .wrong_kind => {},
             }
@@ -722,6 +709,10 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
     }
 
     switch (pool.keyOf(value)) {
+        .value_union => |it| {
+            if (type_index == it.type) return .{ .value = value };
+            return pool.fit(gpa, it.value, type_index);
+        },
         .value_int => |it| {
             if (isInteger(type_index)) {
                 if (fitsInt(it.value, type_index) == false) return .does_not_fit;
@@ -757,11 +748,6 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
             }
             return .wrong_kind;
         },
-        .value_simple => |simple| switch (simple) {
-            .true, .false => {
-                return if (type_index == .bool_type) .{ .value = value } else .wrong_kind;
-            },
-        },
         .value_unit => |unit_type| {
             return if (type_index == unit_type) .{ .value = value } else .wrong_kind;
         },
@@ -787,16 +773,6 @@ fn numberOf(key: Key) ?Number {
     return switch (key) {
         .value_int => |it| .{ .type = it.type, .int = it.value, .float = 0 },
         .value_float => |it| .{ .type = it.type, .int = 0, .float = it.value },
-        else => null,
-    };
-}
-
-fn boolOf(key: Key) ?bool {
-    return switch (key) {
-        .value_simple => |simple| switch (simple) {
-            .true => true,
-            .false => false,
-        },
         else => null,
     };
 }
@@ -894,7 +870,7 @@ fn foldFloat(
 }
 
 fn boolFold(value: bool) Fold {
-    return .{ .value = if (value) Index.true_value else Index.false_value };
+    return .{ .truth = value };
 }
 
 /// Where overflow in a sized type is caught.
@@ -1036,27 +1012,24 @@ test "one value is one item, and the statics sit where their names say" {
     });
     try testing.expect(five != typed);
 
-    try testing.expectEqual(Index.bool_type, try pool.intern(testing.allocator, .{
-        .type_simple = .bool,
-    }));
-    try testing.expectEqual(Index.true_value, try pool.intern(testing.allocator, .{
-        .value_simple = .true,
+    try testing.expectEqual(Index.u8_type, try pool.intern(testing.allocator, .{
+        .type_simple = .u8,
     }));
 }
 
 test "every prelude name is its own static item, and nothing else has one" {
-    try testing.expectEqual(Index.bool_type, preludeType("bool"));
     try testing.expectEqual(Index.i8_type, preludeType("i8"));
     try testing.expectEqual(Index.u64_type, preludeType("u64"));
     try testing.expectEqual(Index.f64_type, preludeType("f64"));
 
     try testing.expectEqual(null, preludeType("nothing"));
+    try testing.expectEqual(null, preludeType("bool"));
     try testing.expectEqual(null, preludeType("error"));
     try testing.expectEqual(null, preludeType("true"));
     try testing.expectEqual(null, preludeType("poison"));
     try testing.expectEqual(null, preludeType("int"));
 
-    try testing.expectEqual(11, prelude_names.len);
+    try testing.expectEqual(10, prelude_names.len);
     for (prelude_names) |name| try testing.expect(preludeType(name) != null);
 }
 
@@ -1106,18 +1079,18 @@ test "a union is one item, and order is part of the type" {
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
-    const ab = (try pool.unite(gpa, &.{ .i32_type, .bool_type })).index;
-    const again = (try pool.unite(gpa, &.{ .i32_type, .bool_type })).index;
+    const ab = (try pool.unite(gpa, &.{ .i32_type, .u8_type })).index;
+    const again = (try pool.unite(gpa, &.{ .i32_type, .u8_type })).index;
     try testing.expectEqual(ab, again);
     try testing.expect(pool.isUnion(ab));
     try testing.expect(pool.isType(ab));
 
-    const ba = (try pool.unite(gpa, &.{ .bool_type, .i32_type })).index;
+    const ba = (try pool.unite(gpa, &.{ .u8_type, .i32_type })).index;
     try testing.expect(ab != ba);
 
     try testing.expectEqual(2, pool.unionMemberCount(ab));
     try testing.expectEqual(Index.i32_type, pool.unionMemberAt(ab, 0));
-    try testing.expectEqual(Index.bool_type, pool.unionMemberAt(ab, 1));
+    try testing.expectEqual(Index.u8_type, pool.unionMemberAt(ab, 1));
 }
 
 test "a member union splices in flat, and a repeat is refused" {
@@ -1126,17 +1099,17 @@ test "a member union splices in flat, and a repeat is refused" {
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
-    const ab = (try pool.unite(gpa, &.{ .i32_type, .bool_type })).index;
+    const ab = (try pool.unite(gpa, &.{ .i32_type, .u8_type })).index;
     const spliced = (try pool.unite(gpa, &.{ ab, .f64_type })).index;
-    const written = (try pool.unite(gpa, &.{ .i32_type, .bool_type, .f64_type })).index;
+    const written = (try pool.unite(gpa, &.{ .i32_type, .u8_type, .f64_type })).index;
     try testing.expectEqual(written, spliced);
 
-    const repeat = try pool.unite(gpa, &.{ .i32_type, .bool_type, .i32_type });
+    const repeat = try pool.unite(gpa, &.{ .i32_type, .u8_type, .i32_type });
     try testing.expectEqual(Index.i32_type, repeat.duplicate);
 
     // the repeat hides inside a member union, and flattening still finds it
-    const nested = try pool.unite(gpa, &.{ ab, .bool_type });
-    try testing.expectEqual(Index.bool_type, nested.duplicate);
+    const nested = try pool.unite(gpa, &.{ ab, .u8_type });
+    try testing.expectEqual(Index.u8_type, nested.duplicate);
 
     const broken = try pool.unite(gpa, &.{ .poison, .i32_type });
     try testing.expectEqual(Index.poison, broken.index);
@@ -1148,8 +1121,8 @@ test "a union without one member is the rest, down to the last one bare" {
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
-    const wide = (try pool.unite(gpa, &.{ .i32_type, .bool_type, .f64_type })).index;
-    const rest = try pool.unionWithout(gpa, wide, .bool_type);
+    const wide = (try pool.unite(gpa, &.{ .i32_type, .u8_type, .f64_type })).index;
+    const rest = try pool.unionWithout(gpa, wide, .u8_type);
     try testing.expect(pool.isUnion(rest));
     try testing.expectEqual(Index.i32_type, pool.unionMemberAt(rest, 0));
     try testing.expectEqual(Index.f64_type, pool.unionMemberAt(rest, 1));
@@ -1185,24 +1158,34 @@ test "a constant meets a union through its first fitting member" {
         .value_int = .{ .type = .untyped_int_type, .value = 42 },
     });
 
-    // both integer members hold 42, and the first one decides
+    // both integer members hold 42, the first decides, and the constant
+    // remembers the union it entered
     const wide = (try pool.unite(gpa, &.{ .i32_type, .i64_type })).index;
     const first = try pool.fit(gpa, number, wide);
-    try testing.expectEqual(Index.i32_type, pool.keyOf(first.value).value_int.type);
+    const held = pool.keyOf(first.value).value_union;
+    try testing.expectEqual(wide, held.type);
+    try testing.expectEqual(Index.i32_type, pool.keyOf(held.value).value_int.type);
+    try testing.expectEqual(wide, pool.typeOfValue(first.value));
 
     const none_type = try pool.intern(gpa, .{ .type_unit = .from(0) });
     const maybe = (try pool.unite(gpa, &.{ .u8_type, none_type })).index;
 
     const none_value = try pool.intern(gpa, .{ .value_unit = none_type });
     const chosen = try pool.fit(gpa, none_value, maybe);
-    try testing.expectEqual(none_value, chosen.value);
+    try testing.expectEqual(none_value, pool.keyOf(chosen.value).value_union.value);
+
+    // a wrapped constant unwraps into a narrower fit, and back to its member
+    try testing.expectEqual(none_value, (try pool.fit(gpa, chosen.value, none_type)).value);
 
     // 300 is the right kind for u8 and the wrong size, and no member takes it
     const big = try pool.intern(gpa, .{
         .value_int = .{ .type = .untyped_int_type, .value = 300 },
     });
     try testing.expectEqual(Fit.does_not_fit, try pool.fit(gpa, big, maybe));
-    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, .true_value, maybe));
+
+    const other_type = try pool.intern(gpa, .{ .type_unit = .from(1) });
+    const other_value = try pool.intern(gpa, .{ .value_unit = other_type });
+    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, other_value, maybe));
 }
 
 test "a constant meets a type by value, not by type" {
@@ -1218,6 +1201,7 @@ test "a constant meets a type by value, not by type" {
     const big = try pool.intern(gpa, .{ .value_int = .{ .type = .untyped_int_type, .value = 256 } });
     try testing.expectEqual(Fit.does_not_fit, try pool.fit(gpa, big, .u8_type));
 
-    // a bool is the wrong kind for a number's type, however it is spelled
-    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, .true_value, .u8_type));
+    const unit_type = try pool.intern(gpa, .{ .type_unit = .from(0) });
+    const unit_value = try pool.intern(gpa, .{ .value_unit = unit_type });
+    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, unit_value, .u8_type));
 }

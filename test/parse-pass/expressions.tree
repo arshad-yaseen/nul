@@ -80,10 +80,10 @@ root
         rhs: number_literal 1e10
       assign =
         lhs: ident _
-        rhs: bool_literal true
+        rhs: ident true
       assign =
         lhs: ident _
-        rhs: bool_literal false
+        rhs: ident false
   fn_decl calls
     param f
       type: ident i64

@@ -8,9 +8,9 @@ b0:
   %5 = store %1, %4
   return
 
-fn tidy(early: bool) i64
+fn tidy(early: true | false) i64
 b0:
-  %0 = param early : bool
+  %0 = param early : true | false
   %1 = struct_init .{ hits: 0:i64 } : Counter
   %2 = local counter : *var Counter
   %3 = store %2, %1
@@ -24,9 +24,9 @@ b3:
   %5 = call Counter.bump(%2)
   return 0:i64
 
-fn nested_scopes(deep: bool) i64
+fn nested_scopes(deep: true | false) i64
 b0:
-  %0 = param deep : bool
+  %0 = param deep : true | false
   %1 = struct_init .{ hits: 0:i64 } : Counter
   %2 = local counter : *var Counter
   %3 = store %2, %1

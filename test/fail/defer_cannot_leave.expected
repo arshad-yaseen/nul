@@ -1,12 +1,12 @@
 error[E0245]: a 'defer' runs on the way out, so it cannot leave again
- --> test/fail/defer_cannot_leave.zol:2:11
+ --> test/fail/defer_cannot_leave.zol:6:11
   |
-2 |     defer return 1
+6 |     defer return 1
   |           ^^^^^^^^ no 'return' here
 
 error[E0245]: a 'defer' runs on the way out, so it cannot leave again
- --> test/fail/defer_cannot_leave.zol:8:15
-  |
-8 |         defer break
-  |               ^^^^^ not allowed here
+  --> test/fail/defer_cannot_leave.zol:12:15
+   |
+12 |         defer break
+   |               ^^^^^ not allowed here
 

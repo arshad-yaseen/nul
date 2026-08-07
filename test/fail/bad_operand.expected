@@ -1,18 +1,18 @@
-error[E0211]: '-' cannot be applied to bool
- --> test/fail/bad_operand.zol:1:19
+error[E0211]: '-' cannot be applied to true
+ --> test/fail/bad_operand.zol:5:19
   |
-1 | let folded = true - false
+5 | let folded = true - false
   |                   ^ wrong operand type
 
-error[E0211]: '-' cannot be applied to bool
- --> test/fail/bad_operand.zol:4:14
+error[E0211]: '-' cannot be applied to true | false
+ --> test/fail/bad_operand.zol:8:14
   |
-4 |     return a - b
+8 |     return a - b
   |              ^ wrong operand type
 
 error[E0211]: '-' needs a signed number, and this is u8
- --> test/fail/bad_operand.zol:8:12
-  |
-8 |     return -n
-  |            ^ wrong operand type
+  --> test/fail/bad_operand.zol:12:12
+   |
+12 |     return -n
+   |            ^ wrong operand type
 

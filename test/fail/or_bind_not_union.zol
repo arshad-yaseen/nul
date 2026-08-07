@@ -1,3 +1,7 @@
+type true
+type false
+type bool = true | false
+
 fn guard(flag: bool) u32 {
     let x = flag or e {
         _ = e

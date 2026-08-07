@@ -103,7 +103,7 @@ root
           rhs: number_literal 1
       var_decl boolean let
         init: unary bool_not
-          operand: bool_literal true
+          operand: ident true
       var_decl address let
         init: unary address_of
           operand: ident grouped

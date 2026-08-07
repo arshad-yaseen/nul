@@ -37,7 +37,7 @@ pub fn writeType(comp: *const Compilation, writer: *Writer, index: Pool.Index) W
                 }
                 return;
             },
-            .value_simple, .value_int, .value_float, .value_unit => unreachable,
+            .value_int, .value_float, .value_unit, .value_union => unreachable,
         }
     }
     try writer.writeAll("...");
@@ -117,7 +117,6 @@ pub fn writeConstant(
             assert(simple == .poison);
             try writer.writeAll("<broken>");
         },
-        .value_simple => |simple| try writer.writeAll(@tagName(simple)),
         .value_int => |it| {
             try writer.print("{d}", .{it.value});
             if (it.type != .untyped_int_type) {
@@ -134,6 +133,8 @@ pub fn writeConstant(
         },
         // a unit value is spelled as its name
         .value_unit => |unit_type| try writeType(comp, writer, unit_type),
+        // the member the union holds, which the context types
+        .value_union => |it| try writeConstant(comp, writer, it.value),
         .type_pointer, .type_struct, .type_unit, .type_union => unreachable,
     }
 }

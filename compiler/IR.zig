@@ -191,6 +191,8 @@ pub const Terminator = union(enum) {
     /// Still being built.
     none,
     jump: Block.Index,
+    /// The condition is a union, and the then edge is taken when it holds
+    /// its first member.
     branch: struct { cond: Ref, then_block: Block.Index, else_block: Block.Index },
     /// `.none` returns nothing.
     ret: Ref,

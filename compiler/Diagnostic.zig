@@ -65,7 +65,6 @@ pub const Code = enum(u16) {
     private = 220,
     not_assignable = 221,
     write_through_pointer = 222,
-    condition_not_bool = 229,
     value_unused = 230,
     missing_return = 231,
     outside_loop = 232,
@@ -88,6 +87,7 @@ pub const Code = enum(u16) {
     union_too_wide = 255,
     not_a_union = 256,
     not_a_member = 257,
+    no_bool = 258,
 };
 
 pub const Color = enum { off, on };

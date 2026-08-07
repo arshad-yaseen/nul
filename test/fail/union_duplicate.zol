@@ -1,2 +1,6 @@
+type true
+type false
+type bool = true | false
+
 type Name = u32
 type Twice = u32 | bool | Name
