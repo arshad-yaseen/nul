@@ -1,8 +1,6 @@
 # Phi
 
-**As simple as Go, as bare as C. Memory safe at compile time, with nothing to annotate.**
-
-No garbage collector. No hidden allocations. No lifetime annotations.
+**A systems programming language that proves memory safety at compile time, with no runtime and nothing to annotate.**
 
 > How much of memory safety can be proven from the allocator you were already passing down, without a borrow checker to learn?
 
