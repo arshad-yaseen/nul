@@ -52,11 +52,17 @@ const Request = struct {
     std_dir: ?[]const u8,
 };
 
+// monotonic, so a machine that suspends mid-check cannot report a time that never elapsed
+const clock: std.Io.Clock = .awake;
+
 fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *Writer) !u8 {
     const request = switch (try readArgs(args, out, log)) {
         .ready => |request| request,
         .done => |status| return status,
     };
+
+    // reading the entry is part of what the command costs, so the clock starts here
+    const start = clock.now(init.io);
 
     const source: compiler.Source = compiler.Source.load(
         init.gpa,
@@ -85,18 +91,23 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
     // the compilation owns the root source from here
     try comp.compile(source);
 
-    if (comp.diagnostics.items.len > 0) {
+    const elapsed = start.untilNow(init.io, clock);
+    assert(elapsed.nanoseconds >= 0);
+
+    const clean = comp.diagnostics.items.len == 0;
+    if (clean) {
+        if (request.command == .ir) try comp.dumpIR(out);
+    } else {
         const color: compiler.Diagnostic.Color = switch (request.color) {
             .on => .on,
             .off => .off,
             .auto => if (try std.Io.File.stderr().isTty(init.io)) .on else .off,
         };
         try comp.renderAll(log, color);
-        return 1;
     }
 
-    if (request.command == .ir) try comp.dumpIR(out);
-    return 0;
+    try log.print("checked in {f}\n", .{elapsed});
+    return if (clean) 0 else 1;
 }
 
 /// Beside the binary as `../lib/std`, or `lib/std` under the working directory.

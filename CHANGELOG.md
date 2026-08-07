@@ -107,6 +107,10 @@ than retrofitted.
 - A build with no history to read reports `X.Y.Z-dev` where it used to report
   `X.Y.Z`, so a source tree unpacked without its `.git` no longer claims to be
   the release it still precedes.
+- Both commands close with how long the check took, written to standard error
+  as `checked in 1.234ms`. It is measured on a monotonic clock, from reading
+  the entry to the end of compilation, and it prints whether the program
+  checked or not. Standard output stays the IR and nothing else.
 
 ## [0.1.0] - 2026-08-04
 
