@@ -1,0 +1,5 @@
+import helper
+
+fn take() u32 {
+    return helper.value()
+}

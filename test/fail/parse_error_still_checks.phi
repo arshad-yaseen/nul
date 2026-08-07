@@ -1,0 +1,6 @@
+fn broken( {
+}
+
+fn ok() u32 {
+    return missing
+}

@@ -1,6 +1,7 @@
 type true
 type false
 type bool = true | false
+type none
 
 let kilobyte = 1024
 let scaled = kilobyte * kilobyte * 4
@@ -8,6 +9,12 @@ let truth = scaled > kilobyte and kilobyte != scaled
 
 pub let bytes_max: u32 = scaled
 let narrow_seed: i64 = 200
+
+let seat: i64 | none = none
+let fallback = seat or 41
+let held: i64 | none = 7
+let kept = held or 100
+let widened = seat or held
 
 fn narrowing() u8 {
     let across: u8 = narrow_seed
@@ -18,4 +25,15 @@ fn narrowing() u8 {
         return across
     }
     return folded
+}
+
+fn chosen() i64 {
+    if truth {
+        return fallback
+    }
+    return kept
+}
+
+fn pick() i64 | none {
+    return widened
 }

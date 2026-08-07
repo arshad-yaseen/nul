@@ -14,6 +14,7 @@ const Parse = @This();
 
 pub const depth_max = 128;
 pub const type_params_max = 16;
+/// The reporting budget. Reaching it mutes reports and never stops parsing.
 const errors_max = 64;
 
 gpa: Allocator,
@@ -34,8 +35,7 @@ errors: std.ArrayList(Diagnostic),
 depth: u32,
 /// In an `if` header, where a block after `or` belongs to the `if`.
 in_condition: bool,
-/// Set when the parser gave up.
-bailed: bool,
+reported_too_deep: bool,
 
 pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
     assert(source.len <= Source.bytes_max);
@@ -63,7 +63,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
         .errors = .empty,
         .depth = 0,
         .in_condition = false,
-        .bailed = false,
+        .reported_too_deep = false,
     };
     defer parse.scratch.deinit(gpa);
 
@@ -190,19 +190,19 @@ fn err(self: *Parse, diagnostic: Diagnostic) Allocator.Error!void {
     assert(diagnostic.message.len > 0);
     assert(diagnostic.span.start <= diagnostic.span.end);
 
-    if (self.bailed) return;
+    // recovery that unwinds without consuming asks one question over and
+    // over, so a diagnostic already recorded at this position is an echo
+    var index = self.errors.items.len;
+    while (index > 0) {
+        index -= 1;
+        const previous = self.errors.items[index];
+        if (previous.span.start != diagnostic.span.start) break;
+        if (previous.code != diagnostic.code) continue;
+        if (std.mem.eql(u8, previous.message, diagnostic.message)) return;
+    }
+
+    if (self.errors.items.len == errors_max) return;
     try self.errors.append(self.arena.allocator(), diagnostic);
-    if (self.errors.items.len == errors_max) self.stop();
-}
-
-/// Unwind without reading further.
-fn stop(self: *Parse) void {
-    @branchHint(.cold);
-    assert(self.bailed == false);
-
-    self.bailed = true;
-    self.token_index = self.eof_index;
-    assert(self.eof());
 }
 
 fn errExpected(
@@ -259,18 +259,21 @@ fn errChainedComparison(self: *Parse) Allocator.Error!void {
     });
 }
 
+/// The first overflow reports, and parsing carries on with holes, so
+/// everything past the deep spot is still read.
 fn tooDeep(self: *Parse) Allocator.Error!Node.Index {
     @branchHint(.cold);
-    try self.err(.{
-        .code = .nesting_too_deep,
-        .span = self.here(),
-        .message = try self.fmt("this nests more than {d} levels deep", .{depth_max}),
-        .label = "too deep",
-        .help = "the rest of the file was not read",
-    });
-    const node = try self.hole();
-    self.stop();
-    return node;
+    if (self.reported_too_deep == false) {
+        self.reported_too_deep = true;
+        try self.err(.{
+            .code = .nesting_too_deep,
+            .span = self.here(),
+            .message = try self.fmt("this nests more than {d} levels deep", .{depth_max}),
+            .label = "too deep",
+            .help = "split it into shallower pieces",
+        });
+    }
+    return self.hole();
 }
 
 // recovery
@@ -508,17 +511,23 @@ fn parseList(self: *Parse, list: List) Allocator.Error!void {
 
     var item_end = self.token_index;
     var line_break_only = false;
+    // a run of junk between two good items is one mistake, so it reports once
+    var in_junk_run = false;
     while (self.at(list.closer) == false and self.eof() == false) {
         const before = self.token_index;
 
         if (list.starts.contains(self.current())) {
+            in_junk_run = false;
             if (line_break_only and continues_line.contains(self.current())) {
                 try self.errAmbiguousLine();
             }
             try self.scratch.append(self.gpa, try list.item(self));
         } else {
             if (list.bails.contains(self.current())) break;
-            try self.errExpected(list.code, list.expected, list.help);
+            if (in_junk_run == false) {
+                try self.errExpected(list.code, list.expected, list.help);
+            }
+            in_junk_run = true;
             try self.scratch.append(self.gpa, try self.skipItem(list.closer));
         }
 
@@ -848,10 +857,7 @@ fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
 
 fn parseVarDecl(self: *Parse) Allocator.Error!Node.Index {
     const keyword = self.nextToken();
-    // a report can reach `errors_max` and jump the cursor to end of file
-    if (self.bailed == false) {
-        assert(self.tags[keyword.int()] == .kw_let or self.tags[keyword.int()] == .kw_var);
-    }
+    assert(self.tags[keyword.int()] == .kw_let or self.tags[keyword.int()] == .kw_var);
     try self.expectToken(.ident);
 
     const type_expr: Node.OptionalIndex = if (self.eatToken(.colon) != null)

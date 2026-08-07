@@ -82,7 +82,7 @@ pub fn typeAlias(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!boo
 pub fn topLevelLet(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     var check = context(comp, decl_index, &.{});
     const view = check.tree.viewOf(check.declNode(decl_index)).var_decl;
-    assert(view.is_mutable == false);
+    // a top-level 'var' was already refused by the parser, and checks as 'let'
 
     const value = try check.checkExpr(view.init_expr, null);
     const constant = switch (value) {
@@ -286,7 +286,6 @@ fn bindTypeParams(
 fn context(comp: *Compilation, decl_index: Decl.Index, bindings: []const Binding) Check {
     const decl = comp.declAt(decl_index);
     const module = comp.moduleAt(decl.module);
-    assert(module.failed == false);
     return .{
         .comp = comp,
         .module_index = decl.module,
@@ -681,6 +680,9 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
     try builder.blocks.ensureTotalCapacity(comp.gpa, 8);
 
     const view = check.tree.viewOf(check.declNode(decl_index)).fn_decl;
+    // recovery can leave a hole where the body should be, already reported
+    if (check.tree.nodeTag(view.body) != .block) return false;
+
     const entry = try check.newBlock();
     assert(entry == .entry);
     check.startBlock(entry);
@@ -1709,6 +1711,27 @@ fn reportUnusedValue(
 // expressions
 
 fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
+    const value = try check.checkExprInner(node, hint);
+    try check.checkExprRemember(node, value);
+    return value;
+}
+
+/// The editor's record. The type an expression settled on is written down as
+/// data, so the IR is one consumer of the answer rather than the only copy.
+fn checkExprRemember(check: *Check, node: Node.Index, value: Value) Allocator.Error!void {
+    if (check.comp.record_expr_types == false) return;
+    const builder = check.builder orelse return;
+
+    switch (value) {
+        .constant, .runtime => {},
+        else => return,
+    }
+    const found = check.typeOf(value);
+    if (found == .poison) return;
+    try check.comp.rememberExprType(builder.instance, node, found);
+}
+
+fn checkExprInner(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     // a top-level binding has no body to lower into
     if (check.builder == null) {
         if (runtimeOnly(check.tree.nodeTag(node))) |what| return check.needRuntime(node, what);
@@ -1735,7 +1758,7 @@ fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error
         .return_expr => |operand| return check.checkReturn(node, operand),
         .break_expr, .continue_expr => return check.checkLoopJump(node),
         .binary => |view| return check.checkBinary(view),
-        .unary => |view| return check.checkUnary(view),
+        .unary => |view| return check.checkUnary(node, view),
         .is_expr => |view| return check.checkIs(node, view),
         .or_bind => |view| return check.checkOrBind(node, view),
         .field_access => |view| return check.checkFieldAccess(node, view),
@@ -2140,7 +2163,36 @@ fn checkOr(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
         });
         return .poison;
     }
+    if (check.builder == null) {
+        assert(lhs == .constant);
+        return check.checkOrFold(view.rhs, lhs.constant, found);
+    }
     return check.checkOrSplit(view.lhs, refOf(lhs), found, view.rhs, .none);
+}
+
+/// The fold `checkOr` takes with nothing to lower into. Holding the first
+/// member decides, and then the right side is never entered, the way a
+/// constant condition already decides one side of `and`.
+fn checkOrFold(
+    check: *Check,
+    rhs_node: Node.Index,
+    lhs: Pool.Index,
+    lhs_type: Pool.Index,
+) Allocator.Error!Value {
+    const comp = check.comp;
+    assert(check.builder == null);
+    assert(comp.pool.typeOfValue(lhs) == lhs_type);
+
+    const held = comp.pool.keyOf(lhs).value_union.value;
+    const first = comp.pool.unionMemberAt(lhs_type, 0);
+    if (comp.pool.typeOfValue(held) == first) {
+        return .{ .constant = held };
+    }
+
+    const rhs = try check.checkExpr(rhs_node, first);
+    // the right side may be the first member, or everything the left could be
+    if (check.typeOf(rhs) == lhs_type) return rhs;
+    return check.coerce(rhs, first, rhs_node);
 }
 
 fn checkOrBind(check: *Check, node: Node.Index, view: AST.View.OrBind) Allocator.Error!Value {
@@ -2268,9 +2320,9 @@ fn bindRest(
     }, binder_node);
 }
 
-fn checkUnary(check: *Check, view: AST.View.Unary) Allocator.Error!Value {
+fn checkUnary(check: *Check, node: Node.Index, view: AST.View.Unary) Allocator.Error!Value {
     const comp = check.comp;
-    if (view.op == .address_of) return check.checkAddressOf(view);
+    if (view.op == .address_of) return check.checkAddressOf(node, view);
 
     const operand = try check.checkExpr(view.operand, null);
     if (operand == .diverged) return .diverged;
@@ -2344,8 +2396,10 @@ fn reportBadUnary(
 }
 
 /// `&x`, which spills to a temporary when `x` has no address of its own.
-fn checkAddressOf(check: *Check, view: AST.View.Unary) Allocator.Error!Value {
+fn checkAddressOf(check: *Check, node: Node.Index, view: AST.View.Unary) Allocator.Error!Value {
     const comp = check.comp;
+    if (check.builder == null) return check.needRuntime(node, "taking an address");
+
     const place = try check.checkPlace(view.operand) orelse return .poison;
     if (check.typeCanHold(place.type) == false) {
         try check.failToken(view.op_token, .{
@@ -3796,7 +3850,7 @@ fn moduleMember(
         target,
         name_text,
         .{ .module = check.module_index, .node = node },
-        .{ .start = check.tree.tokenStart(name_token), .end = check.tree.tokenEnd(name_token) },
+        name_token,
     );
 }
 

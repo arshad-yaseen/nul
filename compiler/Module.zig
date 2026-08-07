@@ -6,7 +6,6 @@ const Allocator = std.mem.Allocator;
 
 const AST = @import("AST.zig");
 const Compilation = @import("Compilation.zig");
-const Diagnostic = @import("Diagnostic.zig");
 const Pool = @import("Pool.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
@@ -23,8 +22,6 @@ space: Space,
 decls: Range,
 /// Top-level names. Members are found through their struct.
 names: std.AutoHashMapUnmanaged(Pool.String, Decl.Index),
-/// A module that failed to parse is never analyzed.
-failed: bool,
 
 const Module = @This();
 
@@ -118,8 +115,9 @@ pub fn displayName(module: *const Module) []const u8 {
     return module.key[colon + 1 ..];
 }
 
-/// Parse one source and register its declarations. A parse error marks the
-/// module failed.
+/// Parse one source and register its declarations. A parse error does not
+/// stop registration, so a broken file still answers for the names recovery
+/// preserved.
 pub fn register(
     comp: *Compilation,
     key: []const u8,
@@ -141,7 +139,6 @@ pub fn register(
         .space = space,
         .decls = .{ .start = @intCast(comp.decls.items.len), .len = 0 },
         .names = .empty,
-        .failed = false,
     };
 
     // the ownership boundary. past here the root object frees the module
@@ -149,12 +146,7 @@ pub fn register(
     try comp.module_map.put(gpa, key, index);
 
     if (module.tree.errors.len > 0) {
-        module.failed = true;
-        try comp.diagnostics.ensureUnusedCapacity(gpa, module.tree.errors.len);
-        for (module.tree.errors) |diagnostic| {
-            comp.diagnostics.appendAssumeCapacity(.{ .module = index, .diagnostic = diagnostic });
-        }
-        return index;
+        try comp.adoptParseErrors(index, module.tree.errors);
     }
 
     try registerDecls(comp, module, index);
@@ -163,7 +155,6 @@ pub fn register(
 }
 
 fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Allocator.Error!void {
-    assert(module.tree.errors.len == 0);
     const tree = &module.tree;
     const root = tree.viewOf(.root).root;
 
@@ -385,7 +376,6 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
 
     const key = try comp.fmt("{t}:{s}", .{ space, sub });
     if (comp.module_map.get(key)) |index| {
-        if (comp.moduleAt(index).failed) return .not_found;
         return .{ .module = index };
     }
 
@@ -401,9 +391,7 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
         error.OutOfMemory => return error.OutOfMemory,
     };
 
-    const index = try register(comp, key, space, source);
-    if (comp.moduleAt(index).failed) return .not_found;
-    return .{ .module = index };
+    return .{ .module = try register(comp, key, space, source) };
 }
 
 /// A module, or a module plus one public declaration.
@@ -468,7 +456,7 @@ pub fn resolveImport(comp: *Compilation, decl_index: Decl.Index) Allocator.Error
                     target,
                     names[count - 1],
                     .{ .module = decl.module, .node = last },
-                    .{ .start = tree.tokenStart(name_token), .end = tree.tokenEnd(name_token) },
+                    name_token,
                 ) orelse return false;
                 setImportTarget(comp, decl_index, .decl, found.int());
                 return true;
@@ -517,13 +505,14 @@ pub fn importTarget(comp: *const Compilation, decl_index: Decl.Index) ImportReso
     };
 }
 
-/// Following re-exports to the end. Null once reported.
+/// Following re-exports to the end. Null once reported. The name token
+/// belongs to the origin module, and is what a report is keyed by.
 pub fn findExported(
     comp: *Compilation,
     in: Module.Index,
     name_text: []const u8,
     origin: Compilation.Origin,
-    at: Diagnostic.Span,
+    name_token: Token.Index,
 ) Allocator.Error!?Decl.Index {
     var target = in;
     var remaining: u32 = import_chain_max;
@@ -532,7 +521,7 @@ pub fn findExported(
         const name = try comp.pool.string(comp.gpa, name_text);
 
         const found = module.findDecl(name) orelse {
-            try comp.report(origin.module, at, .{
+            try comp.reportToken(origin.module, name_token, .{
                 .code = .no_such_member,
                 .message = try comp.fmt("'{s}' has no declaration named '{s}'", .{
                     module.displayName(), name_text,
@@ -545,7 +534,7 @@ pub fn findExported(
 
         const decl = comp.declAt(found);
         if (origin.module != target and declIsPub(comp, found) == false) {
-            try comp.report(origin.module, at, .{
+            try comp.reportToken(origin.module, name_token, .{
                 .code = .private,
                 .message = try comp.fmt("'{s}' is private to its file", .{name_text}),
                 .label = "not public",
@@ -573,7 +562,7 @@ pub fn findExported(
             .module => return found,
         }
     }
-    try comp.report(origin.module, at, .{
+    try comp.reportToken(origin.module, name_token, .{
         .code = .value_cycle,
         .message = try comp.fmt("following '{s}' crossed {d} re-exports without arriving", .{
             name_text, import_chain_max,

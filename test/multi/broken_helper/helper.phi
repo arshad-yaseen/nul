@@ -1,0 +1,6 @@
+pub fn value() u32 {
+    return 5
+}
+
+fn oops( {
+}

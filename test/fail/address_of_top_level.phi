@@ -1,0 +1,2 @@
+let a: i64 = 5
+let p = &a

@@ -43,8 +43,11 @@ rows: std.ArrayList(Row),
 rows_scratch: std.ArrayList(Row),
 funcs: std.ArrayList(IR.Func),
 diagnostics: std.ArrayList(Entry),
-/// One row per (module, code, offset), so re-walked code reports once.
+/// One row per (module, code, anchor), so re-walked code reports once.
 reported: std.AutoHashMapUnmanaged(ReportKey, void),
+/// Each checked expression's type, an output of the body unit, recorded only
+/// when the host asked for it.
+expr_types: std.AutoHashMapUnmanaged(ExprKey, Pool.Index),
 
 // transient analysis state
 
@@ -63,6 +66,8 @@ root_dir: []const u8,
 root_stem: []const u8,
 /// Where `std.` resolves, or null.
 std_dir: ?[]const u8,
+/// Whether checking records every expression's type for `exprType`.
+record_expr_types: bool,
 
 const Compilation = @This();
 
@@ -135,13 +140,34 @@ pub const Origin = struct { module: Module.Index, node: AST.Node.Index };
 
 const Frame = struct { unit: Unit, origin: Origin };
 
-const ReportKey = struct { module: Module.Index, code: Diagnostic.Code, offset: u32 };
+/// A report names a node or a token. An offset would shift under an edit, so
+/// it is never the identity.
+const ReportAnchor = enum(u8) { node, token };
 
-pub const Entry = struct { module: Module.Index, diagnostic: Diagnostic };
+const ReportKey = struct {
+    module: Module.Index,
+    code: Diagnostic.Code,
+    anchor: u32,
+    anchor_kind: ReportAnchor,
+};
+
+const ExprKey = struct { instance: Pool.Instance, node: AST.Node.Index };
+
+/// A diagnostic and the unit that produced it, so re-running one unit can
+/// replace exactly its own reports. Null marks a report from parsing or
+/// registration, which belongs to the module itself.
+pub const Entry = struct {
+    module: Module.Index,
+    unit: ?Unit,
+    diagnostic: Diagnostic,
+};
 
 pub const Options = struct {
     root_path: []const u8,
     std_dir: ?[]const u8,
+    /// An editor host records every expression's type to answer position
+    /// queries. A batch compile leaves it off, because nothing reads it.
+    record_expr_types: bool = false,
 };
 
 pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Allocator.Error!void {
@@ -162,12 +188,14 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .funcs = .empty,
         .diagnostics = .empty,
         .reported = .empty,
+        .expr_types = .empty,
         .stack = .empty,
         .instance_depth = 0,
         .arena = .init(gpa),
         .root_dir = std.fs.path.dirname(options.root_path) orelse ".",
         .root_stem = std.fs.path.stem(options.root_path),
         .std_dir = options.std_dir,
+        .record_expr_types = options.record_expr_types,
     };
     try comp.pool.init(gpa);
 }
@@ -194,6 +222,7 @@ pub fn deinit(comp: *Compilation) void {
     comp.rows_scratch.deinit(gpa);
     comp.diagnostics.deinit(gpa);
     comp.reported.deinit(gpa);
+    comp.expr_types.deinit(gpa);
     comp.stack.deinit(gpa);
     comp.arena.deinit();
     comp.* = undefined;
@@ -212,7 +241,6 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     const index = try Module.register(comp, key, space, root_source);
     assert(index == .root);
     const module = comp.moduleAt(index);
-    if (module.failed) return;
 
     for (module.decls.start..module.decls.end()) |raw| {
         const decl_index: Decl.Index = .from(raw);
@@ -528,6 +556,29 @@ pub fn instanceRows(comp: *const Compilation, index: Pool.Instance) []const Row 
     return comp.rows.items[instance.rows.start..][0..instance.rows.len];
 }
 
+/// The write side of `exprType`.
+pub fn rememberExprType(
+    comp: *Compilation,
+    instance: Pool.Instance,
+    node: AST.Node.Index,
+    type_index: Pool.Index,
+) Allocator.Error!void {
+    assert(comp.record_expr_types);
+    assert(comp.pool.isType(type_index));
+    try comp.expr_types.put(comp.gpa, .{ .instance = instance, .node = node }, type_index);
+}
+
+/// The type checking decided for an expression, when recording was on. This
+/// is the editor's question, answered from data rather than from the IR.
+pub fn exprType(
+    comp: *const Compilation,
+    instance: Pool.Instance,
+    node: AST.Node.Index,
+) ?Pool.Index {
+    assert(instance.int() < comp.instances.items.len);
+    return comp.expr_types.get(.{ .instance = instance, .node = node });
+}
+
 const InstanceKey = struct { decl: Decl.Index, args: []const Pool.Index };
 
 const InstanceKeyAdapter = struct {
@@ -579,7 +630,7 @@ pub fn reportNode(
 ) Allocator.Error!void {
     @branchHint(.cold);
     const tree = comp.treeOf(module);
-    try comp.report(module, tree.nodeSpan(node), report_value);
+    try comp.report(module, node.int(), .node, tree.nodeSpan(node), report_value);
 }
 
 pub fn reportToken(
@@ -590,15 +641,17 @@ pub fn reportToken(
 ) Allocator.Error!void {
     @branchHint(.cold);
     const tree = comp.treeOf(module);
-    try comp.report(module, .{
+    try comp.report(module, token.int(), .token, .{
         .start = tree.tokenStart(token),
         .end = tree.tokenEnd(token),
     }, report_value);
 }
 
-pub fn report(
+fn report(
     comp: *Compilation,
     module: Module.Index,
+    anchor: u32,
+    anchor_kind: ReportAnchor,
     span: Diagnostic.Span,
     report_value: Report,
 ) Allocator.Error!void {
@@ -607,13 +660,19 @@ pub fn report(
     assert(span.start <= span.end);
 
     // one mistake, one report, however often the spot is re-walked
-    const key: ReportKey = .{ .module = module, .code = report_value.code, .offset = span.start };
+    const key: ReportKey = .{
+        .module = module,
+        .code = report_value.code,
+        .anchor = anchor,
+        .anchor_kind = anchor_kind,
+    };
     const seen = try comp.reported.getOrPut(comp.gpa, key);
     if (seen.found_existing) return;
     if (comp.diagnostics.items.len >= diagnostics_max) return;
 
     try comp.diagnostics.append(comp.gpa, .{
         .module = module,
+        .unit = comp.currentUnit(),
         .diagnostic = .{
             .code = report_value.code,
             .span = span,
@@ -623,6 +682,33 @@ pub fn report(
             .notes = try comp.withTrail(report_value.notes),
         },
     });
+}
+
+/// The unit being run owns what it reports. Null belongs to parsing and
+/// registration, which run before any unit.
+fn currentUnit(comp: *const Compilation) ?Unit {
+    if (comp.stack.items.len == 0) return null;
+    return comp.stack.items[comp.stack.items.len - 1].unit;
+}
+
+/// Parse diagnostics enter as the parser recorded them. The parser budgets
+/// and orders its own reports, so nothing is deduplicated here.
+pub fn adoptParseErrors(
+    comp: *Compilation,
+    module: Module.Index,
+    errors: []const Diagnostic,
+) Allocator.Error!void {
+    @branchHint(.cold);
+    assert(errors.len > 0);
+
+    for (errors) |diagnostic| {
+        if (comp.diagnostics.items.len >= diagnostics_max) return;
+        try comp.diagnostics.append(comp.gpa, .{
+            .module = module,
+            .unit = null,
+            .diagnostic = diagnostic,
+        });
+    }
 }
 
 /// Appended to every report, so no site can forget the trail.
@@ -881,4 +967,83 @@ test "a diagnostic renders across files" {
     defer out.deinit();
     try comp.renderAll(&out.writer, .off);
     try testing.expect(std.mem.indexOf(u8, out.written(), "nothing named 'missing'") != null);
+}
+
+test "a diagnostic names the unit that produced it" {
+    const gpa = testing.allocator;
+
+    var comp: Compilation = undefined;
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
+    defer comp.deinit();
+
+    try comp.compile(try testSource(gpa,
+        \\fn f() i64 {
+        \\    return missing
+        \\}
+        \\
+    ));
+    try testing.expectEqual(1, comp.diagnostics.items.len);
+
+    const entry = comp.diagnostics.items[0];
+    try testing.expect(entry.unit != null);
+    try testing.expectEqual(Unit.Kind.body, entry.unit.?.kind);
+}
+
+test "a file with a parse error is still checked" {
+    const gpa = testing.allocator;
+
+    var comp: Compilation = undefined;
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
+    defer comp.deinit();
+
+    try comp.compile(try testSource(gpa,
+        \\fn broken( {
+        \\}
+        \\
+        \\fn ok() i64 {
+        \\    return missing
+        \\}
+        \\
+    ));
+    try testing.expectEqual(2, comp.diagnostics.items.len);
+
+    const parse_entry = comp.diagnostics.items[0];
+    try testing.expectEqual(Diagnostic.Code.expected_token, parse_entry.diagnostic.code);
+    try testing.expectEqual(null, parse_entry.unit);
+
+    const analysis_entry = comp.diagnostics.items[1];
+    try testing.expectEqual(Diagnostic.Code.undefined_name, analysis_entry.diagnostic.code);
+    try testing.expect(analysis_entry.unit != null);
+}
+
+test "the checker answers a type question as data" {
+    const gpa = testing.allocator;
+
+    var comp: Compilation = undefined;
+    try comp.init(gpa, testing.io, .{
+        .root_path = "test.phi",
+        .std_dir = null,
+        .record_expr_types = true,
+    });
+    defer comp.deinit();
+
+    try comp.compile(try testSource(gpa,
+        \\fn f(n: i64) i64 {
+        \\    return n + 1
+        \\}
+        \\
+    ));
+    try testing.expectEqual(0, comp.diagnostics.items.len);
+
+    const f = comp.moduleAt(.root).findDecl(try comp.pool.string(gpa, "f")).?;
+    const instance = try comp.instantiate(f, &.{});
+
+    const tree = comp.treeOf(.root);
+    const decl_view = tree.viewOf(comp.declAt(f).node).fn_decl;
+    const statements = tree.viewOf(decl_view.body).block;
+    const returned = tree.viewOf(statements[0]).return_expr.unwrap().?;
+    const sum = tree.viewOf(returned).binary;
+
+    try testing.expectEqual(Pool.Index.i64_type, comp.exprType(instance, returned));
+    try testing.expectEqual(Pool.Index.i64_type, comp.exprType(instance, sum.lhs));
 }

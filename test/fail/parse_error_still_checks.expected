@@ -1,0 +1,17 @@
+error[E0101]: expected ')', found '{'
+ --> test/fail/parse_error_still_checks.phi:1:12
+  |
+1 | fn broken( {
+  |            ^ expected ')'
+note: to close the '(' opened here
+ --> test/fail/parse_error_still_checks.phi:1:10
+  |
+1 | fn broken( {
+  |          ^
+
+error[E0201]: nothing named 'missing' is in scope here
+ --> test/fail/parse_error_still_checks.phi:5:12
+  |
+5 |     return missing
+  |            ^^^^^^^ unknown name
+

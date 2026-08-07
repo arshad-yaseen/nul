@@ -111,6 +111,18 @@ than retrofitted.
   as `checked in 1.234ms`. It is measured on a monotonic clock, from reading
   the entry to the end of compilation, and it prints whether the program
   checked or not. Standard output stays the IR and nothing else.
+- A file with a parse error is still checked. The declarations that survive
+  recovery register and resolve, other files import them as usual, and
+  analysis reports alongside the parse errors instead of stopping at the
+  first broken line.
+- The parser always reads the whole file. Reporting stops at its budget of
+  64, nesting past the limit reports once, and a run of junk between two
+  good items reports once, where any of them used to abandon the rest of
+  the file.
+- `or` folds when its left side is a union constant, so a top-level binding
+  can read `let port = maybe or 8080`, where it used to crash the compiler.
+- `&` in a top-level binding reports that taking an address is not constant,
+  where it used to crash the compiler.
 
 ## [0.1.0] - 2026-08-04
 
