@@ -1,5 +1,5 @@
 error[E0242]: a bare number has no type to read
- --> test/fail/inference_bare_number.zol:6:18
+ --> test/fail/inference_bare_number.phi:6:18
   |
 6 |     return plant(5)
   |                  ^ what type is 'T'?

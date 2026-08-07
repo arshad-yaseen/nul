@@ -1,5 +1,5 @@
 error[E0214]: a top-level binding must be a constant, and an 'if' happens at run time
- --> test/fail/constant_context.zol:9:16
+ --> test/fail/constant_context.phi:9:16
   |
 9 | let branched = if true { 1 } else { 2 }
   |                ^^^^^^^^^^^^^^^^^^^^^^ not a constant
@@ -7,7 +7,7 @@ error[E0214]: a top-level binding must be a constant, and an 'if' happens at run
   = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and 'return' happens at run time
-  --> test/fail/constant_context.zol:10:12
+  --> test/fail/constant_context.phi:10:12
    |
 10 | let left = return 1
    |            ^^^^^^^^ not a constant
@@ -15,7 +15,7 @@ error[E0214]: a top-level binding must be a constant, and 'return' happens at ru
    = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and 'break' happens at run time
-  --> test/fail/constant_context.zol:11:15
+  --> test/fail/constant_context.phi:11:15
    |
 11 | let escaped = break
    |               ^^^^^ not a constant
@@ -23,7 +23,7 @@ error[E0214]: a top-level binding must be a constant, and 'break' happens at run
    = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and 'continue' happens at run time
-  --> test/fail/constant_context.zol:12:15
+  --> test/fail/constant_context.phi:12:15
    |
 12 | let carried = continue
    |               ^^^^^^^^ not a constant
@@ -31,7 +31,7 @@ error[E0214]: a top-level binding must be a constant, and 'continue' happens at 
    = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and a call happens at run time
-  --> test/fail/constant_context.zol:13:14
+  --> test/fail/constant_context.phi:13:14
    |
 13 | let called = answer()
    |              ^^^^^^^^ not a constant
@@ -39,7 +39,7 @@ error[E0214]: a top-level binding must be a constant, and a call happens at run 
    = help: the constant set is literals, names of constants, operators, and parentheses
 
 error[E0214]: a top-level binding must be a constant, and a struct literal happens at run time
-  --> test/fail/constant_context.zol:14:13
+  --> test/fail/constant_context.phi:14:13
    |
 14 | let built = i64.{ x: 1 }
    |             ^^^^^^^^^^ not a constant

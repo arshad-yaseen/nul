@@ -1,16 +1,16 @@
 error[E0205]: 'outer' is already declared in this file
- --> test/fail/shadow.zol:8:5
+ --> test/fail/shadow.phi:8:5
   |
 8 |     let outer = 2
   |     ^^^^^^^^^^^^^ shadows it
 note: declared here
- --> test/fail/shadow.zol:1:1
+ --> test/fail/shadow.phi:1:1
   |
 1 | let outer = 1
   | ^^^^^^^^^^^^^
 
 error[E0205]: 'u32' is the name of a type every file can see
- --> test/fail/shadow.zol:9:5
+ --> test/fail/shadow.phi:9:5
   |
 9 |     let u32 = 3
   |     ^^^^^^^^^^^ shadows it

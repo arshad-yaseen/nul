@@ -783,14 +783,14 @@ fn testSource(gpa: Allocator, text: []const u8) Allocator.Error!Source {
     const buffer = try gpa.alloc(u8, text.len + Source.padding);
     @memcpy(buffer[0..text.len], text);
     buffer[text.len] = 0;
-    return .{ .path = "test.zol", .bytes = buffer[0..text.len :0] };
+    return .{ .path = "test.phi", .bytes = buffer[0..text.len :0] };
 }
 
 test "instantiation identity is index equality" {
     const gpa = testing.allocator;
 
     var comp: Compilation = undefined;
-    try comp.init(gpa, testing.io, .{ .root_path = "test.zol", .std_dir = null });
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
     defer comp.deinit();
 
     try comp.compile(try testSource(gpa,
@@ -830,7 +830,7 @@ test "plain depth is bounded by the budget, not the instantiation limit" {
     try deep.writer.writeAll("fn g90(n: i64) i64 { return n }\n");
 
     var comp: Compilation = undefined;
-    try comp.init(gpa, testing.io, .{ .root_path = "test.zol", .std_dir = null });
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
     defer comp.deinit();
     try comp.compile(try testSource(gpa, deep.written()));
     try testing.expectEqual(0, comp.diagnostics.items.len);
@@ -856,7 +856,7 @@ test "the deepest nesting that reaches analysis does not overflow the stack" {
     try deep.writer.print("fn g{d}(n: i64) i64 {{ return n }}\n", .{levels});
 
     var comp: Compilation = undefined;
-    try comp.init(gpa, testing.io, .{ .root_path = "test.zol", .std_dir = null });
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
     defer comp.deinit();
     try comp.compile(try testSource(gpa, deep.written()));
     try testing.expectEqual(0, comp.diagnostics.items.len);
@@ -866,7 +866,7 @@ test "a diagnostic renders across files" {
     const gpa = testing.allocator;
 
     var comp: Compilation = undefined;
-    try comp.init(gpa, testing.io, .{ .root_path = "test.zol", .std_dir = null });
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
     defer comp.deinit();
 
     try comp.compile(try testSource(gpa,

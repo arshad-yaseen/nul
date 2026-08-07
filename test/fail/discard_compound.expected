@@ -1,5 +1,5 @@
 error[E0244]: '_' is not a place, and only discards a whole value
- --> test/fail/discard_compound.zol:2:5
+ --> test/fail/discard_compound.phi:2:5
   |
 2 |     _ += n
   |     ^ not a place

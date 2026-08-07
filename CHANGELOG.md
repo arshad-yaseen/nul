@@ -8,6 +8,10 @@ optionals, errors, and sum types stop being three features and become one.
 This release strips what that design replaces, so the rest is built rather
 than retrofitted.
 
+- The language is now Phi. The binary is `phi`, a source file ends in `.phi`,
+  and the repository is `arshad-yaseen/phi`. Only the name changed, so a
+  program that compiled under the old one still compiles once its files are
+  renamed.
 - Optionals `?T` and error unions `!T` are gone, along with the one universal
   error set and the `error Name` declaration. `T | none` is the first and
   `T | SomeError` is the second, and neither wraps the value it carries.
@@ -106,7 +110,7 @@ than retrofitted.
 
 ## [0.1.0] - 2026-08-04
 
-Initial release. `zol` checks a program and prints its typed IR. Nothing runs yet.
+Initial release. `phi` checks a program and prints its typed IR. Nothing runs yet.
 
 ### Language
 
@@ -127,8 +131,8 @@ Initial release. `zol` checks a program and prints its typed IR. Nothing runs ye
 
 ### Command line
 
-- `zol check <entry>` and `zol ir <entry>`.
+- `phi check <entry>` and `phi ir <entry>`.
 - `--std <dir>`, `--color auto|on|off`, and `--version`.
 
-[Unreleased]: https://github.com/arshad-yaseen/zol/compare/0.1.0...HEAD
-[0.1.0]: https://github.com/arshad-yaseen/zol/releases/tag/0.1.0
+[Unreleased]: https://github.com/arshad-yaseen/phi/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/arshad-yaseen/phi/releases/tag/0.1.0

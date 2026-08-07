@@ -1,5 +1,5 @@
 error[E0251]: an intrinsic is not a value, so call it
- --> test/std/intrinsic_not_a_value.zol:6:13
+ --> test/std/intrinsic_not_a_value.phi:6:13
   |
 6 |     let f = intrinsic.ptr_cast
   |             ^^^^^^^^^^^^^^^^^^ missing the call

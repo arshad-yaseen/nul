@@ -45,8 +45,8 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
-            zol-*.tar.xz
-            zol-*.zip
+            phi-*.tar.xz
+            phi-*.zip
 
       - name: Move the dev pointer
         run: |
@@ -83,7 +83,7 @@ jobs:
             for asset in $stale; do gh release delete-asset dev "$asset" --yes; done
             gh release edit dev --notes-file NOTES.md
           else
-            gh release create dev --prerelease --title "Zol dev" --notes-file NOTES.md
+            gh release create dev --prerelease --title "Phi dev" --notes-file NOTES.md
           fi
 
-          gh release upload dev zol-*.tar.xz zol-*.zip SHA256SUMS index.json
+          gh release upload dev phi-*.tar.xz phi-*.zip SHA256SUMS index.json

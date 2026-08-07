@@ -1,5 +1,5 @@
 error[E0258]: this needs 'bool', a union of two unit types
- --> test/fail/no_bool.zol:2:8
+ --> test/fail/no_bool.phi:2:8
   |
 2 |     if a < b {
   |        ^ no such 'bool' in scope

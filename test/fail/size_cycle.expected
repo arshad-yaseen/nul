@@ -1,5 +1,5 @@
 error[E0233]: 'Tree' holds itself by value, so it has no size
- --> test/fail/size_cycle.zol:3:5
+ --> test/fail/size_cycle.phi:3:5
   |
 3 |     left: Tree
   |     ^^^^^^^^^^ the circle closes here

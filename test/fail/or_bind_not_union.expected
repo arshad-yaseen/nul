@@ -1,5 +1,5 @@
 error[E0206]: expected u32, found true
-  --> test/fail/or_bind_not_union.zol:10:12
+  --> test/fail/or_bind_not_union.phi:10:12
    |
 10 |     return x
    |            ^ the wrong type

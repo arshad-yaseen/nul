@@ -9,7 +9,7 @@ happens.
 
 ```
 compiler/    the compiler, importable as the `compiler` module
-tools/zol/   the binary: argv, dispatch, exit codes
+tools/phi/   the binary: argv, dispatch, exit codes
 lib/std/     the standard library, shipped as source beside the binary
 test/        file tests, one directory per kind
 ```
@@ -19,7 +19,7 @@ test/        file tests, one directory per kind
 Zig 0.16.0 or newer, as `build.zig.zon` states.
 
 ```
-zig build                                     build ./zig-out/bin/zol
+zig build                                     build ./zig-out/bin/phi
 zig build test                                unit tests and file tests
 zig build test-update                         rewrite what the file tests expect
 zig build release                             cross-compile a tree per target
@@ -101,8 +101,8 @@ A downloader reads `index.json`, which names the version, the commit, and every
 archive with its checksum and size. Two URLs never move:
 
 ```
-https://github.com/arshad-yaseen/zol/releases/download/dev/index.json
-https://github.com/arshad-yaseen/zol/releases/latest/download/index.json
+https://github.com/arshad-yaseen/phi/releases/download/dev/index.json
+https://github.com/arshad-yaseen/phi/releases/latest/download/index.json
 ```
 
 **When.** `## [Unreleased]` is the trigger. Entries someone could act on means a
@@ -116,7 +116,7 @@ nothing to release, so do not cut one on a schedule.
 2. Set `.version` in `build.zig.zon` to `X.Y.Z`.
 3. `zig build release`, as a local smoke test.
 4. Commit `release: X.Y.Z`, push `main`, and wait for CI to pass.
-5. `git tag -a X.Y.Z -m "Zol X.Y.Z"`.
+5. `git tag -a X.Y.Z -m "Phi X.Y.Z"`.
 6. `git push origin X.Y.Z`, on its own.
 7. Set `.version` to the next minor, so later builds report `X.Y+1.0-dev.N+hash`.
 

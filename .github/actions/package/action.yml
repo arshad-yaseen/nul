@@ -35,7 +35,7 @@ runs:
           esac
         done
         cd ../..
-        sha256sum zol-*.tar.xz zol-*.zip > SHA256SUMS
+        sha256sum phi-*.tar.xz phi-*.zip > SHA256SUMS
         cat SHA256SUMS
 
     - name: Write the download index
@@ -47,11 +47,11 @@ runs:
         set -euo pipefail
         base="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
-        # build.zig names each tree `zol-<version>-<triple>`, with `+` as `.`
-        prefix="zol-${VERSION//+/.}-"
+        # build.zig names each tree `phi-<version>-<triple>`, with `+` as `.`
+        prefix="phi-${VERSION//+/.}-"
 
         targets=$(
-          for archive in zol-*.tar.xz zol-*.zip; do
+          for archive in phi-*.tar.xz phi-*.zip; do
             name="${archive%.tar.xz}"
             name="${name%.zip}"
             jq -n \

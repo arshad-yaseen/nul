@@ -1,5 +1,5 @@
 error[E0206]: expected u32, found u32 | none
-  --> test/fail/narrow_var.zol:10:16
+  --> test/fail/narrow_var.phi:10:16
    |
 10 |         return slot
    |                ^^^^ the wrong type

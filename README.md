@@ -1,4 +1,4 @@
-# Zol
+# Phi
 
 **As simple as Go, as bare as C. Memory safe at compile time, with nothing to annotate.**
 
@@ -20,24 +20,24 @@ Each set ships `SHA256SUMS` and an `index.json` naming the version, the commit,
 and every archive. Two URLs never move:
 
 ```
-https://github.com/arshad-yaseen/zol/releases/latest/download/index.json
-https://github.com/arshad-yaseen/zol/releases/download/dev/index.json
+https://github.com/arshad-yaseen/phi/releases/latest/download/index.json
+https://github.com/arshad-yaseen/phi/releases/download/dev/index.json
 ```
 
 Archives carry a build provenance attestation, so a download can be traced back
 to the commit and the workflow run that produced it:
 
 ```console
-$ gh attestation verify zol-*.tar.xz --repo arshad-yaseen/zol
+$ gh attestation verify phi-*.tar.xz --repo arshad-yaseen/phi
 ```
 
-[releases]: https://github.com/arshad-yaseen/zol/releases
+[releases]: https://github.com/arshad-yaseen/phi/releases
 
 ## Status
 
 Design first, implementation second. The front end is real: parsing with recovery,
 modules, generics instantiated on demand, and a typed control flow graph. It ends
-there: `zol` checks a program and prints its IR, and nothing runs.
+there: `phi` checks a program and prints its IR, and nothing runs.
 
 Nothing about memory is checked either, and the first sketch of an allocator has
 been taken back out while the model is redesigned. There is no standard library

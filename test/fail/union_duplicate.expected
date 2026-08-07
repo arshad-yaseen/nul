@@ -1,5 +1,5 @@
 error[E0254]: 'u32' is already a member of this union
- --> test/fail/union_duplicate.zol:6:27
+ --> test/fail/union_duplicate.phi:6:27
   |
 6 | type Twice = u32 | bool | Name
   |                           ^^^^ the same type again

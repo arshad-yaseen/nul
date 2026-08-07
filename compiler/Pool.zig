@@ -667,7 +667,7 @@ fn complementOf(value: i128, type_index: Index) i128 {
     };
 }
 
-/// Null outside `0 ..< fold_bits`, which bounds every type Zol has.
+/// Null outside `0 ..< fold_bits`, which bounds every type Phi has.
 fn shiftAmount(count: i128) ?std.math.Log2Int(i128) {
     if (count < 0) return null;
     if (count >= fold_bits) return null;

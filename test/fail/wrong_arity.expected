@@ -1,10 +1,10 @@
 error[E0213]: 'bump' takes 0 arguments, and this call has 1
-  --> test/fail/wrong_arity.zol:10:12
+  --> test/fail/wrong_arity.phi:10:12
    |
 10 |     return counter.bump(1)
    |            ^^^^^^^^^^^^^^ wrong number of arguments
 note: declared here
-  --> test/fail/wrong_arity.zol:4:5
+  --> test/fail/wrong_arity.phi:4:5
    |
  4 |     fn bump(self: Counter) Counter {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

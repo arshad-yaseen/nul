@@ -1,5 +1,5 @@
 error[E0207]: '+' mixes i32 and i64
- --> test/fail/mixed_types.zol:2:14
+ --> test/fail/mixed_types.phi:2:14
   |
 2 |     return a + b
   |              ^ two different types

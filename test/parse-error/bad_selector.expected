@@ -1,5 +1,5 @@
 error[E0101]: expected an identifier, found '+'
- --> test/parse-error/bad_selector.zol:2:19
+ --> test/parse-error/bad_selector.phi:2:19
   |
 2 |     return holder.+
   |                   ^ expected an identifier

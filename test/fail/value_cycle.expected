@@ -1,15 +1,15 @@
 error[E0234]: 'first' takes its value from itself
- --> test/fail/value_cycle.zol:3:13
+ --> test/fail/value_cycle.phi:3:13
   |
 3 | let third = first + 1
   |             ^^^^^ the circle closes here
 note: which needs 'second' here
- --> test/fail/value_cycle.zol:1:13
+ --> test/fail/value_cycle.phi:1:13
   |
 1 | let first = second + 1
   |             ^^^^^^
 note: which needs 'third' here
- --> test/fail/value_cycle.zol:2:14
+ --> test/fail/value_cycle.phi:2:14
   |
 2 | let second = third + 1
   |              ^^^^^

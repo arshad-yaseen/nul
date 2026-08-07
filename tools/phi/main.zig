@@ -16,7 +16,7 @@ pub fn main(init: std.process.Init) !u8 {
     var log = std.Io.File.stderr().writer(init.io, &log_buffer);
 
     const status = run(init, args, &out.interface, &log.interface) catch |err| status: {
-        try log.interface.print("zol: {t}\n", .{err});
+        try log.interface.print("phi: {t}\n", .{err});
         break :status 2;
     };
 
@@ -26,7 +26,7 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 const usage =
-    \\usage: zol <command> <entry>
+    \\usage: phi <command> <entry>
     \\
     \\An entry is one file. Everything it imports is part of the program.
     \\
@@ -65,11 +65,11 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
         request.path,
     ) catch |err| switch (err) {
         error.ReadFailed => {
-            try log.print("zol: cannot read '{s}'\n", .{request.path});
+            try log.print("phi: cannot read '{s}'\n", .{request.path});
             return 2;
         },
         error.SourceTooLarge => {
-            try log.print("zol: '{s}' is larger than the compiler can index\n", .{request.path});
+            try log.print("phi: '{s}' is larger than the compiler can index\n", .{request.path});
             return 2;
         },
         error.OutOfMemory => return err,
@@ -177,6 +177,6 @@ fn readArgs(args: []const [:0]const u8, out: *Writer, log: *Writer) !ArgsResult 
 
 fn misuse(log: *Writer, problem: []const u8) Writer.Error!u8 {
     assert(problem.len > 0);
-    try log.print("zol: {s}\n\n{s}", .{ problem, usage });
+    try log.print("phi: {s}\n\n{s}", .{ problem, usage });
     return 2;
 }

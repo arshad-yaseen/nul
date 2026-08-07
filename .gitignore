@@ -2,11 +2,11 @@
 zig-out/
 
 # what the publishing workflows leave in the working tree
-/zol-*.tar.xz
-/zol-*.zip
+/phi-*.tar.xz
+/phi-*.zip
 /SHA256SUMS
 /index.json
 /NOTES.md
 
 .DS_Store
-design.zol
+design.phi

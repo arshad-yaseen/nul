@@ -1,10 +1,10 @@
 error[E0234]: type 'Loop' is an alias of itself
- --> test/fail/alias_cycle.zol:2:14
+ --> test/fail/alias_cycle.phi:2:14
   |
 2 | type Twist = Loop
   |              ^^^^ the circle closes here
 note: which needs 'Twist' here
- --> test/fail/alias_cycle.zol:1:13
+ --> test/fail/alias_cycle.phi:1:13
   |
 1 | type Loop = Twist
   |             ^^^^^
