@@ -26,6 +26,50 @@ Do it right the first time. The second time may never come, and steady increment
 
 Do not allow potential latency spikes, exponential-complexity algorithms, or other showstoppers to slip through. When a problem is discovered, solve it. Do not defer.
 
+## The Compiler Is the Language Server
+
+There is one frontend. The same code that batch-checks a program must be able
+to sit behind an editor and answer questions about it, keystroke by keystroke,
+on input that is broken more often than not. Retrofitting that into a batch
+compiler is a rewrite, so every change is judged against it now.
+
+- **All semantics flow through one door.** Every semantic question is a
+  memoized unit of work, computed on demand. No eager whole-program passes,
+  and no unit reads another's half-built state. A finished, memoized result
+  is the only thing one unit may consume from another.
+
+- **A unit's outputs are attributable to it.** Diagnostics, types, and IR
+  must be traceable to the unit that produced them, so re-running one unit
+  can replace exactly its outputs and nothing else.
+
+- **Signatures are firewalls.** A caller consumes a signature, never a body.
+  An edit inside a function body must not invalidate anything outside that
+  body's own unit.
+
+- **Never key long-lived state by byte offset.** Offsets shift on every
+  keystroke. Identity is a declaration, a node, or an interned index. A span
+  is computed when a diagnostic is rendered, never stored as a key.
+
+- **Broken input is the common case.** Parsing always yields a tree for the
+  whole file, and analysis runs over trees with holes, poisoning locally
+  rather than skipping the file. A diagnostic budget may stop reporting,
+  never parsing or analyzing.
+
+- **Semantic questions are answerable without lowering.** The type of an
+  expression and the target of a name are data the checker produces.
+  Lowering is one consumer of those answers, not the only place they exist.
+
+- **The tree is lossless.** Every token, comment, and position is
+  recoverable from the tree plus its source.
+
+- **I/O stays at the edge.** The core analyzes sources it is handed, and
+  reaches disk only through one loading seam a host can replace with unsaved
+  editor buffers.
+
+- **State layers.** Append-only tables and index identity, so an incremental
+  host can stack a new generation over an old one and discard the old
+  wholesale. No in-place mutation a finished unit could observe.
+
 ## Safety
 
 ### Control Flow
