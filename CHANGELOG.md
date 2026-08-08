@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-08-08
 
 The language is now Phi: the binary is `phi`, and a source file ends in
 `.phi`. It is redesigned around one idea: a type may be several types, and
@@ -101,5 +101,6 @@ Initial release. `phi` checks a program and prints its typed IR. Nothing runs ye
 - `phi check <entry>` and `phi ir <entry>`.
 - `--std <dir>`, `--color auto|on|off`, and `--version`.
 
-[Unreleased]: https://github.com/arshad-yaseen/phi/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/arshad-yaseen/phi/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/arshad-yaseen/phi/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/arshad-yaseen/phi/releases/tag/0.1.0
