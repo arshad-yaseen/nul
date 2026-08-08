@@ -12,6 +12,7 @@ compiler/    the compiler, importable as the `compiler` module
 tools/phi/   the binary: argv, dispatch, exit codes
 lib/std/     the standard library, shipped as source beside the binary
 test/        file tests, one directory per kind
+docs/        the design, one document per area
 ```
 
 ## Commands
@@ -34,12 +35,14 @@ regression you just recorded as expected.
 
 1. `zig build test`. It takes under a second, so there is no reason to skip it.
 2. `zig fmt`.
-3. Touch `## [Unreleased]` in `CHANGELOG.md`, **only if a user would notice**:
+3. A change that settles or reshapes a design rewrites its document in
+   `docs/design/`, by the rules under `## Design`.
+4. Touch `## [Unreleased]` in `CHANGELOG.md`, **only if a user would notice**:
    the language, a diagnostic, the standard library, or the command line.
    Refactors, internals, tests, and CI changes get no entry. The section is a
    draft of the release notes, so follow the rules under `## Changelog`: one
    sentence, and amend the entry already there before adding one beside it.
-4. Commit and push **only when asked**, and then wait for CI. This holds
+5. Commit and push **only when asked**, and then wait for CI. This holds
    every time: work stays in the tree until the commit is requested.
 
 ## Commit messages
@@ -84,8 +87,8 @@ The changelog is read by someone deciding what an upgrade means, not by the
 reviewer of a diff. Every rule here follows from that.
 
 - **An entry is a headline, not documentation.** One sentence, two at the
-  most. The diagnostic teaches its own details and the commit body holds the
-  why, so an entry that needs a paragraph is trying to be one of those.
+  most. The diagnostic teaches its details and the design holds the why, so
+  an entry that needs a paragraph is trying to be one of those.
 - **Amend, never accumulate.** A change that refines something already under
   `[Unreleased]` edits that entry rather than adding a new one. The git log
   is the record of what happened. The changelog is the difference between
@@ -102,6 +105,22 @@ reviewer of a diff. Every rule here follows from that.
   `### Command line`, and `### Distribution`, each present only when it has
   entries, and the entries in a section share one shape so the list reads
   in one rhythm.
+
+## Design
+
+The design lives in `docs/design/`, one document per area, kept current. A
+fact has one home: a change that settles or reshapes a design rewrites its
+document in the same commit, the way a change rewrites the comment above
+it, and the git log is the record of what it used to say. Each area holds
+what is decided, why, and what was refused, written while the refused
+alternatives are fresh, and a design may settle before the compiler
+enforces it. The why earns its place where this language differs from its
+neighbors; the ground every language shares needs no defense. No document
+narrates the project's state or points at work to come.
+
+The division of labor: the design holds the shape and the why, the commit
+body holds the why of the diff, the changelog holds the headline, and the
+tests hold the proof.
 
 ## Releasing
 
