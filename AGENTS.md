@@ -360,7 +360,7 @@ The data plane is a small amount of code executed an enormous number of times. O
 
 ### Formatting
 
-- Run the standard formatter (`zig fmt` for Zig sources, the project's configured formatter for TypeScript/JavaScript sources).
+- Run the standard formatter, `zig fmt`, over every source.
 - **4 spaces of indentation**, not 2. More obvious at a distance.
 - **Hard limit: 100 columns per line.** No exceptions. Nothing should hide behind a horizontal scrollbar. Set a column ruler in your editor. To wrap a signature, call, or data structure, add a trailing comma and let the formatter do the rest.
 
@@ -378,7 +378,7 @@ Tools have costs. A small standardized toolbox is simpler to operate than an arr
 
 > "The right tool for the job is often the tool you are already using. Adding new tools has a higher cost than many people appreciate." John Carmack
 
-When writing a script, prefer one of the codebase's primary languages (Zig or TypeScript) over shell. This adds type safety, cross-platform portability, and raises the probability that the script works for everyone, not just those on a particular OS or shell.
+When writing a script, prefer Zig, the codebase's language, over shell. This adds type safety, cross-platform portability, and raises the probability that the script works for everyone, not just those on a particular OS or shell.
 
 Standardization reduces dimensionality as the team grows. Slower in the short term, faster in the long term.
 
