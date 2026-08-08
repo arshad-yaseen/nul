@@ -172,6 +172,9 @@ pub const Inst = struct {
         /// Uses `un`. Retypes a pointer and emits nothing.
         ptr_cast,
 
+        /// Uses `none`. Stops the program where it stands.
+        trap,
+
         /// Uses `un`. A value entering a union that lists it, or a union widening.
         union_init,
         /// Uses `probe`. Whether the union holds that member. Void where only a branch reads it.

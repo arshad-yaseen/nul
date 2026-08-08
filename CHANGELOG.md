@@ -8,7 +8,11 @@
   `*T | none` is one word, with `none` as the zero no valid pointer holds.
   A type past 4 GiB is refused with `E0261`.
 - `std.mem` opens the standard library: `size_of[T]()` and `align_of[T]()`
-  answer as constants, over intrinsics of the same names.
+  answer as constants, and `align_up` rounds an address to an alignment it
+  asserts is a power of two.
+- `std.debug.assert(ok)` arrives over a new `intrinsic.trap()`: a violated
+  contract stops the program where it stands. `std.math` opens with
+  `is_power_of_two`.
 - A union may stand in a bracket, so `Box[u32 | none]` means the union it
   spells.
 - The prelude arrives: `none`, `true`, `false`, and `bool` are declared once

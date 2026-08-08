@@ -4074,6 +4074,10 @@ fn checkIntrinsic(
     switch (which) {
         .ptr_cast => return check.intrinsicPtrCast(args[0], types[0], values[0]),
         .size_of, .align_of => return check.intrinsicLayoutOf(node, which, types[0]),
+        .trap => {
+            _ = try check.emit(.trap, .void_type, .{ .none = {} });
+            return .void_value;
+        },
     }
 }
 

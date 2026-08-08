@@ -254,6 +254,7 @@ fn inst(
 
     try writer.print("  %{d} = {t}", .{ local, it.tag });
     switch (it.tag) {
+        .trap => {},
         .param, .local => {
             if (data.name != .empty) try writer.print(" {s}", .{comp.pool.stringText(data.name)});
         },

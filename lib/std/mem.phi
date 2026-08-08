@@ -1,3 +1,6 @@
+import std.debug
+import std.math
+
 /// The bytes a value of type T occupies.
 pub fn size_of[T]() u64 {
     return intrinsic.size_of[T]()
@@ -6,4 +9,15 @@ pub fn size_of[T]() u64 {
 /// The alignment a value of type T requires, in bytes.
 pub fn align_of[T]() u64 {
     return intrinsic.align_of[T]()
+}
+
+/// Round an address up to the next (or current) aligned address.
+/// The alignment must be a power of two.
+pub fn align_up[T](addr: T, alignment: T) T {
+    debug.assert(math.is_power_of_two(alignment))
+
+    // 11 + 8 - 1 =       18 = 00010010
+    // ~ (8 - 1)  =       ~7 = 11111000
+    // 18 & ~7    = 00010000 =       16
+    return (addr + alignment - 1) & ~(alignment - 1)
 }

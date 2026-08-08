@@ -12,6 +12,8 @@ pub const Intrinsic = enum {
     size_of,
     /// `intrinsic.align_of[T]()`, the alignment a value of `T` requires, a constant.
     align_of,
+    /// `intrinsic.trap()`, stopping the program where it stands.
+    trap,
 
     /// Validated before typing a call. Type rules live with the case that needs them.
     pub const Shape = struct {
@@ -23,6 +25,7 @@ pub const Intrinsic = enum {
         return switch (intrinsic) {
             .ptr_cast => .{ .type_params = 1, .params = 1 },
             .size_of, .align_of => .{ .type_params = 1, .params = 0 },
+            .trap => .{ .type_params = 0, .params = 0 },
         };
     }
 

@@ -1,0 +1,4 @@
+fn stop()
+b0:
+  %0 = trap
+  return
