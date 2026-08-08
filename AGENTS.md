@@ -26,49 +26,41 @@ Do it right the first time. The second time may never come, and steady increment
 
 Do not allow potential latency spikes, exponential-complexity algorithms, or other showstoppers to slip through. When a problem is discovered, solve it. Do not defer.
 
-## The Compiler Is the Language Server
+## Answers, Not Passes
 
-There is one frontend. The same code that batch-checks a program must be able
-to sit behind an editor and answer questions about it, keystroke by keystroke,
-on input that is broken more often than not. Retrofitting that into a batch
-compiler is a rewrite, so every change is judged against it now.
+There is one engine and many hosts. A batch check, an editor answering
+keystroke by keystroke, an incremental rebuild after an edit, and a parallel
+sweep across cores are the same code running the same units on different
+schedules. None of them is a mode, and retrofitting any of them into a
+pass-ordered compiler is a rewrite, so one rule judges every change now:
 
-- **All semantics flow through one door.** Every semantic question is a
-  memoized unit of work, computed on demand. No eager whole-program passes,
-  and no unit reads another's half-built state. A finished, memoized result
-  is the only thing one unit may consume from another.
+**Every semantic question is a bounded, memoized unit of work, and a unit may
+depend on other units' finished answers, never on how, when, where, or in
+what order anything ran.**
 
-- **A unit's outputs are attributable to it.** Diagnostics, types, and IR
-  must be traceable to the unit that produced them, so re-running one unit
-  can replace exactly its outputs and nothing else.
+The rest is that rule meeting the code. Units compute on demand, so nothing
+is computed unasked and nothing twice, which is where the speed comes from.
+No unit reads another's half-built state, which is what leaves a schedule
+free to reorder, thread, or replay them. A caller consumes a callee's
+signature, never its body, so an edit inside a body invalidates that body
+alone. Outputs, whether diagnostics, types, or IR, are attributable to the
+unit that produced them, so re-running one replaces exactly its own work.
+The type of an expression is data the checker produces, so lowering is one
+consumer of the answer rather than the only place it exists, and the tree is
+lossless, every token, comment, and position recoverable from it plus its
+source.
+Identity is a declaration, a node, or an interned index, never a byte offset
+that shifts under every keystroke, and long-lived tables are append-only, so
+a new generation can stack over an old one. Rendered output is canonical,
+file order for diagnostics and instance order for IR, so no schedule can
+show through it. Sources arrive through one loading seam a host can replace
+with unsaved buffers, and I/O reaches no deeper. And broken input is the
+common case: parsing always yields a whole tree, analysis poisons locally
+and keeps answering, and a budget may stop reporting, never analyzing.
 
-- **Signatures are firewalls.** A caller consumes a signature, never a body.
-  An edit inside a function body must not invalidate anything outside that
-  body's own unit.
-
-- **Never key long-lived state by byte offset.** Offsets shift on every
-  keystroke. Identity is a declaration, a node, or an interned index. A span
-  is computed when a diagnostic is rendered, never stored as a key.
-
-- **Broken input is the common case.** Parsing always yields a tree for the
-  whole file, and analysis runs over trees with holes, poisoning locally
-  rather than skipping the file. A diagnostic budget may stop reporting,
-  never parsing or analyzing.
-
-- **Semantic questions are answerable without lowering.** The type of an
-  expression and the target of a name are data the checker produces.
-  Lowering is one consumer of those answers, not the only place they exist.
-
-- **The tree is lossless.** Every token, comment, and position is
-  recoverable from the tree plus its source.
-
-- **I/O stays at the edge.** The core analyzes sources it is handed, and
-  reaches disk only through one loading seam a host can replace with unsaved
-  editor buffers.
-
-- **State layers.** Append-only tables and index identity, so an incremental
-  host can stack a new generation over an old one and discard the old
-  wholesale. No in-place mutation a finished unit could observe.
+The test for any change is one question. Would the answer differ if units ran
+in another order, on another thread, or against an edited buffer? If it
+could, it is a bug today, whether or not the current driver can reach it.
 
 ## Safety
 
