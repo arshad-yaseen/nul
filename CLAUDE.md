@@ -84,9 +84,8 @@ The changelog is read by someone deciding what an upgrade means, not by the
 reviewer of a diff. Every rule here follows from that.
 
 - **An entry is a headline, not documentation.** One sentence, two at the
-  most. The diagnostic teaches its own details, `design.phi` holds the
-  semantics, and the commit body holds the why, so an entry that needs a
-  paragraph is trying to be one of those.
+  most. The diagnostic teaches its own details and the commit body holds the
+  why, so an entry that needs a paragraph is trying to be one of those.
 - **Amend, never accumulate.** A change that refines something already under
   `[Unreleased]` edits that entry rather than adding a new one. The git log
   is the record of what happened. The changelog is the difference between
