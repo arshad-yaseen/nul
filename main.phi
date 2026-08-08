@@ -1,0 +1,8 @@
+import std.mem
+
+pub fn main() u64 {
+    let a = mem.size_of[u32]()
+    let b = mem.size_of[*u32]()
+
+    return a
+}
