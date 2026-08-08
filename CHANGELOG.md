@@ -2,194 +2,78 @@
 
 ## [Unreleased]
 
-The language is being redesigned around union types. A type may be several
-types, and a branch that settles which one narrows the value to it, so
-optionals, errors, and sum types stop being three features and become one.
-This release strips what that design replaces, so the rest is built rather
-than retrofitted.
+The language is now Phi: the binary is `phi`, and a source file ends in
+`.phi`. It is redesigned around one idea: a type may be several types, and
+a branch that settles which one narrows the value to it, so optionals,
+errors, and sum types stop being three features and become one. This
+release removes what that idea replaces and builds the rest on unions.
 
-- The language is now Phi. The binary is `phi`, a source file ends in `.phi`,
-  and the repository is `arshad-yaseen/phi`. Only the name changed, so a
-  program that compiled under the old one still compiles once its files are
-  renamed.
-- Optionals `?T` and error unions `!T` are gone, along with the one universal
-  error set and the `error Name` declaration. `T | none` is the first and
-  `T | SomeError` is the second, and neither wraps the value it carries.
-- `try`, `catch`, `orelse`, `null`, and the `|v|` capture go with them. One
-  operator, `or`, takes over from the first three.
-- `while` is gone. `loop` replaces it.
-- `loop { }` runs until a `break`, and `loop cond { }` runs while a union
-  condition holds its first member. `break` and `continue` leave and restart
-  the innermost loop, and every `defer` on the way out runs first.
-- A label written `outer: loop` names a loop, and `break :outer` or
-  `continue :outer` reaches it from inside another one.
-- A loop is an expression: `break v` gives it a value, `else` says what it is
-  when the condition fails, and `break :outer v` does both. A loop with no
-  condition needs no `else`, because only `break` leaves it.
-- `struct X { }` is now `type X = { }`. One keyword declares a type, and what
-  stands after the `=` says which kind it is. A generic still writes its
-  parameters before the `=`, as `type Box[T] = { }`.
-- A struct literal names the type it builds, as `Point.{ x: 1 }`. The bare
-  `.{ }` is gone, and with it the rule that a union in a type annotation could
-  not say which member a literal meant. `E0216` retires.
-- `use` is now `import`.
-- `!` before a value is now `not`. `!=` is unchanged.
-- `E0217`, and `E0224` through `E0228`, retire.
-- A declaration that writes more than 16 type parameters is now refused with
-  `E0118` instead of crashing the compiler. A generic method inside a generic
-  struct may hold 16 of its own on top of the struct's.
-- A function body is always a block. The `fn f() T = expr` form is gone.
-- `intrinsic` is a keyword. The standard library reaches the operations the
-  compiler performs itself as `intrinsic.name[T](...)`, and `E0251` refuses it
-  anywhere else.
-- `intrinsic.ptr_cast[T](pointer)` retypes a pointer. It keeps what the
-  pointer may do, so a read-only pointer cannot become one that writes.
-- Bitwise operators `&`, `|`, `^`, `~`, `<<`, and `>>`, for integers. `&` is
-  address-of before a value and bitwise and between two, told apart by where
-  it sits, the way `-` already was.
-- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>=`, which reads its place
-  once.
-- `p.*` reads what a pointer points at, and is a place when the pointer is
-  `*var T`.
-- `a[i]` indexes, and carries type arguments where the base is generic.
-- `defer` takes what a statement takes: a call, an assignment, or a block.
-- A line that opens with `.` continues the line above, so a method chain may
-  wrap across lines.
-- Bitwise operators bind tighter than comparison, so `flags & mask == 0` groups
-  as `(flags & mask) == 0`.
-- A message names an operator the way source writes it. `'-' cannot be applied
-  to bool`, not `'sub'`.
+### Language
+
+- `type Timeout` declares a unit type, a type whose only value is its name.
+- `A | B` is a union type: members are distinct, order is part of the type,
+  and a member that is itself a union flattens in place, so aliases compose.
+- A value enters a union by membership, unwrapped, and comes back out only
+  through a branch that proves the member.
+- A condition is a union asking whether it holds its first member, so `if`,
+  `and`, and `or` all branch on that one question.
+- `e is T` tests which member a union holds and narrows the tested name: in
+  both branches, across `and`, and past a branch that leaves.
+- `e or f` is the first member of `e`, or else `f`: `or 8080` substitutes,
+  `or return` propagates, `or e { ... }` handles, and on a `bool` it stays
+  logical or.
+- `match` splits a union into one arm per member, exhaustive by counting,
+  and `else` is the rest as a type rather than a blind default.
+- `bool` left the compiler: `type bool = true | false` is a declaration
+  like any other, found by name where a truth value is written.
+- An alias may be generic: `type Maybe[T] = T | none` instantiates wherever
+  a type is written, and `Maybe[u32]` is `u32 | none` exactly.
+- An annotation seals a constant, so `let b: u64 = 2` is a `u64` everywhere
+  it goes, the way Zig, Rust, and Go read it. A bare literal still takes
+  any type its value fits.
+- Gone: optionals `?T`, error unions `!T`, `error Name`, `try`, `catch`,
+  `orelse`, `null`, and the `|v|` capture. A union and `or` are all of
+  them, with nothing wrapped.
+- `loop` replaces `while`: `loop { }` runs until a `break`, `loop cond { }`
+  while the condition holds, a label reaches an outer loop, and `break v`
+  with `else` makes a loop an expression.
+- `type X = { }` replaces `struct X { }`: one keyword declares a struct, a
+  union, an alias, or a unit.
+- A struct literal names the type it builds, `Point.{ x: 1 }`, and the bare
+  `.{ }` is gone.
+- `use` is now `import`, and prefix `!` is now `not`.
+- New operators: bitwise `&`, `|`, `^`, `~`, `<<`, `>>`, compound
+  assignment, `p.*` to read through a pointer, and `a[i]` to index.
+- `intrinsic` is a keyword only the standard library reaches, and
+  `intrinsic.ptr_cast[T](p)` retypes a pointer without loosening it.
 - A method without `pub` is private to its file, the way every other
   declaration already was.
-- `-x` on the smallest value of a signed type reports that it does not fit,
-  where it used to crash the compiler.
-- The help for a size cycle suggests breaking it with `*T` or `*T | none`,
-  and no longer with `?*T`, which stopped being syntax when optionals left.
-- `type Name` with nothing assigned declares a unit type, whose only value
-  is its name. `type none` and an error such as `type Timeout` are both
-  this and nothing more.
-- An alias may be generic: `type Maybe[T] = T | none` instantiates as
-  `Maybe[u32]`, in a signature, an annotation, an `is`, or a match arm. An
-  alias is not a new type, so `Maybe[u32]` is `u32 | none` exactly, and the
-  right side flattens and composes the way any written union does. An
-  argument that repeats a member is refused with `E0254` at the
-  instantiation, an alias of itself with `E0234`, and one that instantiates
-  without bottoming out with `E0241`.
-- A type may be a union, written `A | B` wherever a type is written.
-  Members are distinct types, order is part of the type, and a member that
-  is itself a union flattens in place, so aliases compose. A repeated
-  member is refused with `E0254`, and a union past 255 members with
-  `E0255`.
-- A value whose type a union lists becomes the union wherever the union is
-  asked for: at `return`, an argument, a field, or an annotated binding. A
-  union value becomes a wider union the same way. Membership decides, and
-  nothing is wrapped.
-- `e is T` tests which member a union holds, and `e is not T` the
-  opposite. `T` has to be one of the members: `E0256` refuses `is` off a
-  union, and `E0257` a type the union does not list.
-- A branch that settles an `is` narrows the tested name. `let` bindings
-  and parameters only, in both arms, holding across `and`, and to the
-  rest of the union where a member was denied. A `var` never narrows, so
-  bind it to a `let` first.
-- `e or f` on a union is the first member of `e`, or else `f`. `or 8080`
-  substitutes, `or return` sends the rest up unchanged, `or e { ... }`
-  binds the rest and handles it, and `or` on a bool stays logical or.
-  `E0256` refuses the handler form off a union.
-- An `or` that ends in `return`, `break`, or `continue` may stand as a
-  statement, and what it proved holds for the rest of the block: after
-  `r is u32 or return 0`, `r` is `u32`. A branch that leaves narrows the
-  same way, so `if r is not u32 { return 0 }` leaves `r` a `u32`.
-- A side that a constant condition already decided is never entered, so
-  it is no longer checked: `false and f()` compiles whether or not the
-  call would.
-- `bool` left the compiler. `type bool = true | false` is a declaration
-  like any other, `true` and `false` are unit types rather than keywords,
-  and a file that tests anything declares the three or imports them.
-  Comparisons find `bool` by name and refuse to fold without it, with
-  `E0258`.
-- A condition is a union, and asks whether it holds its first member.
-  `if`, `and`, and `or` all branch on that one question, so the
-  special-cased boolean lowering is gone. A condition that cannot answer
-  reports `E0256`, the same refusal `is` and `or` give, and `E0229`
-  retires.
-- A constant can hold a union's value: `let truth = 1 < 2` is a `bool`
-  constant, folded, and `if truth` branches on it the way it branches on
-  any union.
-- Every commit on `main` that passes CI is now cross-compiled and published as
-  a dev build, under the version it reports, at the `dev` tag. Numbered
-  releases stay the only supported builds. Both channels ship an `index.json`
-  naming the version, the commit, and every archive with its checksum.
-- A build with no history to read reports `X.Y.Z-dev` where it used to report
-  `X.Y.Z`, so a source tree unpacked without its `.git` no longer claims to be
-  the release it still precedes.
-- Both commands close with how long the check took, written to standard error
-  as `checked in 1.234ms`. It is measured on a monotonic clock, from reading
-  the entry to the end of compilation, and it prints whether the program
-  checked or not. Standard output stays the IR and nothing else.
-- A file with a parse error is still checked. The declarations that survive
-  recovery register and resolve, other files import them as usual, and
-  analysis reports alongside the parse errors instead of stopping at the
-  first broken line.
-- The parser always reads the whole file. Reporting stops at its budget of
-  64, nesting past the limit reports once, and a run of junk between two
-  good items reports once, where any of them used to abandon the rest of
-  the file.
-- `or` folds when its left side is a union constant, so a top-level binding
-  can read `let port = maybe or 8080`, where it used to crash the compiler.
-- `&` in a top-level binding reports that taking an address is not constant,
-  where it used to crash the compiler.
-- A call chain of any depth compiles. Function bodies are checked from a flat
-  worklist instead of inside the call that first needed them, so `E0249` now
-  reports only a real definition chain, declarations whose meaning needs the
-  next one, and never call depth.
-- Diagnostics print in file order, by file and then by position, instead of
-  the order checking discovered them in.
-- `phi ir` prints functions in the order the program first needed them, so
-  the output no longer depends on which body finished first.
-- A number literal is validated exactly. A misplaced `_`, a leading zero, an
-  uppercase base prefix, a second `.` or exponent, and a digit outside the
-  base each get their own `E0247` message, where one generic refusal covered
-  them all. A hex float such as `0x1.8p1` now folds instead of being refused.
-- `match e { }` splits a union into arms. An arm labels one member
-  (`Timeout => retry()`), several (`Timeout | NotFound =>`), or an alias,
-  which covers the members it names, and inside the arm the scrutinee is what
-  the label proved, the way a branch that passed an `is` sees it. No arm
-  binds a name: a scrutinee with no name is bound with `let` first, the rule
-  `is` already follows.
-- A match is exhaustive by counting. A member no arm handles is refused with
-  `E0259`, and an arm that cannot run, a repeated member, an arm after
-  `else`, or an `else` with nothing left, with `E0260`. An arm off the union
-  reports `E0257`, and a match on something that is not a union `E0256`.
-- `else =>` in a match covers the members no other arm did, and is the rest
-  as a type rather than a blind default: one member left stands bare, and
-  several stay a union, so the rest can be handed on whole.
-- A match is an expression, typed the way `if` arms are, and a match whose
-  arms all leave satisfies a function body on its own. Arms that leave narrow
-  what follows the match, the way a branch that leaves narrows what follows.
-- `match` is a keyword and `=>` a token, so a declaration named `match` must
-  be renamed. A malformed arm reports `E0119`.
-- A match needs no 'bool' in scope. Its member tests belong to the compiler
-  and only a branch reads them, so a file is asked for 'bool' where it writes
-  a truth value: an 'is', a comparison, 'and', or 'not'.
-- `E0258` now says what to declare: 'type true', 'type false', and
-  'type bool = true | false'.
-- An annotation seals a constant. `let b: u64 = 2` is a `u64` everywhere it
-  goes, so `a + b` against a `u32` reports `E0207` where the constant used
-  to re-fit by value, which is how Zig, Rust, and Go read the same program.
-  A bare literal stays untyped and takes any type its value fits, so
-  `let b = 2` works everywhere it did.
-- A union constant gives a member back only through the branch that proves
-  it, like every other union value. `let d: u8 = a` off a `u32 | u8`
-  constant used to extract by value, even when the union held the `u32`.
-- A field or a method now reaches the member a branch proved, so
-  `if shape is Circle { shape.area() }` calls Circle's method, where the
-  receiver used to look up on the whole union and miss.
-- A condition or scrutinee that itself leaves, as in `if return 1 { }`,
-  now compiles and drops the unreachable branch, where it used to crash the
-  compiler.
-- An arm every path leaves out of, such as a block ending in an `if` whose
-  branches both return, no longer owes its `if` or match a value, where it
-  used to report that a value was expected and nothing found.
+
+### Compiler
+
+- A parse error stops nothing: the parser reads the whole file, and the
+  declarations that survive recovery are checked and importable.
+- Function bodies check from a flat worklist, so a call chain of any depth
+  compiles.
+- Output is deterministic: diagnostics print in file order, and `phi ir`
+  prints functions in the order the program first needed them.
+- Number literals are validated exactly, hex floats included, each mistake
+  with its own message.
+- Edges that crashed now report: `-x` on the smallest signed value, and
+  `&` in a top-level binding.
+- `E0216`, `E0217`, and `E0224` through `E0229` retire with the features
+  they policed.
+
+### Command line
+
+- Both commands close with `checked in 1.234ms` on standard error, measured
+  from reading the entry to the end of compilation.
+
+### Distribution
+
+- Every commit on `main` that passes CI is published as a dev build at the
+  `dev` tag, with an `index.json` naming the version, the commit, and every
+  checksum. Numbered releases stay the only supported builds.
 
 ## [0.1.0] - 2026-08-04
 
