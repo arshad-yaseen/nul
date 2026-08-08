@@ -1,0 +1,6 @@
+type Cycle[T] = Cycle[T]
+
+fn use_it(v: Cycle[u32]) u32 {
+    _ = v
+    return 0
+}

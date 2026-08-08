@@ -59,6 +59,7 @@ fn node(
             try flag(writer, it.is_pub, "pub");
             try writer.writeByte('\n');
             try docs(ast, writer, index, below);
+            for (it.type_params) |param| try node(ast, writer, param, below, "");
             try node(ast, writer, it.aliased, below, "type");
         },
         .unit_decl => |it| {

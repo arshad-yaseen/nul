@@ -661,10 +661,16 @@ fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
     }
     try self.expectToken(.eq);
 
-    // a generic 'type' is a struct, until an alias can instantiate
-    if (self.at(.l_brace) == false and members_start == top) {
+    if (self.at(.l_brace) == false) {
         const aliased = try self.parseType();
-        return self.addUnary(.alias_decl, type_token, aliased);
+        const start = self.extraStart();
+        try self.extraList(self.scratch.items[top..members_start]);
+        try self.extraNode(aliased);
+        return self.addNode(.{
+            .tag = .alias_decl,
+            .main_token = type_token,
+            .data = .{ .extra = start },
+        });
     }
 
     const lbrace = self.eatToken(.l_brace);

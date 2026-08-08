@@ -1,0 +1,8 @@
+type none
+
+type Maybe[T] = T | none
+
+fn collapse(v: Maybe[none]) u32 {
+    _ = v
+    return 0
+}

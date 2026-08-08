@@ -167,7 +167,7 @@ pub const Unit = struct {
     kind: Kind,
     index: u32,
 
-    pub const Kind = enum(u8) { decl, rows, embedding, signature, body };
+    pub const Kind = enum(u8) { decl, rows, alias, embedding, signature, body };
 
     pub fn forDecl(index: Decl.Index) Unit {
         return .{ .kind = .decl, .index = index.int() };
@@ -423,6 +423,7 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
     const ok = switch (unit.kind) {
         .decl => try comp.runDecl(@enumFromInt(unit.index)),
         .rows => try Check.structRows(comp, @enumFromInt(unit.index)),
+        .alias => try Check.aliasInstance(comp, @enumFromInt(unit.index)),
         .embedding => try Check.structEmbedding(comp, @enumFromInt(unit.index)),
         .signature => try Check.fnSignature(comp, @enumFromInt(unit.index)),
         .body => try Check.fnBody(comp, @enumFromInt(unit.index)),
@@ -434,7 +435,10 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
         .import => return Module.resolveImport(comp, decl_index),
-        .type_alias => return Check.typeAlias(comp, decl_index),
+        .type_alias => {
+            if (comp.isGeneric(decl_index)) return true;
+            return Check.typeAlias(comp, decl_index);
+        },
         .unit_decl => {
             _ = try comp.pool.intern(comp.gpa, .{ .type_unit = decl_index });
             return true;
@@ -455,7 +459,7 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
 fn unitState(comp: *const Compilation, unit: Unit) Decl.State {
     return switch (unit.kind) {
         .decl => comp.declAt(@enumFromInt(unit.index)).state,
-        .rows, .signature => comp.instanceAt(@enumFromInt(unit.index)).rows_state,
+        .rows, .alias, .signature => comp.instanceAt(@enumFromInt(unit.index)).rows_state,
         .embedding, .body => comp.instanceAt(@enumFromInt(unit.index)).deep_state,
     };
 }
@@ -463,7 +467,7 @@ fn unitState(comp: *const Compilation, unit: Unit) Decl.State {
 fn setUnitState(comp: *Compilation, unit: Unit, state: Decl.State) void {
     switch (unit.kind) {
         .decl => comp.declPtr(@enumFromInt(unit.index)).state = state,
-        .rows, .signature => comp.instancePtr(@enumFromInt(unit.index)).rows_state = state,
+        .rows, .alias, .signature => comp.instancePtr(@enumFromInt(unit.index)).rows_state = state,
         .embedding, .body => comp.instancePtr(@enumFromInt(unit.index)).deep_state = state,
     }
 }
@@ -480,6 +484,7 @@ fn reportCycle(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!v
             .import => "this import goes in a circle",
             .struct_decl, .unit_decl, .fn_decl => "this definition goes in a circle",
         },
+        .alias => try comp.fmt("type '{s}' is an alias of itself", .{name}),
         .embedding => try comp.fmt("'{s}' holds itself by value, so it has no size", .{name}),
         .rows, .signature, .body => "this definition goes in a circle",
     };
@@ -538,7 +543,8 @@ pub fn instantiate(
     origin: Origin,
 ) Allocator.Error!Pool.Instance {
     assert(comp.declAt(decl_index).kind == .struct_decl or
-        comp.declAt(decl_index).kind == .fn_decl);
+        comp.declAt(decl_index).kind == .fn_decl or
+        comp.declAt(decl_index).kind == .type_alias);
 
     if (args.len == 0) {
         if (comp.declAt(decl_index).plain_instance.unwrap()) |instance| return instance;
@@ -1032,6 +1038,36 @@ test "instantiation identity is index equality" {
     try testing.expectEqual(rows[1].type, comp.instanceType(instance));
     // `Box[u8]` is another type entirely
     try testing.expect(rows[0].type != rows[2].type);
+}
+
+test "a generic alias is the type it names, not a new one" {
+    const gpa = testing.allocator;
+
+    var comp: Compilation = undefined;
+    try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
+    defer comp.deinit();
+
+    // `return b` compiles only because the alias and the union are one type
+    try comp.compile(try testSource(gpa,
+        \\type none
+        \\type Maybe[T] = T | none
+        \\fn pick(a: Maybe[i64], b: i64 | none) Maybe[i64] {
+        \\    _ = a
+        \\    return b
+        \\}
+        \\
+    ));
+    try testing.expectEqual(0, comp.diagnostics.items.len);
+
+    const pick = comp.moduleAt(.root).findDecl("pick").?;
+    const instance = try comp.instantiate(pick, &.{}, .{
+        .module = .root,
+        .node = comp.declAt(pick).node,
+    });
+    const rows = comp.instanceRows(instance);
+    try testing.expectEqual(2, rows.len);
+    try testing.expectEqual(rows[0].type, rows[1].type);
+    try testing.expectEqual(rows[0].type, comp.instanceType(instance));
 }
 
 test "a call chain compiles at any depth" {

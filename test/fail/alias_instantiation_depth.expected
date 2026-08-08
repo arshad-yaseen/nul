@@ -1,0 +1,49 @@
+error[E0241]: this instantiates more than 64 levels deep
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^ the limit is here
+  |
+  = help: a type or function that instantiates itself never bottoms out
+note: while checking 'Deep[***************************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[**************************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[*************************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[************************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[***********************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[**********************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[*********************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: while checking 'Deep[********************************************************u32]', needed here
+ --> test/fail/alias_instantiation_depth.phi:1:16
+  |
+1 | type Deep[T] = Deep[*T]
+  |                ^^^^^^^
+note: and 56 more instantiation levels
+

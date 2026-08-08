@@ -1,0 +1,4 @@
+type Maybe[T] = T | none
+pub type Pair[L, R] = L | R
+type Boxes[T] = Box[T]
+type Indirect[T] = *var T | none

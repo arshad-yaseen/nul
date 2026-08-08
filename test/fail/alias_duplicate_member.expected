@@ -1,0 +1,13 @@
+error[E0254]: 'none' is already a member of this union
+ --> test/fail/alias_duplicate_member.phi:3:21
+  |
+3 | type Maybe[T] = T | none
+  |                     ^^^^ the same type again
+  |
+  = help: members are distinct types, and an alias is not a new type
+note: while checking 'Maybe[none]', needed here
+ --> test/fail/alias_duplicate_member.phi:5:16
+  |
+5 | fn collapse(v: Maybe[none]) u32 {
+  |                ^^^^^^^^^^
+

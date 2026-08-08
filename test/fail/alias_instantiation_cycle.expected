@@ -1,0 +1,11 @@
+error[E0234]: type 'Cycle[u32]' is an alias of itself
+ --> test/fail/alias_instantiation_cycle.phi:1:17
+  |
+1 | type Cycle[T] = Cycle[T]
+  |                 ^^^^^^^ the circle closes here
+note: while checking 'Cycle[u32]', needed here
+ --> test/fail/alias_instantiation_cycle.phi:3:14
+  |
+3 | fn use_it(v: Cycle[u32]) u32 {
+  |              ^^^^^^^^^
+

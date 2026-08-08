@@ -68,6 +68,13 @@ than retrofitted.
 - `type Name` with nothing assigned declares a unit type, whose only value
   is its name. `type none` and an error such as `type Timeout` are both
   this and nothing more.
+- An alias may be generic: `type Maybe[T] = T | none` instantiates as
+  `Maybe[u32]`, in a signature, an annotation, an `is`, or a match arm. An
+  alias is not a new type, so `Maybe[u32]` is `u32 | none` exactly, and the
+  right side flattens and composes the way any written union does. An
+  argument that repeats a member is refused with `E0254` at the
+  instantiation, an alias of itself with `E0234`, and one that instantiates
+  without bottoming out with `E0241`.
 - A type may be a union, written `A | B` wherever a type is written.
   Members are distinct types, order is part of the type, and a member that
   is itself a union flattens in place, so aliases compose. A repeated

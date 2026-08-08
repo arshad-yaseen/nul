@@ -1,0 +1,6 @@
+type Deep[T] = Deep[*T]
+
+fn use_it(v: Deep[u32]) u32 {
+    _ = v
+    return 0
+}

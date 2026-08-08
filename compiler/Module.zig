@@ -189,6 +189,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
                 .kind = .type_alias,
                 .node = node,
                 .name_token = decl.name_token,
+                .type_params = @intCast(decl.type_params.len),
             }),
             .unit_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .unit_decl,

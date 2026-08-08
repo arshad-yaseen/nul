@@ -1,0 +1,40 @@
+type none
+type Timeout
+
+type Maybe[T] = T | none
+type Fallible[T] = T | Timeout
+
+type Box[T] = {
+    item: T
+
+    fn get(self: Box[T]) T {
+        return self.item
+    }
+}
+type Boxes[T] = Box[T]
+
+fn find(n: u32) Maybe[u32] {
+    return n
+}
+
+fn longhand(n: u32) u32 | none {
+    return find(n)
+}
+
+fn widen(n: u32) Maybe[Fallible[u32]] {
+    return find(n)
+}
+
+fn settle(v: Maybe[u32]) u32 {
+    match v {
+        u32 => return v
+        none => return 0
+    }
+}
+
+fn drive(n: u32) u32 {
+    let r = find(n) or 0
+    let box = Boxes[u32].{ item: r }
+    _ = widen(n)
+    return box.get() + settle(find(n))
+}

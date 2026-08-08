@@ -384,7 +384,12 @@ pub const View = union(enum) {
         type_params: []const Node.Index,
         members: []const Node.Index,
     };
-    pub const AliasDecl = struct { name_token: Token.Index, is_pub: bool, aliased: Node.Index };
+    pub const AliasDecl = struct {
+        name_token: Token.Index,
+        is_pub: bool,
+        type_params: []const Node.Index,
+        aliased: Node.Index,
+    };
     pub const UnitDecl = struct { name_token: Token.Index, is_pub: bool };
     pub const FnDecl = struct {
         name_token: Token.Index,
@@ -472,11 +477,15 @@ inline fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Da
                 .members = payload.list(),
             } };
         },
-        .alias_decl => .{ .alias_decl = .{
-            .name_token = main.after(1),
-            .is_pub = tree.isPub(main),
-            .aliased = data.node,
-        } },
+        .alias_decl => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .alias_decl = .{
+                .name_token = main.after(1),
+                .is_pub = tree.isPub(main),
+                .type_params = payload.list(),
+                .aliased = payload.node(),
+            } };
+        },
         .unit_decl => .{ .unit_decl = .{
             .name_token = main.after(1),
             .is_pub = tree.isPub(main),

@@ -83,6 +83,21 @@ pub fn typeAlias(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!boo
     return resolved != .poison;
 }
 
+/// The aliased type with this instantiation's arguments bound.
+pub fn aliasInstance(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool {
+    const decl_index = comp.instanceDecl(instance);
+    assert(comp.declAt(decl_index).kind == .type_alias);
+
+    var buffer: [bindings_max]Binding = undefined;
+    const bindings = try bindTypeParams(comp, instance, &buffer);
+    var check = context(comp, decl_index, bindings);
+
+    const view = check.tree.viewOf(check.declNode(decl_index)).alias_decl;
+    const resolved = try check.resolveWrittenType(view.aliased);
+    comp.instancePtr(instance).type = resolved;
+    return resolved != .poison;
+}
+
 pub fn topLevelLet(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
     var check = context(comp, decl_index, &.{});
     const view = check.tree.viewOf(check.declNode(decl_index)).var_decl;
@@ -266,6 +281,7 @@ fn bindTypeParams(
     const own = switch (tree.viewOf(decl.node)) {
         .struct_decl => |view| view.type_params,
         .fn_decl => |view| view.type_params,
+        .alias_decl => |view| view.type_params,
         else => unreachable,
     };
 
@@ -416,6 +432,16 @@ fn resolveUnionType(
     }
 }
 
+fn failGenericBare(check: *Check, node: Node.Index, name: []const u8) Allocator.Error!void {
+    @branchHint(.cold);
+    try check.fail(node, .{
+        .code = .generic_arguments,
+        .message = try check.comp.fmt("'{s}' is generic, so it needs its arguments", .{name}),
+        .label = "no arguments here",
+        .help = try check.comp.fmt("write '{s}[...]' with one type per parameter", .{name}),
+    });
+}
+
 fn failTooWide(check: *Check, node: Node.Index) Allocator.Error!void {
     @branchHint(.cold);
     try check.fail(node, .{
@@ -458,18 +484,17 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
     switch (decl.kind) {
         .struct_decl => {
             if (comp.typeParamCount(decl_index) > 0) {
-                try check.fail(node, .{
-                    .code = .generic_arguments,
-                    .message = try comp.fmt("'{s}' is generic, so it needs its arguments", .{name}),
-                    .label = "no arguments here",
-                    .help = try comp.fmt("write '{s}[...]' with one type per parameter", .{name}),
-                });
+                try check.failGenericBare(node, name);
                 return .poison;
             }
             const instance = try comp.instantiate(decl_index, &.{}, check.origin(node));
             return comp.instanceType(instance);
         },
         .type_alias => {
+            if (comp.typeParamCount(decl_index) > 0) {
+                try check.failGenericBare(node, name);
+                return .poison;
+            }
             const result = try check.ensured(decl_index, node) orelse return .poison;
             return @enumFromInt(result);
         },
@@ -504,7 +529,7 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
     }
 }
 
-/// Needs the base to name a generic struct.
+/// Needs the base to name a generic struct or a generic alias.
 fn resolveBracketType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
     const view = check.tree.viewOf(node).bracket;
@@ -560,6 +585,10 @@ fn resolveBracketType(check: *Check, node: Node.Index) Allocator.Error!Pool.Inde
         args_buffer[0..view.args.len],
         check.origin(node),
     );
+    if (comp.declAt(decl_index).kind == .type_alias) {
+        try comp.ensure(.of(.alias, instance), check.origin(node));
+        if (comp.instanceAt(instance).rows_state != .done) return .poison;
+    }
     return comp.instanceType(instance);
 }
 
@@ -2617,6 +2646,7 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
             return .{ .named_type = comp.instanceType(instance) };
         },
         .type_alias => {
+            if (comp.typeParamCount(decl_index) > 0) return .{ .named_generic = decl_index };
             const result = try check.ensured(decl_index, node) orelse return .poison;
             return .{ .named_type = @enumFromInt(result) };
         },
@@ -3663,7 +3693,7 @@ fn resolveCalleeMember(
             .named_generic => {
                 try check.fail(access.lhs, .{
                     .code = .generic_arguments,
-                    .message = "this struct is generic, so write its arguments before reaching in",
+                    .message = "this is generic, so write its arguments before reaching in",
                     .label = "missing type arguments",
                 });
                 return null;

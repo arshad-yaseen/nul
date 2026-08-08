@@ -1,0 +1,23 @@
+root
+  alias_decl Maybe
+    type_param T
+    type: union_type
+      ident T
+      ident none
+  alias_decl Pair pub
+    type_param L
+    type_param R
+    type: union_type
+      ident L
+      ident R
+  alias_decl Boxes
+    type_param T
+    type: bracket
+      base: ident Box
+      arg: ident T
+  alias_decl Indirect
+    type_param T
+    type: union_type
+      pointer_type var
+        child: ident T
+      ident none

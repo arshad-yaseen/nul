@@ -1,0 +1,13 @@
+type none
+
+type Maybe[T] = T | none
+
+fn bare(v: Maybe) u32 {
+    _ = v
+    return 0
+}
+
+fn arity(v: Maybe[u32, u8]) u32 {
+    _ = v
+    return 0
+}
