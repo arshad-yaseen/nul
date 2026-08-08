@@ -443,18 +443,19 @@ pub const View = union(enum) {
     pub const OrBind = struct { lhs: Node.Index, binder: Node.Index, block: Node.Index };
 };
 
-pub fn viewOf(tree: AST, node: Node.Index) View {
+pub inline fn viewOf(tree: AST, node: Node.Index) View {
     assert(node.int() < tree.nodes.len);
 
     const main = tree.nodeMainToken(node);
     const data = tree.nodes.items(.data)[node.int()];
     const view = unpack(tree, tree.nodeTag(node), main, data);
 
-    assert(std.mem.eql(u8, @tagName(view), @tagName(tree.nodeTag(node))));
+    // the comptime block proves the two tag orders align
+    assert(@intFromEnum(view) == @intFromEnum(tree.nodeTag(node)));
     return view;
 }
 
-fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) View {
+inline fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) View {
     return switch (node_tag) {
         .root => .{ .root = tree.listAt(data.extra) },
         .import_decl => .{ .import_decl = .{ .is_pub = tree.isPub(main), .path = data.node } },

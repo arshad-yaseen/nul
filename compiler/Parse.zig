@@ -100,12 +100,10 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
 
 // the cursor
 
-/// Or `.eof` past the end. Nothing but the label grammar looks further than
-/// the token the cursor is on.
+/// The cursor never passes the `.eof`, so the read is always in bounds.
 fn current(self: *const Parse) Token.Tag {
-    const index = self.token_index.int();
-    if (index < self.tags.len) return self.tags[index];
-    return .eof;
+    assert(self.token_index.int() <= self.eof_index.int());
+    return self.tags[self.token_index.int()];
 }
 
 /// The tag `ahead` tokens past the cursor, `.eof` past the end.

@@ -15,6 +15,10 @@ bytes: std.ArrayList(u8),
 /// Item lookup, so one (tag, payload) is one index forever.
 map: std.HashMapUnmanaged(Index, void, IndexContext, load_percentage),
 string_map: std.HashMapUnmanaged(String, void, StringContext, load_percentage),
+/// Small integer constants, so they skip the map. `.poison`, never a value, marks unfilled.
+small_ints: [statics * small_int_range]Index,
+
+const small_int_range = 256;
 
 const load_percentage = std.hash_map.default_max_load_percentage;
 
@@ -65,6 +69,12 @@ pub const Instance = enum(u32) {
 
     pub fn int(index: Instance) u32 {
         return @intFromEnum(index);
+    }
+
+    pub fn toOptional(index: Instance) OptionalInstance {
+        const optional: OptionalInstance = @enumFromInt(@intFromEnum(index));
+        assert(optional != .none);
+        return optional;
     }
 };
 
@@ -135,6 +145,19 @@ pub fn preludeType(text: []const u8) ?Index {
 /// For a suggestion when a name is missed.
 pub const prelude_names = prelude.keys();
 
+/// Whether an interned string spells a prelude name, which `init` interns first.
+pub fn isPreludeName(name: String) bool {
+    if (name == .empty) return false;
+    return name.int() < prelude_bytes_end;
+}
+
+/// Offset zero is the empty string, then the prelude names back to back.
+const prelude_bytes_end = blk: {
+    var total: u32 = 1;
+    for (prelude_names) |name| total += name.len + 1;
+    break :blk total;
+};
+
 const prelude = build: {
     const simples = std.enums.values(SimpleType);
     var entries: [simples.len]struct { []const u8, Index } = undefined;
@@ -173,32 +196,34 @@ pub const Key = union(enum) {
     pub const Wrapped = struct { type: Index, value: Index };
 
     fn hash(key: Key) u64 {
-        var hasher = std.hash.Wyhash.init(@intFromEnum(std.meta.activeTag(key)));
+        const seed: u64 = @intFromEnum(std.meta.activeTag(key));
         switch (key) {
-            .type_simple => |simple| hasher.update(std.mem.asBytes(&simple)),
-            .type_pointer => |pointer| {
-                hasher.update(std.mem.asBytes(&pointer.child));
-                hasher.update(std.mem.asBytes(&pointer.mutable));
+            .type_simple => |simple| return hashWords(seed, .{@intFromEnum(simple)}),
+            .type_pointer => |pointer| return hashWords(seed, .{
+                pointer.child.int(),
+                @intFromBool(pointer.mutable),
+            }),
+            .type_struct => |instance| return hashWords(seed, .{instance.int()}),
+            .type_unit => |decl| return hashWords(seed, .{decl.int()}),
+            .type_union => |members| {
+                return std.hash.Wyhash.hash(seed, std.mem.sliceAsBytes(members));
             },
-            .type_struct => |instance| hasher.update(std.mem.asBytes(&instance)),
-            .type_unit => |decl| hasher.update(std.mem.asBytes(&decl)),
-            .type_union => |members| hasher.update(std.mem.sliceAsBytes(members)),
-            .value_unit => |unit_type| hasher.update(std.mem.asBytes(&unit_type)),
-            .value_union => |it| {
-                hasher.update(std.mem.asBytes(&it.type));
-                hasher.update(std.mem.asBytes(&it.value));
-            },
+            .value_unit => |unit_type| return hashWords(seed, .{unit_type.int()}),
+            .value_union => |it| return hashWords(seed, .{ it.type.int(), it.value.int() }),
             .value_int => |it| {
-                hasher.update(std.mem.asBytes(&it.type));
-                hasher.update(std.mem.asBytes(&it.value));
+                const value: [4]u32 = @bitCast(it.value);
+                return hashWords(seed, .{ it.type.int(), value[0], value[1], value[2], value[3] });
             },
             .value_float => |it| {
-                const bits: u64 = @bitCast(it.value);
-                hasher.update(std.mem.asBytes(&it.type));
-                hasher.update(std.mem.asBytes(&bits));
+                const bits: [2]u32 = @bitCast(it.value);
+                return hashWords(seed, .{ it.type.int(), bits[0], bits[1] });
             },
         }
-        return hasher.final();
+    }
+
+    fn hashWords(seed: u64, words: anytype) u64 {
+        const array: [words.len]u32 = words;
+        return std.hash.Wyhash.hash(seed, std.mem.asBytes(&array));
     }
 
     fn eql(key: Key, other: Key) bool {
@@ -255,6 +280,7 @@ pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
         .bytes = .empty,
         .map = .empty,
         .string_map = .empty,
+        .small_ints = @splat(.poison),
     };
     errdefer pool.deinit(gpa);
 
@@ -270,6 +296,10 @@ pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
         assert(index == simple.index());
     }
     assert(pool.items.len == statics);
+
+    // prelude names first, so `isPreludeName` is one offset test
+    for (prelude_names) |name| _ = try pool.string(gpa, name);
+    assert(pool.bytes.items.len == prelude_bytes_end);
 }
 
 pub fn deinit(pool: *Pool, gpa: Allocator) void {
@@ -284,6 +314,11 @@ pub fn deinit(pool: *Pool, gpa: Allocator) void {
 // interning
 
 pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
+    const small = smallIntSlot(key);
+    if (small) |at| {
+        if (pool.small_ints[at] != .poison) return pool.small_ints[at];
+    }
+
     const gop = try pool.map.getOrPutContextAdapted(
         gpa,
         key,
@@ -341,10 +376,20 @@ pub fn intern(pool: *Pool, gpa: Allocator, key: Key) Allocator.Error!Index {
     };
     try pool.items.append(gpa, item);
     gop.key_ptr.* = index;
+    if (small) |at| pool.small_ints[at] = index;
 
     assert(pool.items.len == index.int() + 1);
     assert(key.eql(pool.keyOf(index)));
     return index;
+}
+
+fn smallIntSlot(key: Key) ?u32 {
+    if (key != .value_int) return null;
+    const it = key.value_int;
+    if (it.type.int() >= statics) return null;
+    if (it.value < 0) return null;
+    if (it.value >= small_int_range) return null;
+    return it.type.int() * small_int_range + @as(u32, @intCast(it.value));
 }
 
 pub fn keyOf(pool: *const Pool, index: Index) Key {
@@ -494,7 +539,8 @@ pub fn unionMemberAt(pool: *const Pool, index: Index, at: u32) Index {
 }
 
 pub fn string(pool: *Pool, gpa: Allocator, text: []const u8) Allocator.Error!String {
-    assert(std.mem.indexOfScalar(u8, text, 0) == null);
+    // guarded, because a scanning assert survives into release builds
+    if (std.debug.runtime_safety) assert(std.mem.indexOfScalar(u8, text, 0) == null);
 
     const gop = try pool.string_map.getOrPutContextAdapted(
         gpa,
@@ -514,6 +560,23 @@ pub fn string(pool: *Pool, gpa: Allocator, text: []const u8) Allocator.Error!Str
 
     assert(std.mem.eql(u8, pool.stringText(offset), text));
     return offset;
+}
+
+/// Whether an interned string spells this text.
+pub fn sameText(pool: *const Pool, name: String, text: []const u8) bool {
+    assert(name.int() < pool.bytes.items.len);
+    // guarded, because a scanning assert survives into release builds
+    if (std.debug.runtime_safety) assert(std.mem.indexOfScalar(u8, text, 0) == null);
+    return spells(pool.bytes.items, name, text);
+}
+
+/// Interning zero-terminates, so a longer `text` mismatches on the zero.
+fn spells(bytes: []const u8, name: String, text: []const u8) bool {
+    const stored = bytes[name.int()..];
+    for (text, 0..) |byte, at| {
+        if (stored[at] != byte) return false;
+    }
+    return stored[text.len] == 0;
 }
 
 pub fn stringText(pool: *const Pool, index: String) [:0]const u8 {
@@ -986,7 +1049,7 @@ const StringAdapter = struct {
     }
 
     pub fn eql(adapter: StringAdapter, text: []const u8, index: String) bool {
-        return std.mem.eql(u8, text, std.mem.sliceTo(adapter.bytes.items[index.int()..], 0));
+        return spells(adapter.bytes.items, index, text);
     }
 };
 

@@ -45,6 +45,10 @@ rows_scratch: std.ArrayList(Row),
 body_builder: Check.Builder,
 body_queue: std.ArrayList(Pool.Instance),
 funcs: std.ArrayList(IR.Func),
+/// Every function's instructions, blocks, and extra words, which each `Func` ranges into.
+insts: IR.InstList,
+inst_extra: std.ArrayList(u32),
+blocks: std.ArrayList(IR.Block),
 diagnostics: std.ArrayList(Entry),
 /// One row per (module, code, anchor), so re-walked code reports once.
 reported: std.AutoHashMapUnmanaged(ReportKey, void),
@@ -225,6 +229,9 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .body_builder = .empty,
         .body_queue = .empty,
         .funcs = .empty,
+        .insts = .empty,
+        .inst_extra = .empty,
+        .blocks = .empty,
         .diagnostics = .empty,
         .reported = .empty,
         .expr_types = .empty,
@@ -254,8 +261,10 @@ pub fn deinit(comp: *Compilation) void {
     comp.modules.deinit(gpa);
     comp.module_map.deinit(gpa);
 
-    for (comp.funcs.items) |*func| func.deinit(gpa);
     comp.funcs.deinit(gpa);
+    comp.insts.deinit(gpa);
+    comp.inst_extra.deinit(gpa);
+    comp.blocks.deinit(gpa);
 
     comp.body_builder.deinit(gpa);
     comp.body_queue.deinit(gpa);
@@ -519,8 +528,15 @@ pub fn instantiate(
     args: []const Pool.Index,
     origin: Origin,
 ) Allocator.Error!Pool.Instance {
-    const decl = comp.declAt(decl_index);
-    assert(decl.kind == .struct_decl or decl.kind == .fn_decl);
+    assert(comp.declAt(decl_index).kind == .struct_decl or
+        comp.declAt(decl_index).kind == .fn_decl);
+
+    if (args.len == 0) {
+        if (comp.declAt(decl_index).plain_instance.unwrap()) |instance| return instance;
+        const index = try comp.newInstance(decl_index, args, origin);
+        comp.declPtr(decl_index).plain_instance = index.toOptional();
+        return index;
+    }
 
     const gop = try comp.instance_map.getOrPutContextAdapted(
         comp.gpa,
@@ -530,6 +546,17 @@ pub fn instantiate(
     );
     if (gop.found_existing) return gop.key_ptr.*;
 
+    const index = try comp.newInstance(decl_index, args, origin);
+    gop.key_ptr.* = index;
+    return index;
+}
+
+fn newInstance(
+    comp: *Compilation,
+    decl_index: Decl.Index,
+    args: []const Pool.Index,
+    origin: Origin,
+) Allocator.Error!Pool.Instance {
     if (comp.instances.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
     const index: Pool.Instance = .from(comp.instances.items.len);
 
@@ -555,10 +582,9 @@ pub fn instantiate(
         .rows_state = .unanalyzed,
         .deep_state = .unanalyzed,
     });
-    gop.key_ptr.* = index;
 
     // a type the moment it exists, so a struct can name itself
-    if (decl.kind == .struct_decl) {
+    if (comp.declAt(decl_index).kind == .struct_decl) {
         comp.instancePtr(index).type = try comp.pool.intern(comp.gpa, .{
             .type_struct = index,
         });
@@ -624,6 +650,19 @@ pub fn instanceArgs(comp: *const Compilation, index: Pool.Instance) []const Pool
 pub fn instanceRows(comp: *const Compilation, index: Pool.Instance) []const Row {
     const instance = comp.instanceAt(index);
     return comp.rows.items[instance.rows.start..][0..instance.rows.len];
+}
+
+pub fn funcBlocks(comp: *const Compilation, func: IR.Func) []const IR.Block {
+    return comp.blocks.items[func.blocks.start..][0..func.blocks.len];
+}
+
+pub fn funcExtra(comp: *const Compilation, func: IR.Func) []const u32 {
+    return comp.inst_extra.items[func.extra.start..][0..func.extra.len];
+}
+
+pub fn instAt(comp: *const Compilation, at: u32) IR.Inst {
+    assert(at < comp.insts.len);
+    return comp.insts.get(at);
 }
 
 /// The write side of `exprType`.
@@ -887,7 +926,7 @@ pub fn dumpIR(comp: *const Compilation, writer: *Writer) Writer.Error!void {
         if (instance.func == Instance.no_func) continue;
         if (printed) try writer.writeByte('\n');
         printed = true;
-        try dump.func(comp, &comp.funcs.items[instance.func], writer);
+        try dump.func(comp, comp.funcs.items[instance.func], writer);
     }
 }
 
@@ -919,13 +958,7 @@ pub fn rowName(comp: *const Compilation, row: u32) []const u8 {
 }
 
 pub fn typeParamCount(comp: *const Compilation, decl_index: Decl.Index) u32 {
-    const decl = comp.declAt(decl_index);
-    const tree = comp.treeOf(decl.module);
-    return switch (tree.viewOf(decl.node)) {
-        .struct_decl => |view| @intCast(view.type_params.len),
-        .fn_decl => |view| @intCast(view.type_params.len),
-        else => 0,
-    };
+    return comp.declAt(decl_index).type_params;
 }
 
 /// Textual, which is enough to notice a root file inside the standard library.
@@ -966,7 +999,7 @@ test "instantiation identity is index equality" {
     ));
     try testing.expectEqual(0, comp.diagnostics.items.len);
 
-    const hold = comp.moduleAt(.root).findDecl(try comp.pool.string(gpa, "hold")).?;
+    const hold = comp.moduleAt(.root).findDecl("hold").?;
     const instance = try comp.instantiate(hold, &.{}, .{
         .module = .root,
         .node = comp.declAt(hold).node,
@@ -1117,7 +1150,7 @@ test "the checker answers a type question as data" {
     ));
     try testing.expectEqual(0, comp.diagnostics.items.len);
 
-    const f = comp.moduleAt(.root).findDecl(try comp.pool.string(gpa, "f")).?;
+    const f = comp.moduleAt(.root).findDecl("f").?;
     const instance = try comp.instantiate(f, &.{}, .{
         .module = .root,
         .node = comp.declAt(f).node,

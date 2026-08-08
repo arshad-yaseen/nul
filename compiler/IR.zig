@@ -2,53 +2,48 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
 
+const Compilation = @import("Compilation.zig");
 const Pool = @import("Pool.zig");
 
 pub const ExtraIndex = enum(u32) { _ };
 
+pub const InstList = std.MultiArrayList(Inst);
+
 pub const Call = struct { callee: Pool.Instance, args: []const Ref };
 
+/// One function's body, three ranges into the shared tables, every inner index relative to them.
 pub const Func = struct {
     instance: Pool.Instance,
-    insts: InstList.Slice,
+    insts: Compilation.Range,
     /// One `Ref` per word.
-    extra: []const u32,
+    extra: Compilation.Range,
     /// Block zero is the entry, and every block is reachable.
-    blocks: []const Block,
-
-    pub const InstList = std.MultiArrayList(Inst);
-
-    pub fn callAt(func: *const Func, at: ExtraIndex) Call {
-        const start = @intFromEnum(at);
-        assert(start + 2 <= func.extra.len);
-        return .{
-            .callee = @enumFromInt(func.extra[start]),
-            .args = func.refsAt(start + 2, func.extra[start + 1]),
-        };
-    }
-
-    /// Fields in declaration order.
-    pub fn structInitAt(func: *const Func, at: ExtraIndex) []const Ref {
-        const start = @intFromEnum(at);
-        assert(start + 1 <= func.extra.len);
-        return func.refsAt(start + 1, func.extra[start]);
-    }
-
-    fn refsAt(func: *const Func, start: u32, len: u32) []const Ref {
-        assert(start + len <= func.extra.len);
-        // a `Ref` is one `u32`
-        return @ptrCast(func.extra[start..][0..len]);
-    }
-
-    pub fn deinit(func: *Func, gpa: Allocator) void {
-        func.insts.deinit(gpa);
-        gpa.free(func.extra);
-        gpa.free(func.blocks);
-        func.* = undefined;
-    }
+    blocks: Compilation.Range,
 };
+
+/// Reads a call payload out of one function's extra words.
+pub fn callAt(extra: []const u32, at: ExtraIndex) Call {
+    const start = @intFromEnum(at);
+    assert(start + 2 <= extra.len);
+    return .{
+        .callee = @enumFromInt(extra[start]),
+        .args = refsAt(extra, start + 2, extra[start + 1]),
+    };
+}
+
+/// Fields in declaration order.
+pub fn structInitAt(extra: []const u32, at: ExtraIndex) []const Ref {
+    const start = @intFromEnum(at);
+    assert(start + 1 <= extra.len);
+    return refsAt(extra, start + 1, extra[start]);
+}
+
+fn refsAt(extra: []const u32, start: u32, len: u32) []const Ref {
+    assert(start + len <= extra.len);
+    // a `Ref` is one `u32`
+    return @ptrCast(extra[start..][0..len]);
+}
 
 /// An instruction result or a pool constant, told apart by the top bit.
 pub const Ref = enum(u32) {

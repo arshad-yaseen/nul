@@ -274,6 +274,16 @@ pub const punctuation: [256]Punctuation = build: {
     break :build table;
 };
 
+/// Each fixed spelling's length, zero where the text is the source itself.
+pub const lexeme_len: [tag_count]u8 = blk: {
+    @setEvalBranchQuota(8000);
+    var table: [tag_count]u8 = @splat(0);
+    for (std.enums.values(Tag)) |tag| {
+        if (tag.lexeme()) |text| table[@intFromEnum(tag)] = text.len;
+    }
+    break :blk table;
+};
+
 const symbols: [tag_count][]const u8 = blk: {
     @setEvalBranchQuota(8000);
     var table: [tag_count][]const u8 = @splat("");

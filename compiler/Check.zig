@@ -13,6 +13,7 @@ const Intrinsic = @import("Intrinsic.zig").Intrinsic;
 const intrinsic_limits = @import("Intrinsic.zig");
 const Token = @import("Token.zig");
 const edit_distance = @import("util/edit_distance.zig");
+const number = @import("util/number.zig");
 
 const Decl = Module.Decl;
 const Node = AST.Node;
@@ -215,7 +216,7 @@ pub fn fnSignature(comp: *Compilation, instance: Pool.Instance) Allocator.Error!
         if (param_type == .poison) clean = false;
 
         for (comp.rows_scratch.items[mark..]) |earlier| {
-            if (std.mem.eql(u8, comp.pool.stringText(earlier.name), name_text)) {
+            if (comp.pool.sameText(earlier.name, name_text)) {
                 try check.fail(param_node, .{
                     .code = .redeclared,
                     .message = try comp.fmt("'{s}' is already a parameter", .{name_text}),
@@ -427,14 +428,11 @@ fn resolveTypeName(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const text = check.tree.tokenSlice(check.tree.nodeMainToken(node));
 
     for (check.bindings) |binding| {
-        if (std.mem.eql(u8, check.comp.pool.stringText(binding.name), text)) {
-            return binding.type;
-        }
+        if (check.comp.pool.sameText(binding.name, text)) return binding.type;
     }
     if (Pool.preludeType(text)) |prelude| return prelude;
 
-    const name = try check.comp.pool.string(check.comp.gpa, text);
-    const decl_index = check.module.findDecl(name) orelse {
+    const decl_index = check.module.findDecl(text) orelse {
         try check.reportUndefined(node, text);
         return .poison;
     };
@@ -566,7 +564,7 @@ fn resolveBracketType(check: *Check, node: Node.Index) Allocator.Error!Pool.Inde
 pub const Builder = struct {
     instance: Pool.Instance,
     return_type: Pool.Index,
-    insts: IR.Func.InstList,
+    insts: IR.InstList,
     extra: std.ArrayList(u32),
     blocks: std.ArrayList(BlockBuild),
     current: IR.Block.Index,
@@ -579,6 +577,9 @@ pub const Builder = struct {
     operands: std.ArrayList(Operand),
     /// Enclosing loops, innermost last.
     loops: std.ArrayList(LoopFrame),
+    /// Scratch for `finishFunc`, retained across bodies.
+    block_map: std.ArrayList(u32),
+    frontier: std.ArrayList(u32),
     /// Loops below this are outside the `defer` being emitted.
     defer_loops_floor: u32,
     in_defer: bool,
@@ -671,6 +672,8 @@ pub const Builder = struct {
         .narrows = .empty,
         .operands = .empty,
         .loops = .empty,
+        .block_map = .empty,
+        .frontier = .empty,
         .defer_loops_floor = undefined,
         .in_defer = undefined,
         .reachable = undefined,
@@ -695,6 +698,8 @@ pub const Builder = struct {
         builder.narrows.clearRetainingCapacity();
         builder.operands.clearRetainingCapacity();
         builder.loops.clearRetainingCapacity();
+        builder.block_map.clearRetainingCapacity();
+        builder.frontier.clearRetainingCapacity();
     }
 
     pub fn deinit(builder: *Builder, gpa: Allocator) void {
@@ -707,6 +712,8 @@ pub const Builder = struct {
         builder.narrows.deinit(gpa);
         builder.operands.deinit(gpa);
         builder.loops.deinit(gpa);
+        builder.block_map.deinit(gpa);
+        builder.frontier.deinit(gpa);
         builder.* = undefined;
     }
 };
@@ -925,7 +932,7 @@ fn emitDefer(check: *Check, node: Node.Index) Allocator.Error!void {
 
 fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator.Error!void {
     const builder = check.body();
-    const text = check.comp.pool.stringText(local.name);
+    const pool = &check.comp.pool;
 
     // locals may not shadow anything visible
     const clash: ?Compilation.Report = clash: {
@@ -933,7 +940,9 @@ fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator
             if (other.name == local.name) {
                 break :clash .{
                     .code = .shadows,
-                    .message = try check.comp.fmt("'{s}' is already in scope", .{text}),
+                    .message = try check.comp.fmt("'{s}' is already in scope", .{
+                        pool.stringText(local.name),
+                    }),
                     .label = "shadows the outer one",
                     .notes = try check.comp.notes(&.{
                         check.comp.noteAt(check.module_index, other.node, "first bound here"),
@@ -945,25 +954,29 @@ fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator
             if (binding.name == local.name) {
                 break :clash .{
                     .code = .shadows,
-                    .message = try check.comp.fmt("'{s}' is a type parameter here", .{text}),
+                    .message = try check.comp.fmt("'{s}' is a type parameter here", .{
+                        pool.stringText(local.name),
+                    }),
                     .label = "shadows it",
                 };
             }
         }
-        if (Pool.preludeType(text) != null) {
+        if (Pool.isPreludeName(local.name)) {
             break :clash .{
                 .code = .shadows,
                 .message = try check.comp.fmt("'{s}' is the name of a type every file can see", .{
-                    text,
+                    pool.stringText(local.name),
                 }),
                 .label = "shadows it",
             };
         }
-        if (check.module.findDecl(local.name)) |decl_index| {
+        if (check.module.findDecl(pool.stringText(local.name))) |decl_index| {
             const decl = check.comp.declAt(decl_index);
             break :clash .{
                 .code = .shadows,
-                .message = try check.comp.fmt("'{s}' is already declared in this file", .{text}),
+                .message = try check.comp.fmt("'{s}' is already declared in this file", .{
+                    pool.stringText(local.name),
+                }),
                 .label = "shadows it",
                 .notes = try check.comp.notes(&.{
                     check.comp.noteAt(check.module_index, decl.node, "declared here"),
@@ -988,9 +1001,7 @@ fn findLocalIndex(check: *const Check, name: []const u8) ?Builder.Local.Index {
     while (index > 0) {
         index -= 1;
         const local = builder.locals.items[index];
-        if (std.mem.eql(u8, check.comp.pool.stringText(local.name), name)) {
-            return .from(index);
-        }
+        if (check.comp.pool.sameText(local.name, name)) return .from(index);
     }
     return null;
 }
@@ -1289,12 +1300,7 @@ fn checkAssign(check: *Check, assign: AST.View.Assign) Allocator.Error!void {
 /// `_ = e` drops a value on purpose.
 fn checkDiscard(check: *Check, rhs: Node.Index) Allocator.Error!void {
     const value = try check.checkExpr(rhs, null);
-    switch (value) {
-        .constant, .runtime, .poison, .diverged => {},
-        else => return check.reportNotValue(rhs, value),
-    }
-    const found = check.typeOf(value);
-    if (found == .poison) return;
+    _ = try check.valueOnly(rhs, value);
 }
 
 fn checkIf(
@@ -1799,9 +1805,8 @@ fn boolType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
     if (check.bool_type != .poison) return check.bool_type;
 
-    const name = try comp.pool.string(comp.gpa, "bool");
     const shaped: Pool.Index = shaped: {
-        const decl_index = check.module.findDecl(name) orelse break :shaped .poison;
+        const decl_index = check.module.findDecl("bool") orelse break :shaped .poison;
         const found = try check.declAsType(decl_index, node);
         if (comp.pool.isUnion(found) == false) break :shaped .poison;
         if (comp.pool.unionMemberCount(found) != 2) break :shaped .poison;
@@ -2067,14 +2072,14 @@ fn reportUnusedValue(
 
 fn checkExpr(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     const value = try check.checkExprInner(node, hint);
-    try check.checkExprRemember(node, value);
+    if (check.comp.record_expr_types) try check.checkExprRemember(node, value);
     return value;
 }
 
 /// The editor's record. The type an expression settled on is written down as
 /// data, so the IR is one consumer of the answer rather than the only copy.
 fn checkExprRemember(check: *Check, node: Node.Index, value: Value) Allocator.Error!void {
-    if (check.comp.record_expr_types == false) return;
+    assert(check.comp.record_expr_types);
     const builder = check.builder orelse return;
 
     switch (value) {
@@ -2160,15 +2165,12 @@ fn checkIdent(check: *Check, node: Node.Index) Allocator.Error!Value {
     }
 
     for (check.bindings) |binding| {
-        if (std.mem.eql(u8, comp.pool.stringText(binding.name), text)) {
-            return .{ .named_type = binding.type };
-        }
+        if (comp.pool.sameText(binding.name, text)) return .{ .named_type = binding.type };
     }
 
     if (Pool.preludeType(text)) |prelude| return .{ .named_type = prelude };
 
-    const name = try comp.pool.string(comp.gpa, text);
-    if (check.module.findDecl(name)) |decl_index| {
+    if (check.module.findDecl(text)) |decl_index| {
         return check.declAsValue(decl_index, node);
     }
 
@@ -2213,60 +2215,24 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
 fn checkNumber(check: *Check, node: Node.Index) Allocator.Error!Value {
     const comp = check.comp;
     const text = check.tree.tokenSlice(check.tree.nodeMainToken(node));
-    assert(text.len > 0);
 
-    const has_prefix = text.len > 1 and text[0] == '0' and switch (text[1]) {
-        'x', 'X', 'o', 'O', 'b', 'B' => true,
-        else => false,
-    };
-    const looks_float = has_prefix == false and
-        (std.mem.indexOfAny(u8, text, ".eE") != null);
-
-    if (looks_float) {
-        const value = std.fmt.parseFloat(f64, text) catch {
-            try check.reportBadNumber(node, text);
-            return .poison;
-        };
-        if (std.math.isFinite(value) == false) {
-            try check.fail(node, .{
-                .code = .bad_number,
-                .message = "this number is too large for a float",
-                .label = "does not fit",
-            });
-            return .poison;
-        }
-        return .{ .constant = try comp.pool.intern(comp.gpa, .{
+    switch (try number.decode(comp.arena.allocator(), text)) {
+        .int => |value| return .{ .constant = try comp.pool.intern(comp.gpa, .{
+            .value_int = .{ .type = .untyped_int_type, .value = value },
+        }) },
+        .float => |value| return .{ .constant = try comp.pool.intern(comp.gpa, .{
             .value_float = .{ .type = .untyped_float_type, .value = value },
-        }) };
-    }
-
-    const value = std.fmt.parseInt(i128, text, 0) catch |err| switch (err) {
-        error.Overflow => {
+        }) },
+        .refused => |refusal| {
             try check.fail(node, .{
-                .code = .bad_number,
-                .message = "this number needs more than 128 bits, the width constants fold in",
-                .label = "too large",
+                .code = refusal.code,
+                .message = refusal.message,
+                .label = refusal.label,
+                .help = refusal.help,
             });
             return .poison;
         },
-        error.InvalidCharacter => {
-            try check.reportBadNumber(node, text);
-            return .poison;
-        },
-    };
-    return .{ .constant = try comp.pool.intern(comp.gpa, .{
-        .value_int = .{ .type = .untyped_int_type, .value = value },
-    }) };
-}
-
-fn reportBadNumber(check: *Check, node: Node.Index, text: []const u8) Allocator.Error!void {
-    try check.fail(node, .{
-        .code = .not_a_number,
-        .message = try check.comp.fmt("'{s}' is not a number the language knows", .{text}),
-        .label = "unreadable",
-        .help = "numbers are decimal, hex '0x', octal '0o', or binary '0b', " ++
-            "with '.' and 'e' for floats",
-    });
+    }
 }
 
 /// Two checked operands and the operator between them.
@@ -2891,7 +2857,7 @@ fn findField(
     if (try check.fieldRow(instance, name_text)) |row| return row;
 
     const decl_index = comp.instanceDecl(instance);
-    if (try findMember(comp, decl_index, name_text) != null) {
+    if (findMember(comp, decl_index, name_text) != null) {
         try check.failToken(name_token, .{
             .code = .no_such_member,
             .message = try comp.fmt("'{s}' is a function, so call it with '.{s}(...)'", .{
@@ -2913,16 +2879,14 @@ fn findField(
     return null;
 }
 
-/// Absolute, which is what the IR stores. Names are interned, so the scan
-/// compares indices rather than text.
+/// Absolute, which is what the IR stores.
 fn fieldRow(check: *Check, instance: Pool.Instance, name_text: []const u8) Allocator.Error!?u32 {
     const comp = check.comp;
     try comp.ensureRows(instance);
 
-    const name = try comp.pool.string(comp.gpa, name_text);
     const rows = comp.instanceAt(instance).rows;
     for (rows.start..rows.end()) |raw| {
-        if (comp.rowAt(@intCast(raw)).name == name) return @intCast(raw);
+        if (comp.pool.sameText(comp.rowAt(@intCast(raw)).name, name_text)) return @intCast(raw);
     }
     return null;
 }
@@ -2947,20 +2911,15 @@ fn memberIsVisible(check: *Check, member: Decl.Index, at: Token.Index) Allocator
     return false;
 }
 
-fn findMember(
-    comp: *Compilation,
-    decl_index: Decl.Index,
-    name_text: []const u8,
-) Allocator.Error!?Decl.Index {
+fn findMember(comp: *const Compilation, decl_index: Decl.Index, name_text: []const u8) ?Decl.Index {
     const decl = comp.declAt(decl_index);
     assert(decl.kind == .struct_decl);
 
-    const name = try comp.pool.string(comp.gpa, name_text);
     const members = decl.members();
     for (members.start..members.start + members.len) |raw| {
         const member = comp.declAt(.from(raw));
         if (member.kind != .fn_decl) continue;
-        if (member.name == name) return .from(raw);
+        if (comp.pool.sameText(member.name, name_text)) return .from(raw);
     }
     return null;
 }
@@ -3249,7 +3208,7 @@ fn resolveCalleeMember(
                 switch (comp.pool.keyOf(type_index)) {
                     .type_struct => |owner| {
                         const decl_index = comp.instanceDecl(owner);
-                        const member = try findMember(comp, decl_index, name_text) orelse {
+                        const member = findMember(comp, decl_index, name_text) orelse {
                             _ = try check.findField(owner, access.name_token);
                             return null;
                         };
@@ -3405,7 +3364,7 @@ fn checkCallResolved(
                 .type_struct => |owner| {
                     const owner_decl = comp.instanceDecl(owner);
                     const name_text = check.tree.tokenSlice(method.name_token);
-                    const member = try findMember(comp, owner_decl, name_text) orelse {
+                    const member = findMember(comp, owner_decl, name_text) orelse {
                         _ = try check.findField(owner, method.name_token);
                         return .poison;
                     };
@@ -4527,95 +4486,94 @@ fn failToken(check: *Check, token: Token.Index, report: Compilation.Report) Allo
     try check.comp.reportToken(check.module_index, token, report);
 }
 
-/// Blocks nothing jumps to are dropped, then the body is committed.
+/// Marks an unreachable block in the map `finishFunc` renumbers through.
+const block_dead = std.math.maxInt(u32);
+
+/// Blocks nothing jumps to are dropped, then the body is committed to the shared tables.
 fn finishFunc(check: *Check) Allocator.Error!void {
     const comp = check.comp;
+    const gpa = comp.gpa;
     const builder = check.body();
     const block_count = builder.blocks.items.len;
     assert(block_count > 0);
+    assert(builder.block_map.items.len == 0);
+    assert(builder.frontier.items.len == 0);
 
-    var live = try std.DynamicBitSet.initEmpty(comp.gpa, block_count);
-    defer live.deinit();
+    try builder.block_map.appendNTimes(gpa, block_dead, block_count);
+    try builder.frontier.ensureTotalCapacity(gpa, block_count);
 
-    var frontier: std.ArrayList(u32) = .empty;
-    defer frontier.deinit(comp.gpa);
-    try frontier.ensureTotalCapacity(comp.gpa, block_count);
-
-    live.set(0);
-    frontier.appendAssumeCapacity(0);
-    while (frontier.pop()) |raw| {
-        const block = builder.blocks.items[raw];
-        assert(block.terminator != .none);
-        switch (block.terminator) {
+    // reachability from the entry, visited marked in the map itself
+    const map = builder.block_map.items;
+    map[0] = 0;
+    builder.frontier.appendAssumeCapacity(0);
+    while (builder.frontier.pop()) |raw| {
+        switch (builder.blocks.items[raw].terminator) {
             .none => unreachable,
-            .jump => |target| try finishFuncVisit(&live, &frontier, target.int()),
+            .jump => |target| finishFuncVisit(map, &builder.frontier, target.int()),
             .branch => |branch| {
-                try finishFuncVisit(&live, &frontier, branch.then_block.int());
-                try finishFuncVisit(&live, &frontier, branch.else_block.int());
+                finishFuncVisit(map, &builder.frontier, branch.then_block.int());
+                finishFuncVisit(map, &builder.frontier, branch.else_block.int());
             },
             .ret => {},
         }
     }
 
     // only blocks are renumbered, so every instruction ref stays valid
-    var block_map = try comp.gpa.alloc(u32, block_count);
-    defer comp.gpa.free(block_map);
-
     var live_blocks: u32 = 0;
-    for (0..block_count) |raw| {
-        if (live.isSet(raw)) {
-            block_map[raw] = live_blocks;
+    for (map) |*slot| {
+        if (slot.* != block_dead) {
+            slot.* = live_blocks;
             live_blocks += 1;
-        } else {
-            block_map[raw] = std.math.maxInt(u32);
         }
     }
+    assert(live_blocks > 0);
 
-    var blocks: std.ArrayList(IR.Block) = .empty;
-    errdefer blocks.deinit(comp.gpa);
-    try blocks.ensureTotalCapacity(comp.gpa, live_blocks);
-
-    for (builder.blocks.items, 0..) |block, raw| {
-        if (live.isSet(raw) == false) continue;
-        blocks.appendAssumeCapacity(.{
+    const blocks_start: u32 = @intCast(comp.blocks.items.len);
+    try comp.blocks.ensureUnusedCapacity(gpa, live_blocks);
+    for (builder.blocks.items, map) |block, slot| {
+        if (slot == block_dead) continue;
+        comp.blocks.appendAssumeCapacity(.{
             .first = block.first,
             .count = block.count,
             .terminator = switch (block.terminator) {
                 .none => unreachable,
-                .jump => |target| .{ .jump = @enumFromInt(block_map[target.int()]) },
+                .jump => |target| .{ .jump = @enumFromInt(map[target.int()]) },
                 .branch => |branch| .{ .branch = .{
                     .cond = branch.cond,
-                    .then_block = @enumFromInt(block_map[branch.then_block.int()]),
-                    .else_block = @enumFromInt(block_map[branch.else_block.int()]),
+                    .then_block = @enumFromInt(map[branch.then_block.int()]),
+                    .else_block = @enumFromInt(map[branch.else_block.int()]),
                 } },
                 .ret => |value| .{ .ret = value },
             },
         });
     }
-    assert(blocks.items.len == live_blocks);
 
-    const extra = try comp.gpa.dupe(u32, builder.extra.items);
-    errdefer comp.gpa.free(extra);
-    const blocks_owned = try blocks.toOwnedSlice(comp.gpa);
-    errdefer comp.gpa.free(blocks_owned);
+    const inst_count: u32 = @intCast(builder.insts.len);
+    if (comp.insts.len + inst_count > std.math.maxInt(u32)) return error.OutOfMemory;
+    const insts_start: u32 = @intCast(comp.insts.len);
+    try comp.insts.resize(gpa, comp.insts.len + inst_count);
+    const from = builder.insts.slice();
+    const into = comp.insts.slice();
+    @memcpy(into.items(.tag)[insts_start..], from.items(.tag));
+    @memcpy(into.items(.type)[insts_start..], from.items(.type));
+    @memcpy(into.items(.data)[insts_start..], from.items(.data));
 
-    try comp.funcs.append(comp.gpa, .{
+    const extra_start: u32 = @intCast(comp.inst_extra.items.len);
+    try comp.inst_extra.appendSlice(gpa, builder.extra.items);
+
+    try comp.funcs.append(gpa, .{
         .instance = builder.instance,
-        .insts = builder.insts.toOwnedSlice(),
-        .extra = extra,
-        .blocks = blocks_owned,
+        .insts = .{ .start = insts_start, .len = inst_count },
+        .extra = .{ .start = extra_start, .len = @intCast(builder.extra.items.len) },
+        .blocks = .{ .start = blocks_start, .len = live_blocks },
     });
 
     assert(comp.instanceAt(builder.instance).func == Compilation.Instance.no_func);
     comp.instancePtr(builder.instance).func = @intCast(comp.funcs.items.len - 1);
 }
 
-fn finishFuncVisit(
-    live: *std.DynamicBitSet,
-    frontier: *std.ArrayList(u32),
-    target: u32,
-) Allocator.Error!void {
-    if (live.isSet(target)) return;
-    live.set(target);
+fn finishFuncVisit(map: []u32, frontier: *std.ArrayList(u32), target: u32) void {
+    if (map[target] != block_dead) return;
+    map[target] = 0;
     frontier.appendAssumeCapacity(target);
 }

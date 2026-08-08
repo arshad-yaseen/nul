@@ -151,32 +151,15 @@ fn scan(tokenizer: *Tokenizer) Token {
         },
 
         .ident => {
-            assert(is_ident[source[cursor]]);
-            while (is_ident[source[cursor]]) cursor += 1;
+            cursor = identEnd(source, cursor);
             assert(cursor > start);
             break :state Token.keywordOrIdent(source[start..cursor]);
         },
 
         .number => {
-            while (is_ident[source[cursor]]) cursor += 1;
+            cursor = numberEnd(source, cursor);
             assert(cursor > start);
-            switch (source[cursor]) {
-                '.' => switch (source[cursor + 1]) {
-                    '0'...'9' => {
-                        cursor += 1;
-                        continue :state .number;
-                    },
-                    else => break :state .number,
-                },
-                '+', '-' => switch (source[cursor - 1]) {
-                    'e', 'E', 'p', 'P' => {
-                        cursor += 1;
-                        continue :state .number;
-                    },
-                    else => break :state .number,
-                },
-                else => break :state .number,
-            }
+            break :state .number;
         },
 
         .slash => {
@@ -240,19 +223,53 @@ fn scan(tokenizer: *Tokenizer) Token {
 pub fn tokenEnd(source: [:0]const u8, tag: Token.Tag, start: u32) u32 {
     assert(start <= source.len);
 
-    if (tag.lexeme()) |text| return start + @as(u32, @intCast(text.len));
-    if (tag == .eof) return start;
+    const fixed = Token.lexeme_len[@intFromEnum(tag)];
+    if (fixed > 0) return start + fixed;
 
-    var tokenizer: Tokenizer = .{
-        .source = source,
-        .cursor = start,
-        .previous = .semi,
-        .pending = no_pending,
-    };
-    const token = tokenizer.next();
-    assert(token.tag == tag);
-    assert(tokenizer.cursor >= start);
-    return tokenizer.cursor;
+    switch (tag) {
+        .eof => return start,
+        .ident => return identEnd(source, start),
+        .number => return numberEnd(source, start),
+        .comment, .doc_comment, .file_doc_comment => return endOfLine(source, start),
+        .invalid => {
+            assert(start < source.len);
+            var cursor = start + 1;
+            while (cursor < source.len and is_token_start[source[cursor]] == false) cursor += 1;
+            return cursor;
+        },
+        // every remaining tag spells fixed text, so the table answered above
+        else => unreachable,
+    }
+}
+
+fn identEnd(source: [:0]const u8, start: u32) u32 {
+    assert(is_ident[source[start]]);
+    var cursor = start;
+    while (is_ident[source[cursor]]) cursor += 1;
+    return cursor;
+}
+
+fn numberEnd(source: [:0]const u8, start: u32) u32 {
+    assert(source[start] >= '0');
+    assert(source[start] <= '9');
+
+    var cursor = start;
+    while (true) {
+        while (is_ident[source[cursor]]) cursor += 1;
+        switch (source[cursor]) {
+            // a fraction continues only into a digit, so `x.f` stays a selector
+            '.' => switch (source[cursor + 1]) {
+                '0'...'9' => cursor += 1,
+                else => return cursor,
+            },
+            // a sign continues only an exponent, so `1e5-2` stays a subtraction
+            '+', '-' => switch (source[cursor - 1]) {
+                'e', 'E', 'p', 'P' => cursor += 1,
+                else => return cursor,
+            },
+            else => return cursor,
+        }
+    }
 }
 
 /// Where the scan is inside one token.

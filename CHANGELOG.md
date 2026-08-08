@@ -139,6 +139,10 @@ than retrofitted.
   the order checking discovered them in.
 - `phi ir` prints functions in the order the program first needed them, so
   the output no longer depends on which body finished first.
+- A number literal is validated exactly. A misplaced `_`, a leading zero, an
+  uppercase base prefix, a second `.` or exponent, and a digit outside the
+  base each get their own `E0247` message, where one generic refusal covered
+  them all. A hex float such as `0x1.8p1` now folds instead of being refused.
 
 ## [0.1.0] - 2026-08-04
 

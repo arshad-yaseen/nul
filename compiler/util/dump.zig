@@ -212,7 +212,7 @@ fn flag(writer: *Writer, set: bool, name: []const u8) Writer.Error!void {
 
 // the IR dump
 
-pub fn func(comp: *const Compilation, body: *const IR.Func, writer: *Writer) Writer.Error!void {
+pub fn func(comp: *const Compilation, body: IR.Func, writer: *Writer) Writer.Error!void {
     assert(body.blocks.len > 0);
 
     try writer.writeAll("fn ");
@@ -220,13 +220,12 @@ pub fn func(comp: *const Compilation, body: *const IR.Func, writer: *Writer) Wri
     try spell.writeSignature(comp, writer, body.instance);
     try writer.writeByte('\n');
 
-    for (body.blocks, 0..) |block, block_index| {
+    for (comp.funcBlocks(body), 0..) |block, block_index| {
         assert(block.terminator != .none);
         try writer.print("b{d}:\n", .{block_index});
 
         for (block.first..block.end()) |raw| {
-            const index: IR.Inst.Index = .from(raw);
-            try inst(comp, body, index, writer);
+            try inst(comp, body, @intCast(raw), writer);
         }
         try terminator(comp, block.terminator, writer);
     }
@@ -234,18 +233,15 @@ pub fn func(comp: *const Compilation, body: *const IR.Func, writer: *Writer) Wri
 
 fn inst(
     comp: *const Compilation,
-    body: *const IR.Func,
-    index: IR.Inst.Index,
+    body: IR.Func,
+    local: u32,
     writer: *Writer,
 ) Writer.Error!void {
-    assert(index.int() < body.insts.len);
+    const it = comp.instAt(body.insts.at(local));
+    const data = it.data;
 
-    const tag = body.insts.items(.tag)[index.int()];
-    const data = body.insts.items(.data)[index.int()];
-    const type_index = body.insts.items(.type)[index.int()];
-
-    try writer.print("  %{d} = {t}", .{ index.int(), tag });
-    switch (tag) {
+    try writer.print("  %{d} = {t}", .{ local, it.tag });
+    switch (it.tag) {
         .param, .local => {
             if (data.name != .empty) try writer.print(" {s}", .{comp.pool.stringText(data.name)});
         },
@@ -295,7 +291,7 @@ fn inst(
             try writer.print(", .{s}", .{comp.rowName(data.field.row)});
         },
         .call => {
-            const call = body.callAt(data.payload);
+            const call = IR.callAt(comp.funcExtra(body), data.payload);
             try writer.writeByte(' ');
             try spell.writeInstance(comp, writer, call.callee);
             try writer.writeByte('(');
@@ -306,9 +302,9 @@ fn inst(
             try writer.writeByte(')');
         },
         .struct_init => {
-            const rows = comp.instanceAt(comp.pool.keyOf(type_index).type_struct).rows;
+            const rows = comp.instanceAt(comp.pool.keyOf(it.type).type_struct).rows;
             try writer.writeAll(" .{ ");
-            for (body.structInitAt(data.payload), 0..) |operand, position| {
+            for (IR.structInitAt(comp.funcExtra(body), data.payload), 0..) |operand, position| {
                 if (position > 0) try writer.writeAll(", ");
                 try writer.print("{s}: ", .{comp.rowName(rows.at(@intCast(position)))});
                 try ref(comp, operand, writer);
@@ -317,9 +313,9 @@ fn inst(
         },
     }
 
-    if (type_index != .void_type) {
+    if (it.type != .void_type) {
         try writer.writeAll(" : ");
-        try spell.writeType(comp, writer, type_index);
+        try spell.writeType(comp, writer, it.type);
     }
     try writer.writeByte('\n');
 }

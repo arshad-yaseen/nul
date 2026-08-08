@@ -20,8 +20,8 @@ tree: AST,
 space: Space,
 /// Rows in the declaration table, members included.
 decls: Range,
-/// Top-level names. Members are found through their struct.
-names: std.AutoHashMapUnmanaged(Pool.String, Decl.Index),
+/// Top-level names, keyed by source text, which outlives the map. Members go through their struct.
+names: std.StringHashMapUnmanaged(Decl.Index),
 
 const Module = @This();
 
@@ -52,8 +52,12 @@ pub const Decl = struct {
     /// What resolution left behind, read with `aux`.
     result: u32,
     aux: u32,
+    /// The zero-argument instantiation, cached for bracketless mentions.
+    plain_instance: Pool.OptionalInstance,
     kind: Kind,
     state: State,
+    /// Recorded at registration, so asking never re-reads the tree.
+    type_params: u8,
 
     pub const Kind = enum(u8) { import, struct_decl, type_alias, unit_decl, let, fn_decl };
     pub const State = enum(u8) { unanalyzed, in_progress, done, poisoned };
@@ -104,8 +108,8 @@ pub fn deinit(module: *Module, gpa: Allocator) void {
     module.* = undefined;
 }
 
-pub fn findDecl(module: *const Module, name: Pool.String) ?Decl.Index {
-    return module.names.get(name);
+pub fn findDecl(module: *const Module, text: []const u8) ?Decl.Index {
+    return module.names.get(text);
 }
 
 /// The key without its space prefix.
@@ -145,6 +149,9 @@ pub fn register(
     try comp.modules.append(gpa, module);
     try comp.module_map.put(gpa, key, index);
 
+    // one instruction per two tree nodes, measured against bodies that lower
+    try comp.insts.ensureTotalCapacity(gpa, comp.insts.len + module.tree.nodes.len / 2);
+
     if (module.tree.errors.len > 0) {
         try comp.adoptParseErrors(index, module.tree.errors);
     }
@@ -176,6 +183,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
                     .kind = .struct_decl,
                     .node = node,
                     .name_token = decl.name_token,
+                    .type_params = @intCast(decl.type_params.len),
                 }) orelse continue;
                 try registerMembers(comp, module, index, struct_index, decl);
             },
@@ -193,6 +201,7 @@ fn registerDecls(comp: *Compilation, module: *Module, index: Module.Index) Alloc
                 .kind = .fn_decl,
                 .node = node,
                 .name_token = decl.name_token,
+                .type_params = @intCast(decl.type_params.len),
             }),
             .var_decl => |decl| _ = try addDecl(comp, module, index, .{
                 .kind = .let,
@@ -223,6 +232,7 @@ fn registerMembers(
                     .kind = .fn_decl,
                     .node = member,
                     .name_token = fn_view.name_token,
+                    .type_params = @intCast(fn_view.type_params.len),
                 });
             },
             .field => {},
@@ -235,7 +245,12 @@ fn registerMembers(
     comp.declPtr(struct_index).aux = @intCast(comp.decls.items.len - members_start);
 }
 
-const NewDecl = struct { kind: Decl.Kind, node: AST.Node.Index, name_token: Token.Index };
+const NewDecl = struct {
+    kind: Decl.Kind,
+    node: AST.Node.Index,
+    name_token: Token.Index,
+    type_params: u8 = 0,
+};
 
 fn addDecl(
     comp: *Compilation,
@@ -274,7 +289,7 @@ fn addDecl(
         return decl_index;
     }
 
-    const gop = module.names.getOrPutAssumeCapacity(name);
+    const gop = module.names.getOrPutAssumeCapacity(text);
     if (gop.found_existing) {
         const first = comp.declAt(gop.value_ptr.*);
         try comp.reportToken(index, new.name_token, .{
@@ -340,6 +355,7 @@ fn appendDecl(
     owner: Decl.OptionalIndex,
 ) Allocator.Error!Decl.Index {
     if (comp.decls.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
+    assert(new.type_params <= AST.type_params_max);
     const index: Decl.Index = .from(comp.decls.items.len);
     try comp.decls.append(comp.gpa, .{
         .module = module_index,
@@ -348,8 +364,10 @@ fn appendDecl(
         .owner = owner,
         .result = 0,
         .aux = 0,
+        .plain_instance = .none,
         .kind = new.kind,
         .state = .unanalyzed,
+        .type_params = new.type_params,
     });
     return index;
 }
@@ -515,12 +533,11 @@ pub fn findExported(
     origin: Compilation.Origin,
     name_token: Token.Index,
 ) Allocator.Error!?Decl.Index {
-    const name = try comp.pool.string(comp.gpa, name_text);
     var target = in;
     var remaining: u32 = import_chain_max;
     while (remaining > 0) : (remaining -= 1) {
         const module = comp.moduleAt(target);
-        const found = module.findDecl(name) orelse {
+        const found = module.findDecl(name_text) orelse {
             try comp.reportToken(origin.module, name_token, .{
                 .code = .no_such_member,
                 .message = try comp.fmt("'{s}' has no declaration named '{s}'", .{

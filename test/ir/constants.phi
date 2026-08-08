@@ -7,6 +7,11 @@ let kilobyte = 1024
 let scaled = kilobyte * kilobyte * 4
 let truth = scaled > kilobyte and kilobyte != scaled
 
+let separated = 1_000_000
+let masked = 0xff & 0b1010 | 0o17
+let past_u64 = 18446744073709551616
+let hex_float: f64 = 0x1.8p1
+
 pub let bytes_max: u32 = scaled
 let narrow_seed: i64 = 200
 
