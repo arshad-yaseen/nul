@@ -1645,7 +1645,7 @@ fn setSlotType(check: *Check, slot: Ref, value_type: Pool.Index) Allocator.Error
 
 // narrowing, the facts a condition proves
 
-const facts_max = 8;
+const facts_max = 16;
 
 const Fact = struct { local: Builder.Local.Index, type: Pool.Index };
 
