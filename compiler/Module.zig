@@ -514,12 +514,11 @@ pub fn findExported(
     origin: Compilation.Origin,
     name_token: Token.Index,
 ) Allocator.Error!?Decl.Index {
+    const name = try comp.pool.string(comp.gpa, name_text);
     var target = in;
     var remaining: u32 = import_chain_max;
     while (remaining > 0) : (remaining -= 1) {
         const module = comp.moduleAt(target);
-        const name = try comp.pool.string(comp.gpa, name_text);
-
         const found = module.findDecl(name) orelse {
             try comp.reportToken(origin.module, name_token, .{
                 .code = .no_such_member,

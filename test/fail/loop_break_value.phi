@@ -1,0 +1,19 @@
+type true
+type false
+type bool = true | false
+
+fn drops(n: u32) {
+    loop {
+        break n
+    }
+}
+
+fn carries(n: u32) u32 {
+    let v = loop {
+        if n > 0 {
+            break n
+        }
+        break
+    }
+    return v
+}

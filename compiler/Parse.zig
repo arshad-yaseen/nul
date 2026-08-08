@@ -33,7 +33,7 @@ extra: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 errors: std.ArrayList(Diagnostic),
 depth: u32,
-/// In an `if` header, where a block after `or` belongs to the `if`.
+/// In an `if` or `loop` header, where a block after `or` belongs to the header.
 in_condition: bool,
 reported_too_deep: bool,
 
@@ -75,6 +75,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
 
     try parse.nodes.ensureTotalCapacity(gpa, @divFloor(source.len, 8) + 8);
     try parse.extra.ensureTotalCapacity(gpa, @divFloor(source.len, 16) + 8);
+    try parse.scratch.ensureTotalCapacity(gpa, @divFloor(source.len, 64) + 8);
 
     try parse.parseRoot();
     assert(parse.nodes.len > 0);
@@ -99,10 +100,18 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
 
 // the cursor
 
-/// Or `.eof` past the end. Nothing in the grammar looks further than the token
-/// the cursor is on.
+/// Or `.eof` past the end. Nothing but the label grammar looks further than
+/// the token the cursor is on.
 fn current(self: *const Parse) Token.Tag {
     const index = self.token_index.int();
+    if (index < self.tags.len) return self.tags[index];
+    return .eof;
+}
+
+/// The tag `ahead` tokens past the cursor, `.eof` past the end.
+fn peek(self: *const Parse, ahead: u32) Token.Tag {
+    assert(ahead > 0);
+    const index = self.token_index.int() + ahead;
     if (index < self.tags.len) return self.tags[index];
     return .eof;
 }
@@ -448,13 +457,14 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,       .number,
-    .l_paren,     .dot,
-    .minus,       .kw_not,
-    .tilde,       .ampersand,
-    .invalid,     .kw_if,
-    .kw_return,   .kw_break,
-    .kw_continue, .kw_intrinsic,
+    .ident,        .number,
+    .l_paren,      .dot,
+    .minus,        .kw_not,
+    .tilde,        .ampersand,
+    .invalid,      .kw_if,
+    .kw_loop,      .kw_return,
+    .kw_break,     .kw_continue,
+    .kw_intrinsic,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
@@ -901,6 +911,14 @@ fn parseExprStatement(self: *Parse) Allocator.Error!Node.Index {
     return self.addPair(.assign, op_token, lhs, rhs);
 }
 
+/// A header expression, where a block after `or` belongs to the header.
+fn parseCondition(self: *Parse) Allocator.Error!Node.Index {
+    const outer = self.in_condition;
+    self.in_condition = true;
+    defer self.in_condition = outer;
+    return self.parseExpr();
+}
+
 /// No parentheses, and mandatory braces, so no arm can dangle.
 fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_if));
@@ -909,10 +927,7 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     defer self.leave();
 
     const if_token = self.nextToken();
-    const outer = self.in_condition;
-    self.in_condition = true;
-    const cond = try self.parseExpr();
-    self.in_condition = outer;
+    const cond = try self.parseCondition();
     const then_block = try self.parseBlock();
     const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
         (if (self.at(.kw_if)) try self.parseIf() else try self.parseBlock()).toOptional()
@@ -928,6 +943,52 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
         .main_token = if_token,
         .data = .{ .extra = start },
     });
+}
+
+/// `loop { }` forever, `loop cond { }` while. `else` runs when the loop ends
+/// on its own, which a `break` skips.
+fn parseLoop(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_loop));
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
+
+    const loop_token = self.nextToken();
+
+    const cond: Node.OptionalIndex = if (self.at(.l_brace))
+        .none
+    else
+        (try self.parseCondition()).toOptional();
+
+    const body = try self.parseBlock();
+    const else_node: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
+        (try self.parseBlock()).toOptional()
+    else
+        .none;
+
+    const start = self.extraStart();
+    try self.extraOpt(cond);
+    try self.extraNode(body);
+    try self.extraOpt(else_node);
+    return self.addNode(.{
+        .tag = .loop_expr,
+        .main_token = loop_token,
+        .data = .{ .extra = start },
+    });
+}
+
+/// `outer: loop`, which needs the one two-token peek the grammar has.
+fn atLabeledLoop(self: *const Parse) bool {
+    if (self.at(.ident) == false) return false;
+    if (self.peek(1) != .colon) return false;
+    return self.peek(2) == .kw_loop;
+}
+
+/// The label is not stored. `viewOf` reads it back off the tokens.
+fn parseLabeledLoop(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.atLabeledLoop());
+    _ = self.nextToken();
+    _ = self.eatToken(.colon).?;
+    return self.parseLoop();
 }
 
 // expressions
@@ -996,10 +1057,12 @@ fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
     // these carry their own node instead of wrapping an operand
     switch (self.current()) {
         .kw_if => return self.parseIf(),
+        .kw_loop => return self.parseLoop(),
         .kw_return => return self.parseReturn(),
         .kw_break, .kw_continue => return self.parseLoopExit(),
         else => {},
     }
+    if (self.atLabeledLoop()) return self.parseLabeledLoop();
 
     if (AST.unary_table[@intFromEnum(self.current())] == null) return self.parseSuffixExpr();
 
@@ -1026,12 +1089,34 @@ fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
+/// `break` and `continue`, each with an optional `:label`, and `break` with
+/// an optional value.
 fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_break) or self.at(.kw_continue));
 
-    const node_tag: Node.Tag = if (self.at(.kw_break)) .break_expr else .continue_expr;
+    const is_break = self.at(.kw_break);
     const keyword = self.nextToken();
-    return self.addNode(.{ .tag = node_tag, .main_token = keyword, .data = .{ .none = {} } });
+
+    if (self.eatToken(.colon) != null) {
+        try self.expectToken(.ident);
+    }
+    if (is_break == false) {
+        return self.addNode(.{
+            .tag = .continue_expr,
+            .main_token = keyword,
+            .data = .{ .none = {} },
+        });
+    }
+
+    const value: Node.OptionalIndex = if (starts_expr.contains(self.current()))
+        (try self.parseExpr()).toOptional()
+    else
+        .none;
+    return self.addNode(.{
+        .tag = .break_expr,
+        .main_token = keyword,
+        .data = .{ .opt_node = value },
+    });
 }
 
 /// Suffixes bind tighter than any operator, and each wraps the one before.
@@ -1243,7 +1328,7 @@ fn parseType(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// One union member: a pointer or a path. `|` binds looser, in `parseType`.
+/// One union member, a pointer or a path. `|` binds looser, in `parseType`.
 fn parseTypeMember(self: *Parse) Allocator.Error!Node.Index {
     if (self.enter() == false) return self.tooDeep();
     defer self.leave();

@@ -1,0 +1,20 @@
+type true
+type false
+type bool = true | false
+
+fn missing(flag: bool) u32 {
+    loop flag {
+        break :outer
+    }
+    return 0
+}
+
+fn shadowed(n: u32) u32 {
+    outer: loop {
+        outer: loop {
+            break
+        }
+        break
+    }
+    return n
+}

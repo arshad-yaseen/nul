@@ -1,0 +1,42 @@
+type true
+type false
+type bool = true | false
+
+fn forms(flag: bool, n: i64) i64 {
+    loop {
+        break
+    }
+
+    loop flag {
+        continue
+    }
+
+    loop flag {
+        n
+    } else {
+        n
+    }
+
+    outer: loop {
+        loop flag {
+            break :outer
+            continue :outer
+        }
+    }
+
+    let v = loop {
+        break 1
+    }
+
+    let w = loop flag {
+        break :outer v + 1
+    } else {
+        2
+    }
+
+    let x = named: loop {
+        break :named w
+    }
+
+    return x
+}

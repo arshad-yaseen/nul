@@ -153,7 +153,7 @@ pub const Key = union(enum) {
     value_float: Float,
     /// The one value of a unit type.
     value_unit: Index,
-    /// A constant that knows which union it sits in: the union, then the
+    /// A constant that knows which union it sits in. The union, then the
     /// member constant it holds.
     value_union: Wrapped,
 
@@ -221,7 +221,7 @@ const Item = struct {
         type_pointer_var,
         type_struct,
         type_unit,
-        /// `data` points at `extra`: the member count, then the members.
+        /// `data` points at `extra`. The member count, then the members.
         type_union,
         /// `data` points at `extra`.
         value_int,
@@ -229,7 +229,7 @@ const Item = struct {
         value_float,
         /// `data` is its unit type.
         value_unit,
-        /// `data` points at `extra`: the union, then the member constant.
+        /// `data` points at `extra`. The union, then the member constant.
         value_union,
     };
 };
@@ -377,7 +377,7 @@ pub const Unite = union(enum) {
     too_wide,
 };
 
-/// The one way a union is built: member unions splice in flat, so aliases
+/// The one way a union is built. Member unions splice in flat, so aliases
 /// compose, and a repeat is refused.
 pub fn unite(pool: *Pool, gpa: Allocator, members: []const Index) Allocator.Error!Unite {
     assert(members.len >= 2);
@@ -432,7 +432,7 @@ pub fn unionHas(pool: *const Pool, union_index: Index, member: Index) bool {
     return false;
 }
 
-/// The union without one member: the rest as a union, or the one member left.
+/// The union without one member. The rest as a union, or the one member left.
 pub fn unionWithout(
     pool: *Pool,
     gpa: Allocator,

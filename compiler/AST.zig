@@ -123,7 +123,12 @@ pub const Node = struct {
         assign,
         defer_stmt,
         if_expr,
+        /// `loop { }` forever, `loop cond { }` while. `else` runs when the
+        /// loop ends on its own, and `label: loop` names it for `break :label`.
+        loop_expr,
+        /// `break`, with an optional `:label` and an optional value.
         break_expr,
+        /// `continue`, with an optional `:label`.
         continue_expr,
         return_expr,
 
@@ -344,8 +349,10 @@ pub const View = union(enum) {
     assign: Assign,
     defer_stmt: Node.Index,
     if_expr: If,
-    break_expr: Token.Index,
-    continue_expr: Token.Index,
+    loop_expr: Loop,
+    break_expr: Break,
+    /// The label, where one is written.
+    continue_expr: ?Token.Index,
     return_expr: Node.OptionalIndex,
 
     intrinsic: Token.Index,
@@ -409,6 +416,14 @@ pub const View = union(enum) {
         then_block: Node.Index,
         else_node: Node.OptionalIndex,
     };
+    /// `cond` is `.none` for a loop that runs until a `break`.
+    pub const Loop = struct {
+        label: ?Token.Index,
+        cond: Node.OptionalIndex,
+        body: Node.Index,
+        else_node: Node.OptionalIndex,
+    };
+    pub const Break = struct { label: ?Token.Index, value: Node.OptionalIndex };
     pub const StructLiteral = struct {
         type_expr: Node.Index,
         fields: []const Node.Index,
@@ -501,8 +516,20 @@ fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Data) Vie
                 .else_node = payload.optNode(),
             } };
         },
-        .break_expr => .{ .break_expr = main },
-        .continue_expr => .{ .continue_expr = main },
+        .loop_expr => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .loop_expr = .{
+                .label = tree.loopLabel(main),
+                .cond = payload.optNode(),
+                .body = payload.node(),
+                .else_node = payload.optNode(),
+            } };
+        },
+        .break_expr => .{ .break_expr = .{
+            .label = tree.exitLabel(main),
+            .value = data.opt_node,
+        } },
+        .continue_expr => .{ .continue_expr = tree.exitLabel(main) },
         .return_expr => .{ .return_expr = data.opt_node },
 
         .intrinsic => .{ .intrinsic = main },
@@ -584,6 +611,27 @@ fn isPub(tree: AST, main: Token.Index) bool {
     return tree.tokenTag(main.before(1)) == .kw_pub;
 }
 
+/// The `outer` of `outer: loop`, read off the tokens before the keyword.
+fn loopLabel(tree: AST, main: Token.Index) ?Token.Index {
+    assert(main.int() < tree.tokens.len);
+
+    if (main.int() < 2) return null;
+    if (tree.tokenTag(main.before(1)) != .colon) return null;
+    const label = main.before(2);
+    if (tree.tokenTag(label) != .ident) return null;
+    return label;
+}
+
+/// The `outer` of `break :outer`, read off the tokens after the keyword.
+fn exitLabel(tree: AST, main: Token.Index) ?Token.Index {
+    assert(main.int() < tree.tokens.len);
+
+    if (tree.tokenTag(main.after(1)) != .colon) return null;
+    const label = main.after(2);
+    if (tree.tokenTag(label) != .ident) return null;
+    return label;
+}
+
 // nodes
 
 pub fn nodeTag(tree: AST, node: Node.Index) Node.Tag {
@@ -606,8 +654,8 @@ pub fn commentText(tree: AST, at: Comment) []const u8 {
 /// The `///` run directly above a declaration, with only space between.
 pub fn docsAbove(tree: AST, node: Node.Index) []const Comment {
     var next = tree.tokenStart(tree.declStart(node));
-    var end = tree.comments.len;
-    while (end > 0 and tree.comments[end - 1].start >= next) end -= 1;
+    // comments are in source order, so the run ends where the declaration starts
+    const end = std.sort.lowerBound(Comment, tree.comments, next, commentOrder);
 
     var first = end;
     while (first > 0) {
@@ -620,6 +668,10 @@ pub fn docsAbove(tree: AST, node: Node.Index) []const Comment {
         first -= 1;
     }
     return tree.comments[first..end];
+}
+
+fn commentOrder(offset: u32, comment: Comment) std.math.Order {
+    return std.math.order(offset, comment.start);
 }
 
 fn declStart(tree: AST, node: Node.Index) Token.Index {
@@ -690,8 +742,24 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
         const main = tree.nodeMainToken(current);
         switch (tree.viewOf(current)) {
             .root => return if (side == .leftmost) .first else main,
-            .err, .type_param, .break_expr, .continue_expr => return main,
+            .err, .type_param => return main,
             .intrinsic, .ident, .number_literal => return main,
+            .break_expr => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => {
+                    if (it.value.unwrap()) |value| {
+                        current = value;
+                    } else return it.label orelse main;
+                },
+            },
+            .continue_expr => |label| switch (side) {
+                .leftmost => return main,
+                .rightmost => return label orelse main,
+            },
+            .loop_expr => |it| switch (side) {
+                .leftmost => return it.label orelse main,
+                .rightmost => current = it.else_node.unwrap() orelse it.body,
+            },
             .import_decl => |it| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = it.path,

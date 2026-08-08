@@ -1,0 +1,8 @@
+fn forever(n: u32) u32 {
+    loop {
+        break
+    } else {
+        _ = n
+    }
+    return n
+}

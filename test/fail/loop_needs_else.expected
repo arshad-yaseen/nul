@@ -1,0 +1,8 @@
+error[E0206]: this loop has no 'else', so it has no value when its condition fails
+ --> test/fail/loop_needs_else.phi:6:13
+  |
+6 |     let v = loop flag {
+  |             ^^^^^^^^^^^ needs an 'else'
+  |
+  = help: a loop used as a value says what it is when it ends on its own
+

@@ -1,0 +1,10 @@
+type true
+type false
+type bool = true | false
+
+fn needs_else(flag: bool, n: u32) u32 {
+    let v = loop flag {
+        break n
+    }
+    return v
+}

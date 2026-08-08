@@ -26,6 +26,9 @@ tree: *const AST,
 bindings: []const Binding,
 /// Null means constants only.
 builder: ?*Builder,
+/// The module's `bool` once found, `.poison` until then. Resolution cannot
+/// change inside one unit, so the first success answers for the rest.
+bool_type: Pool.Index,
 /// Field types skip the embedding demand, because their struct gets its own walk.
 demand_embedding: bool,
 
@@ -293,6 +296,7 @@ fn context(comp: *Compilation, decl_index: Decl.Index, bindings: []const Binding
         .tree = &module.tree,
         .bindings = bindings,
         .builder = null,
+        .bool_type = .poison,
         .demand_embedding = true,
     };
 }
@@ -555,7 +559,7 @@ fn resolveBracketType(check: *Check, node: Node.Index) Allocator.Error!Pool.Inde
 }
 
 /// Everything a body build carries. Blocks are contiguous runs.
-const Builder = struct {
+pub const Builder = struct {
     instance: Pool.Instance,
     return_type: Pool.Index,
     insts: IR.Func.InstList,
@@ -569,6 +573,10 @@ const Builder = struct {
     narrows: std.ArrayList(Narrow),
     /// Staged call arguments and field values, marked and restored.
     operands: std.ArrayList(Operand),
+    /// Enclosing loops, innermost last.
+    loops: std.ArrayList(LoopFrame),
+    /// Loops below this are outside the `defer` being emitted.
+    defer_loops_floor: u32,
     in_defer: bool,
     /// Unreachable code is still checked, then dropped.
     reachable: bool,
@@ -589,8 +597,8 @@ const Builder = struct {
 
         const Kind = enum(u8) { let_constant, let_value, var_slot, param };
 
-        /// `let_constant` holds the constant. The rest hold a ref: the value
-        /// for `let_value` and `param`, the slot address for `var_slot`.
+        /// `let_constant` holds the constant. The rest hold a ref, the value
+        /// for `let_value` and `param` and the slot address for `var_slot`.
         const Payload = union {
             ref: Ref,
             constant: Pool.Index,
@@ -625,6 +633,60 @@ const Builder = struct {
         ref: Ref,
     };
 
+    const LoopFrame = struct {
+        /// `.empty` when the loop has no label.
+        label: Pool.String,
+        /// For the note when a label is shadowed.
+        node: Node.Index,
+        /// The `continue` target, which re-reads the condition.
+        header: IR.Block.Index,
+        /// The `break` target.
+        exit: IR.Block.Index,
+        /// Scopes at entry. Leaving the loop unwinds down to here.
+        scope_depth: u32,
+        /// `.none` for a statement loop.
+        slot: Ref,
+        /// What every `break` must carry, meaningless until `settled`.
+        result_type: Pool.Index,
+        carries: bool,
+        settled: bool,
+        /// A reachable `break` reached the exit.
+        broke_reachable: bool,
+    };
+
+    pub const empty: Builder = .{
+        .instance = undefined,
+        .return_type = undefined,
+        .insts = .empty,
+        .extra = .empty,
+        .blocks = .empty,
+        .current = undefined,
+        .locals = .empty,
+        .scopes = .empty,
+        .defer_nodes = .empty,
+        .narrows = .empty,
+        .operands = .empty,
+        .loops = .empty,
+        .defer_loops_floor = undefined,
+        .in_defer = undefined,
+        .reachable = undefined,
+    };
+
+    fn fresh(gpa: Allocator) Allocator.Error!Builder {
+        var builder: Builder = .empty;
+        errdefer builder.deinit(gpa);
+
+        try builder.blocks.ensureTotalCapacity(gpa, 8);
+        try builder.extra.ensureTotalCapacity(gpa, 32);
+        try builder.locals.ensureTotalCapacity(gpa, 16);
+        try builder.scopes.ensureTotalCapacity(gpa, 8);
+        try builder.defer_nodes.ensureTotalCapacity(gpa, 8);
+        try builder.narrows.ensureTotalCapacity(gpa, 8);
+        try builder.operands.ensureTotalCapacity(gpa, 16);
+        try builder.loops.ensureTotalCapacity(gpa, 4);
+        return builder;
+    }
+
     fn blockAt(builder: *Builder, index: IR.Block.Index) *BlockBuild {
         assert(index.int() < builder.blocks.items.len);
         return &builder.blocks.items[index.int()];
@@ -634,7 +696,19 @@ const Builder = struct {
         return builder.blockAt(builder.current);
     }
 
-    fn deinit(builder: *Builder, gpa: Allocator) void {
+    fn clear(builder: *Builder) void {
+        builder.insts.clearRetainingCapacity();
+        builder.extra.clearRetainingCapacity();
+        builder.blocks.clearRetainingCapacity();
+        builder.locals.clearRetainingCapacity();
+        builder.scopes.clearRetainingCapacity();
+        builder.defer_nodes.clearRetainingCapacity();
+        builder.narrows.clearRetainingCapacity();
+        builder.operands.clearRetainingCapacity();
+        builder.loops.clearRetainingCapacity();
+    }
+
+    pub fn deinit(builder: *Builder, gpa: Allocator) void {
         builder.insts.deinit(gpa);
         builder.extra.deinit(gpa);
         builder.blocks.deinit(gpa);
@@ -643,6 +717,7 @@ const Builder = struct {
         builder.defer_nodes.deinit(gpa);
         builder.narrows.deinit(gpa);
         builder.operands.deinit(gpa);
+        builder.loops.deinit(gpa);
         builder.* = undefined;
     }
 };
@@ -657,27 +732,26 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
     const bindings = try bindTypeParams(comp, instance, &buffer);
     var check = context(comp, decl_index, bindings);
 
-    var builder: Builder = .{
-        .instance = instance,
-        .return_type = comp.instanceType(instance),
-        .insts = .empty,
-        .extra = .empty,
-        .blocks = .empty,
-        .current = .entry,
-        .locals = .empty,
-        .scopes = .empty,
-        .defer_nodes = .empty,
-        .narrows = .empty,
-        .operands = .empty,
-        .in_defer = false,
-        .reachable = true,
-    };
-    defer builder.deinit(comp.gpa);
+    var builder: Builder = comp.body_builders.pop() orelse try Builder.fresh(comp.gpa);
+
+    assert(builder.insts.len == 0);
+    assert(builder.locals.items.len == 0);
+
+    builder.instance = instance;
+    builder.return_type = comp.instanceType(instance);
+    builder.current = .entry;
+    builder.defer_loops_floor = 0;
+    builder.in_defer = false;
+    builder.reachable = true;
+
+    defer {
+        builder.clear();
+        comp.body_builders.append(comp.gpa, builder) catch builder.deinit(comp.gpa);
+    }
+
     check.builder = &builder;
 
-    // one instruction per two source bytes of the body
     try builder.insts.ensureTotalCapacity(comp.gpa, 64);
-    try builder.blocks.ensureTotalCapacity(comp.gpa, 8);
 
     const view = check.tree.viewOf(check.declNode(decl_index)).fn_decl;
     // recovery can leave a hole where the body should be, already reported
@@ -688,6 +762,8 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
     check.startBlock(entry);
 
     const rows = comp.instanceRows(instance);
+    // one local per parameter, and room for the first few lets
+    try builder.locals.ensureTotalCapacity(comp.gpa, rows.len + 8);
     for (rows) |row| {
         const param_ref = try check.emit(.param, row.type, .{ .name = row.name });
         try check.declareLocal(.{
@@ -851,9 +927,15 @@ fn unwindScopesTo(check: *Check, target: u32) Allocator.Error!void {
 fn emitDefer(check: *Check, node: Node.Index) Allocator.Error!void {
     const builder = check.body();
     const outer = builder.in_defer;
+    const floor = builder.defer_loops_floor;
 
+    // a loop opened inside the defer may still be left, anything below may not
     builder.in_defer = true;
-    defer builder.in_defer = outer;
+    builder.defer_loops_floor = @intCast(builder.loops.items.len);
+    defer {
+        builder.in_defer = outer;
+        builder.defer_loops_floor = floor;
+    }
     try check.checkStatement(node);
 }
 
@@ -933,6 +1015,18 @@ fn localAt(check: *const Check, index: Builder.Local.Index) Builder.Local {
     const builder = check.body();
     assert(index.int() < builder.locals.items.len);
     return builder.locals.items[index.int()];
+}
+
+fn loopAt(check: *const Check, index: usize) Builder.LoopFrame {
+    const builder = check.body();
+    assert(index < builder.loops.items.len);
+    return builder.loops.items[index];
+}
+
+fn loopPtr(check: *Check, index: usize) *Builder.LoopFrame {
+    const builder = check.body();
+    assert(index < builder.loops.items.len);
+    return &builder.loops.items[index];
 }
 
 fn activeNarrow(check: *const Check, local: Builder.Local.Index) ?Builder.Narrow {
@@ -1361,6 +1455,182 @@ fn storeArm(
     try check.emitStore(slot, refOf(met));
 }
 
+/// A header re-reads the condition per pass, the body jumps back to it, and
+/// `break` and `continue` jump out and back through the frame this pushes.
+fn checkLoop(
+    check: *Check,
+    node: Node.Index,
+    view: AST.View.Loop,
+    hint: ?Pool.Index,
+) Allocator.Error!Value {
+    const comp = check.comp;
+    const builder = check.body();
+    assert(check.tree.nodeTag(node) == .loop_expr);
+
+    // recovery can leave a hole where the body should be, already reported
+    if (check.tree.nodeTag(view.body) != .block) return .poison;
+
+    // control may have left already, the way `emit` handles it
+    if (builder.currentBlock().terminator != .none) {
+        const dead = try check.newBlock();
+        check.startBlock(dead);
+        builder.reachable = false;
+    }
+    const entry_reachable = builder.reachable;
+
+    const carries = wantsValue(hint);
+
+    // only `break` leaves a loop with no condition, so only a conditional
+    // loop needs `else` to have a value on the path where the condition fails
+    const else_missing = carries and view.cond != .none and view.else_node == .none;
+
+    if (else_missing) {
+        try check.fail(node, .{
+            .code = .type_mismatch,
+            .message = "this loop has no 'else', so it has no value when its condition fails",
+            .label = "needs an 'else'",
+            .help = "a loop used as a value says what it is when it ends on its own",
+        });
+    }
+
+    const slot: Ref = if (carries) try check.emitSlot(.empty, hint orelse .poison) else .none;
+
+    var label: Pool.String = .empty;
+    if (view.label) |token| {
+        const text = check.tree.tokenSlice(token);
+        label = try comp.pool.string(comp.gpa, text);
+        for (builder.loops.items) |other| {
+            if (other.label != label) continue;
+            try check.failToken(token, .{
+                .code = .shadows,
+                .message = try comp.fmt("':{s}' already names an enclosing loop", .{text}),
+                .label = "shadows it",
+                .notes = try comp.notes(&.{
+                    comp.noteAt(check.module_index, other.node, "first labeled here"),
+                }),
+            });
+            break;
+        }
+    }
+
+    const header = try check.newBlock();
+    const body_block = try check.newBlock();
+    const exit = try check.newBlock();
+    const else_target: IR.Block.Index = if (view.else_node != .none)
+        try check.newBlock()
+    else
+        exit;
+
+    check.endBlock(.{ .jump = header });
+    check.startBlock(header);
+    if (view.cond.unwrap()) |cond_node| {
+        // the header never narrows, so no facts are gathered here
+        const cond = try check.checkCondition(cond_node);
+        check.endBlock(.{ .branch = .{
+            .cond = cond,
+            .then_block = body_block,
+            .else_block = else_target,
+        } });
+    } else {
+        check.endBlock(.{ .jump = body_block });
+    }
+
+    try builder.loops.append(comp.gpa, .{
+        .label = label,
+        .node = node,
+        .header = header,
+        .exit = exit,
+        .scope_depth = @intCast(builder.scopes.items.len),
+        .slot = slot,
+        .result_type = hint orelse .poison,
+        .carries = carries,
+        .settled = hint != null,
+        .broke_reachable = false,
+    });
+
+    check.startBlock(body_block);
+    builder.reachable = entry_reachable;
+    _ = try check.checkBlockValue(view.body, .void_type);
+    if (check.blockOpen()) check.endBlock(.{ .jump = header });
+
+    const finished = builder.loops.pop().?;
+    var result_type = finished.result_type;
+    const settled = finished.settled;
+
+    var else_flows = false;
+    if (view.else_node.unwrap()) |else_node| {
+        check.startBlock(else_target);
+        if (view.cond == .none) {
+            builder.reachable = false;
+            try check.fail(else_node, .{
+                .code = .unreachable_code,
+                .message = "this 'else' never runs, because a loop with no " ++
+                    "condition never ends on its own",
+                .label = "never runs",
+            });
+        } else {
+            builder.reachable = entry_reachable;
+        }
+
+        const else_hint: ?Pool.Index = if (settled) result_type else hint;
+        const else_value = try check.checkExpr(else_node, else_hint);
+        if (carries and else_value != .diverged) {
+            if (settled == false) {
+                result_type = try check.settleLoopType(else_node, check.typeOf(else_value));
+            }
+            try check.storeArm(slot, else_value, result_type, else_node);
+        }
+        else_flows = check.blockOpen() and builder.reachable;
+        if (check.blockOpen()) check.endBlock(.{ .jump = exit });
+    }
+
+    check.startBlock(exit);
+    var exit_reachable = finished.broke_reachable;
+    if (view.cond != .none) {
+        if (view.else_node == .none) {
+            if (entry_reachable) exit_reachable = true;
+        } else {
+            if (else_flows) exit_reachable = true;
+        }
+    }
+    builder.reachable = exit_reachable;
+
+    if (carries == false) return .void_value;
+
+    // a later stage reads every type, so the slot is typed on every path
+    try check.setSlotType(slot, result_type);
+
+    if (else_missing) return .poison;
+    if (exit_reachable == false) return .diverged;
+    if (result_type == .poison) return .poison;
+
+    const loaded = try check.emitOne(.load, result_type, slot);
+    return runtimeValue(loaded, result_type);
+}
+
+/// The type the loop's first arriving value settles, or poison once reported.
+fn settleLoopType(check: *Check, node: Node.Index, found: Pool.Index) Allocator.Error!Pool.Index {
+    if (found == .poison) return .poison;
+    if (check.typeCanHold(found)) return found;
+
+    if (found == .void_type) {
+        try check.fail(node, .{
+            .code = .type_mismatch,
+            .message = "this produces nothing, and the loop needs a value",
+            .label = "no value here",
+        });
+        return .poison;
+    }
+    // the same situation as `var x = 5`
+    try check.fail(node, .{
+        .code = .var_needs_type,
+        .message = "nothing says what type this loop is",
+        .label = "no type in sight",
+        .help = "annotate what it feeds, as in 'let n: i64 = loop ...'",
+    });
+    return .poison;
+}
+
 /// The one place a built instruction is rewritten. An `if` needs its slot
 /// before its arms have said what type it is.
 fn setSlotType(check: *Check, slot: Ref, value_type: Pool.Index) Allocator.Error!void {
@@ -1438,7 +1708,7 @@ fn gatherWhenTrue(
     }
 }
 
-/// One `is`, both doors: the member where it passed, the rest where it
+/// One `is`, both doors. The member where it passed, the rest where it
 /// failed, swapped for `is not`.
 fn factsOfIs(
     check: *Check,
@@ -1539,10 +1809,11 @@ fn checkIs(check: *Check, node: Node.Index, view: AST.View.Is) Allocator.Error!V
     return runtimeValue(tested, bools);
 }
 
-/// `bool` is declared, not built in: a union of two unit types, the first
-/// meaning yes. The checker finds it by name where a test needs one.
+/// `bool` is declared, not built in. A union of two unit types, the first
+/// meaning yes, found by name where a test needs one.
 fn boolType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     const comp = check.comp;
+    if (check.bool_type != .poison) return check.bool_type;
 
     const name = try comp.pool.string(comp.gpa, "bool");
     const shaped: Pool.Index = shaped: {
@@ -1555,12 +1826,14 @@ fn boolType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
         break :shaped found;
     };
     if (shaped == .poison) {
+        // failure stays unmemoized, so every site that needs `bool` reports
         try check.fail(node, .{
             .code = .no_bool,
             .message = "this needs 'bool', a union of two unit types",
             .label = "no such 'bool' in scope",
         });
     }
+    check.bool_type = shaped;
     return shaped;
 }
 
@@ -1653,12 +1926,110 @@ fn checkReturn(
     return .diverged;
 }
 
-fn checkLoopJump(check: *Check, node: Node.Index) Allocator.Error!Value {
-    if (check.body().in_defer) {
+/// Every way out of a loop. The value settles or meets the loop's type, the
+/// scopes down to the loop unwind their defers, and control jumps to the exit.
+fn checkBreak(check: *Check, node: Node.Index, view: AST.View.Break) Allocator.Error!Value {
+    const builder = check.body();
+
+    const found = try check.findLoop(view.label);
+    if (try check.exitLeavesDefer(node, found)) return .poison;
+    const frame_index = found orelse {
+        if (view.value.unwrap()) |value_node| _ = try check.checkExpr(value_node, null);
+        return check.reportNoLoop(node, view.label);
+    };
+    const frame = check.loopAt(frame_index);
+
+    if (view.value.unwrap()) |value_node| {
+        if (frame.carries) {
+            const hinted: ?Pool.Index = if (frame.settled) frame.result_type else null;
+            const value = try check.checkExpr(value_node, hinted);
+            // the value may have left, and a block cannot be left twice
+            if (check.blockOpen() == false) return .diverged;
+
+            // checking the value can settle the loop, so read the frame fresh
+            const fresh = check.loopPtr(frame_index);
+            var target = fresh.result_type;
+            if (fresh.settled == false) {
+                target = try check.settleLoopType(value_node, check.typeOf(value));
+                fresh.result_type = target;
+                fresh.settled = true;
+            }
+            const met = try check.coerce(value, target, value_node);
+            try check.emitStore(frame.slot, refOf(met));
+        } else {
+            try check.fail(node, .{
+                .code = .type_mismatch,
+                .message = "this 'break' carries a value, and its loop is not asked for one",
+                .label = "nothing takes it",
+                .help = "bind the loop, as in 'let v = loop { ... }', or drop the value",
+            });
+            _ = try check.checkExpr(value_node, null);
+            if (check.blockOpen() == false) return .diverged;
+        }
+    } else if (frame.carries) {
         try check.fail(node, .{
-            .code = .defer_cannot_leave,
-            .message = "a 'defer' runs on the way out, so it cannot leave again",
-            .label = "not allowed here",
+            .code = .type_mismatch,
+            .message = "this loop stands where a value is needed, so 'break' must carry it",
+            .label = "carries nothing",
+        });
+    }
+
+    try check.unwindScopesTo(frame.scope_depth);
+    if (builder.reachable) check.loopPtr(frame_index).broke_reachable = true;
+    check.endBlock(.{ .jump = frame.exit });
+    return .diverged;
+}
+
+fn checkContinue(check: *Check, node: Node.Index, label: ?Token.Index) Allocator.Error!Value {
+    const found = try check.findLoop(label);
+    if (try check.exitLeavesDefer(node, found)) return .poison;
+    const frame_index = found orelse return check.reportNoLoop(node, label);
+
+    const frame = check.loopAt(frame_index);
+    try check.unwindScopesTo(frame.scope_depth);
+    check.endBlock(.{ .jump = frame.header });
+    return .diverged;
+}
+
+/// Whether this exit would leave the `defer` it stands in. Reported.
+fn exitLeavesDefer(check: *Check, node: Node.Index, found: ?usize) Allocator.Error!bool {
+    const builder = check.body();
+    if (builder.in_defer == false) return false;
+    if (found != null and found.? >= builder.defer_loops_floor) return false;
+
+    try check.fail(node, .{
+        .code = .defer_cannot_leave,
+        .message = "a 'defer' runs on the way out, so it cannot leave again",
+        .label = "not allowed here",
+    });
+    return true;
+}
+
+/// The innermost enclosing loop, or the one the label names. Reports nothing.
+fn findLoop(check: *Check, label: ?Token.Index) Allocator.Error!?usize {
+    const count = check.body().loops.items.len;
+
+    const token = label orelse {
+        if (count == 0) return null;
+        return count - 1;
+    };
+    const name = try check.comp.pool.string(check.comp.gpa, check.tree.tokenSlice(token));
+    var index = count;
+    while (index > 0) {
+        index -= 1;
+        if (check.loopAt(index).label == name) return index;
+    }
+    return null;
+}
+
+fn reportNoLoop(check: *Check, node: Node.Index, label: ?Token.Index) Allocator.Error!Value {
+    if (label) |token| {
+        try check.fail(node, .{
+            .code = .outside_loop,
+            .message = try check.comp.fmt("no enclosing loop is labeled ':{s}'", .{
+                check.tree.tokenSlice(token),
+            }),
+            .label = "no such loop",
         });
         return .poison;
     }
@@ -1755,8 +2126,10 @@ fn checkExprInner(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.
         // a block reaches here as an arm
         .block => return check.checkBlockValue(node, hint),
         .if_expr => |view| return check.checkIf(node, view, hint),
+        .loop_expr => |view| return check.checkLoop(node, view, hint),
         .return_expr => |operand| return check.checkReturn(node, operand),
-        .break_expr, .continue_expr => return check.checkLoopJump(node),
+        .break_expr => |view| return check.checkBreak(node, view),
+        .continue_expr => |label| return check.checkContinue(node, label),
         .binary => |view| return check.checkBinary(view),
         .unary => |view| return check.checkUnary(node, view),
         .is_expr => |view| return check.checkIs(node, view),
@@ -2139,7 +2512,7 @@ fn checkShortCircuit(check: *Check, view: AST.View.Binary) Allocator.Error!Value
     return runtimeValue(loaded, bools);
 }
 
-/// `e or f` splits a union at its first member: `f` must be that member,
+/// `e or f` splits a union at its first member. `f` must be that member,
 /// or everything `e` could be. A bool is `true | false`, so logical or is
 /// this rule at work, not a second rule.
 fn checkOr(check: *Check, view: AST.View.Binary) Allocator.Error!Value {
@@ -2534,7 +2907,7 @@ fn findField(
     if (try check.fieldRow(instance, name_text)) |row| return row;
 
     const decl_index = comp.instanceDecl(instance);
-    if (findMember(comp, decl_index, name_text) != null) {
+    if (try findMember(comp, decl_index, name_text) != null) {
         try check.failToken(name_token, .{
             .code = .no_such_member,
             .message = try comp.fmt("'{s}' is a function, so call it with '.{s}(...)'", .{
@@ -2556,15 +2929,16 @@ fn findField(
     return null;
 }
 
-/// Absolute, which is what the IR stores.
+/// Absolute, which is what the IR stores. Names are interned, so the scan
+/// compares indices rather than text.
 fn fieldRow(check: *Check, instance: Pool.Instance, name_text: []const u8) Allocator.Error!?u32 {
     const comp = check.comp;
     try comp.ensureRows(instance);
 
+    const name = try comp.pool.string(comp.gpa, name_text);
     const rows = comp.instanceAt(instance).rows;
     for (rows.start..rows.end()) |raw| {
-        const row_name = comp.pool.stringText(comp.rowAt(@intCast(raw)).name);
-        if (std.mem.eql(u8, row_name, name_text)) return @intCast(raw);
+        if (comp.rowAt(@intCast(raw)).name == name) return @intCast(raw);
     }
     return null;
 }
@@ -2589,17 +2963,20 @@ fn memberIsVisible(check: *Check, member: Decl.Index, at: Token.Index) Allocator
     return false;
 }
 
-fn findMember(comp: *const Compilation, decl_index: Decl.Index, name_text: []const u8) ?Decl.Index {
+fn findMember(
+    comp: *Compilation,
+    decl_index: Decl.Index,
+    name_text: []const u8,
+) Allocator.Error!?Decl.Index {
     const decl = comp.declAt(decl_index);
     assert(decl.kind == .struct_decl);
 
+    const name = try comp.pool.string(comp.gpa, name_text);
     const members = decl.members();
     for (members.start..members.start + members.len) |raw| {
         const member = comp.declAt(.from(raw));
         if (member.kind != .fn_decl) continue;
-        if (std.mem.eql(u8, comp.pool.stringText(member.name), name_text)) {
-            return .from(raw);
-        }
+        if (member.name == name) return .from(raw);
     }
     return null;
 }
@@ -2888,7 +3265,7 @@ fn resolveCalleeMember(
                 switch (comp.pool.keyOf(type_index)) {
                     .type_struct => |owner| {
                         const decl_index = comp.instanceDecl(owner);
-                        const member = findMember(comp, decl_index, name_text) orelse {
+                        const member = try findMember(comp, decl_index, name_text) orelse {
                             _ = try check.findField(owner, access.name_token);
                             return null;
                         };
@@ -3044,7 +3421,7 @@ fn checkCallResolved(
                 .type_struct => |owner| {
                     const owner_decl = comp.instanceDecl(owner);
                     const name_text = check.tree.tokenSlice(method.name_token);
-                    const member = findMember(comp, owner_decl, name_text) orelse {
+                    const member = try findMember(comp, owner_decl, name_text) orelse {
                         _ = try check.findField(owner, method.name_token);
                         return .poison;
                     };
@@ -3944,7 +4321,7 @@ fn coerce(
                 }
             }
 
-            // membership decides: a member value enters a union that lists
+            // membership decides. a member value enters a union that lists
             // it, and a union widens into one that lists all it may hold
             if (want == .type_union) {
                 const listed = if (have == .type_union)
@@ -4051,6 +4428,7 @@ fn valueOnly(check: *Check, node: Node.Index, value: Value) Allocator.Error!bool
 fn runtimeOnly(tag: Node.Tag) ?[]const u8 {
     return switch (tag) {
         .if_expr => "an 'if'",
+        .loop_expr => "a loop",
         .block => "a block",
         .return_expr => "'return'",
         .break_expr => "'break'",

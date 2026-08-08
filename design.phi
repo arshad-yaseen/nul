@@ -273,9 +273,12 @@ let found = loop x in xs {
 
 outer: loop r in rows {                 // labels, for the inner break
     loop c in r {
-        if bad(c) { break outer }
+        if bad(c) { break :outer }
     }
 }
+
+// `break :outer x` leaves the labeled loop with a value. The `:` is what
+// keeps a label apart from a value, so `break x` stays unambiguous.
 
 break    continue    return
 

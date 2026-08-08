@@ -41,6 +41,8 @@ instance_map: std.HashMapUnmanaged(
 rows: std.ArrayList(Row),
 /// Marked and restored, because one signature can demand another.
 rows_scratch: std.ArrayList(Row),
+/// Finished body builders, kept for their lists' capacity.
+body_builders: std.ArrayList(Check.Builder),
 funcs: std.ArrayList(IR.Func),
 diagnostics: std.ArrayList(Entry),
 /// One row per (module, code, anchor), so re-walked code reports once.
@@ -185,6 +187,7 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .instance_map = .empty,
         .rows = .empty,
         .rows_scratch = .empty,
+        .body_builders = .empty,
         .funcs = .empty,
         .diagnostics = .empty,
         .reported = .empty,
@@ -197,6 +200,11 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .std_dir = options.std_dir,
         .record_expr_types = options.record_expr_types,
     };
+
+    // `analyze_max` caps the stack, so one reservation serves forever
+    try comp.stack.ensureTotalCapacity(gpa, analyze_max);
+    errdefer comp.stack.deinit(gpa);
+
     try comp.pool.init(gpa);
 }
 
@@ -212,6 +220,9 @@ pub fn deinit(comp: *Compilation) void {
 
     for (comp.funcs.items) |*func| func.deinit(gpa);
     comp.funcs.deinit(gpa);
+
+    for (comp.body_builders.items) |*builder| builder.deinit(gpa);
+    comp.body_builders.deinit(gpa);
 
     comp.pool.deinit(gpa);
     comp.decls.deinit(gpa);
@@ -342,7 +353,8 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
     };
 
     comp.setUnitState(unit, .in_progress);
-    try comp.stack.append(comp.gpa, .{ .unit = unit, .origin = origin });
+    // cannot fail, the depth check above holds it under `analyze_max`
+    comp.stack.appendAssumeCapacity(.{ .unit = unit, .origin = origin });
     defer _ = comp.stack.pop();
 
     const ok = switch (unit.kind) {

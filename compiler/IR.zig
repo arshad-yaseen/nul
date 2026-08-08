@@ -111,7 +111,7 @@ pub const Inst = struct {
         local,
         /// Uses `un`, a place. Produces the pointee.
         load,
-        /// Uses `bin`: the place, then the value.
+        /// Uses `bin`. The place, then the value.
         store,
         /// Uses `field`. Produces a field pointer, as mutable as its base.
         field_ptr,
@@ -150,8 +150,8 @@ pub const Inst = struct {
         union_init,
         /// Uses `probe`. Whether the union holds that member, as a bool.
         union_is,
-        /// Uses `un`. A union retyped to what a passed test proved: one
-        /// member, or the rest of the union.
+        /// Uses `un`. A union retyped to what a passed test proved, one
+        /// member or the rest of the union.
         union_narrow,
 
         /// Uses `payload`, an `IR.Call`.

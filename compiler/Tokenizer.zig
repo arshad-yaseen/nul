@@ -21,7 +21,7 @@ pub const TokenList = std.MultiArrayList(Token);
 /// Set aside for tools.
 pub const Comment = struct {
     kind: Kind,
-    /// No end: the text runs to the end of the line.
+    /// No end is stored. The text runs to the end of the line.
     start: u32,
 
     pub const Kind = enum { plain, doc, file };

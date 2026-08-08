@@ -1,0 +1,56 @@
+root
+  unit_decl true
+  unit_decl false
+  alias_decl bool
+    type: union_type
+      ident true
+      ident false
+  fn_decl forms
+    param flag
+      type: ident bool
+    param n
+      type: ident i64
+    ret: ident i64
+    body: block
+      loop_expr
+        body: block
+          break_expr
+      loop_expr
+        cond: ident flag
+        body: block
+          continue_expr
+      loop_expr
+        cond: ident flag
+        body: block
+          ident n
+        else: block
+          ident n
+      loop_expr outer
+        body: block
+          loop_expr
+            cond: ident flag
+            body: block
+              break_expr outer
+              continue_expr outer
+      var_decl v let
+        init: loop_expr
+          body: block
+            break_expr
+              value: number_literal 1
+      var_decl w let
+        init: loop_expr
+          cond: ident flag
+          body: block
+            break_expr outer
+              value: binary add
+                lhs: ident v
+                rhs: number_literal 1
+          else: block
+            number_literal 2
+      var_decl x let
+        init: loop_expr named
+          body: block
+            break_expr named
+              value: ident w
+      return_expr
+        value: ident x

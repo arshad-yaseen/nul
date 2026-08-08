@@ -18,6 +18,14 @@ than retrofitted.
 - `try`, `catch`, `orelse`, `null`, and the `|v|` capture go with them. One
   operator, `or`, takes over from the first three.
 - `while` is gone. `loop` replaces it.
+- `loop { }` runs until a `break`, and `loop cond { }` runs while a union
+  condition holds its first member. `break` and `continue` leave and restart
+  the innermost loop, and every `defer` on the way out runs first.
+- A label written `outer: loop` names a loop, and `break :outer` or
+  `continue :outer` reaches it from inside another one.
+- A loop is an expression: `break v` gives it a value, `else` says what it is
+  when the condition fails, and `break :outer v` does both. A loop with no
+  condition needs no `else`, because only `break` leaves it.
 - `struct X { }` is now `type X = { }`. One keyword declares a type, and what
   stands after the `=` says which kind it is. A generic still writes its
   parameters before the `=`, as `type Box[T] = { }`.

@@ -107,7 +107,23 @@ fn node(
             try node(ast, writer, it.then_block, below, "then");
             if (it.else_node.unwrap()) |otherwise| try node(ast, writer, otherwise, below, "else");
         },
-        .intrinsic, .break_expr, .continue_expr, .err => {
+        .loop_expr => |it| {
+            if (it.label) |label| try writer.print(" {s}", .{ast.tokenSlice(label)});
+            try writer.writeByte('\n');
+            if (it.cond.unwrap()) |cond| try node(ast, writer, cond, below, "cond");
+            try node(ast, writer, it.body, below, "body");
+            if (it.else_node.unwrap()) |otherwise| try node(ast, writer, otherwise, below, "else");
+        },
+        .break_expr => |it| {
+            if (it.label) |label| try writer.print(" {s}", .{ast.tokenSlice(label)});
+            try writer.writeByte('\n');
+            if (it.value.unwrap()) |value| try node(ast, writer, value, below, "value");
+        },
+        .continue_expr => |label| {
+            if (label) |token| try writer.print(" {s}", .{ast.tokenSlice(token)});
+            try writer.writeByte('\n');
+        },
+        .intrinsic, .err => {
             try writer.writeByte('\n');
         },
         .return_expr => |operand| {

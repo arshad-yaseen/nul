@@ -1,0 +1,73 @@
+type true
+type false
+type bool = true | false
+type none
+
+fn spin(n: u32) u32 {
+    var total: u32 = 0
+    var index: u32 = 0
+    loop index < n {
+        total += index
+        index += 1
+    }
+    return total
+}
+
+fn first_over(n: u32) u32 {
+    var index: u32 = 0
+    let found = loop {
+        if index > n {
+            break index
+        }
+        index += 1
+    }
+    return found
+}
+
+fn labeled(flag: bool) u32 {
+    outer: loop {
+        loop flag {
+            if flag {
+                break :outer
+            }
+            continue :outer
+        }
+    }
+    return 1
+}
+
+fn else_value(flag: bool) u32 {
+    let v: u32 = loop flag {
+        break 7
+    } else {
+        9
+    }
+    return v
+}
+
+fn pick(flag: bool) u32 | none {
+    if flag {
+        return 3
+    }
+    return none
+}
+
+fn drain(flag: bool) u32 {
+    var count: u32 = 0
+    loop {
+        let step = pick(flag) or break
+        count += step
+    }
+    return count
+}
+
+fn cleanup(n: u32) u32 {
+    var count: u32 = 0
+    loop count < n {
+        defer count += 1
+        if n > 3 {
+            break
+        }
+    }
+    return count
+}
