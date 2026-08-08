@@ -34,9 +34,11 @@ regression you just recorded as expected.
 
 1. `zig build test`. It takes under a second, so there is no reason to skip it.
 2. `zig fmt`.
-3. Add one line under `## [Unreleased]` in `CHANGELOG.md`, **only if a user
-   would notice**: the language, a diagnostic code, the standard library, or the
-   command line. Refactors, internals, tests, and CI changes get no entry.
+3. Touch `## [Unreleased]` in `CHANGELOG.md`, **only if a user would notice**:
+   the language, a diagnostic, the standard library, or the command line.
+   Refactors, internals, tests, and CI changes get no entry. The section is a
+   draft of the release notes, so follow the rules under `## Changelog`: one
+   sentence, and amend the entry already there before adding one beside it.
 4. Commit and push **only when asked**, and then wait for CI. This holds
    every time: work stays in the tree until the commit is requested.
 
@@ -75,6 +77,32 @@ along with the rest.
 Conventional Commits (`feat:`, `fix:`, `chore:`) is not used here. It exists to
 feed changelog generators, and this changelog is written by hand, so the prefix
 would cost the area name and buy nothing.
+
+## Changelog
+
+The changelog is read by someone deciding what an upgrade means, not by the
+reviewer of a diff. Every rule here follows from that.
+
+- **An entry is a headline, not documentation.** One sentence, two at the
+  most. The diagnostic teaches its own details, `design.phi` holds the
+  semantics, and the commit body holds the why, so an entry that needs a
+  paragraph is trying to be one of those.
+- **Amend, never accumulate.** A change that refines something already under
+  `[Unreleased]` edits that entry rather than adding a new one. The git log
+  is the record of what happened. The changelog is the difference between
+  two releases, written once, in its final form.
+- **A fix exists only against the last release.** A bug introduced and fixed
+  inside one cycle never shipped, so the feature's entry is written as
+  though the bug never was. "Used to crash" earns its place only when the
+  crash could be seen in a numbered release.
+- **Name a diagnostic code only when the code is the news**, a retirement or
+  a renumbering someone will search old logs for. An entry that lists codes
+  is an index, not a headline.
+- **A release section is a story, then lists.** A lede of a few sentences
+  says what the release is. Then `### Language`, `### Compiler`,
+  `### Command line`, and `### Distribution`, each present only when it has
+  entries, and the entries in a section share one shape so the list reads
+  in one rhythm.
 
 ## Releasing
 
