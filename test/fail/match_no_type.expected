@@ -1,0 +1,8 @@
+error[E0215]: nothing says what type this 'match' is
+ --> test/fail/match_no_type.phi:7:17
+  |
+7 |         true => 1
+  |                 ^ no type in sight
+  |
+  = help: annotate what it feeds, as in 'let n: i64 = match ...'
+

@@ -123,6 +123,17 @@ fn node(
             if (label) |token| try writer.print(" {s}", .{ast.tokenSlice(token)});
             try writer.writeByte('\n');
         },
+        .match_expr => |it| {
+            try writer.writeByte('\n');
+            try node(ast, writer, it.scrutinee, below, "on");
+            for (it.arms) |arm| try node(ast, writer, arm, below, "");
+        },
+        .match_arm => |it| {
+            try flag(writer, it.label == .none, "else");
+            try writer.writeByte('\n');
+            if (it.label.unwrap()) |label| try node(ast, writer, label, below, "label");
+            try node(ast, writer, it.body, below, "body");
+        },
         .intrinsic, .err => {
             try writer.writeByte('\n');
         },
@@ -306,7 +317,7 @@ fn inst(
             try writer.writeAll(" .{ ");
             for (IR.structInitAt(comp.funcExtra(body), data.payload), 0..) |operand, position| {
                 if (position > 0) try writer.writeAll(", ");
-                try writer.print("{s}: ", .{comp.rowName(rows.at(@intCast(position)))});
+                try writer.print("{s}: ", .{comp.rowName(.from(rows.at(@intCast(position))))});
                 try ref(comp, operand, writer);
             }
             try writer.writeAll(" }");

@@ -178,16 +178,14 @@ pub const Key = union(enum) {
     type_struct: Instance,
     /// A nominal unit type. Never generic, so the declaration is the identity.
     type_unit: Module.Decl.Index,
-    /// Ordered distinct members, none itself a union. Borrowed from
-    /// `extra`, so stale at the next intern.
+    /// Ordered distinct members, none a union. Borrowed from `extra`, stale at the next intern.
     type_union: []const Index,
 
     value_int: Int,
     value_float: Float,
     /// The one value of a unit type.
     value_unit: Index,
-    /// A constant that knows which union it sits in. The union, then the
-    /// member constant it holds.
+    /// A constant that knows its union: the union, then the member constant.
     value_union: Wrapped,
 
     pub const Pointer = struct { child: Index, mutable: bool };
@@ -238,7 +236,8 @@ pub const Key = union(enum) {
             .value_unit => |unit_type| unit_type == other.value_unit,
             .value_union => |it| it.type == other.value_union.type and
                 it.value == other.value_union.value,
-            .value_int => |it| it.type == other.value_int.type and it.value == other.value_int.value,
+            .value_int => |it| it.type == other.value_int.type and
+                it.value == other.value_int.value,
             // by bits, so float equality is never asked
             .value_float => |it| it.type == other.value_float.type and
                 @as(u64, @bitCast(it.value)) == @as(u64, @bitCast(other.value_float.value)),
@@ -432,8 +431,7 @@ pub const Unite = union(enum) {
     too_wide,
 };
 
-/// The one way a union is built. Member unions splice in flat, so aliases
-/// compose, and a repeat is refused.
+/// The one way a union is built. Members splice in flat, and a repeat is refused.
 pub fn unite(pool: *Pool, gpa: Allocator, members: []const Index) Allocator.Error!Unite {
     assert(members.len >= 2);
 
@@ -476,15 +474,20 @@ pub fn isUnion(pool: *const Pool, index: Index) bool {
 
 /// Whether the union lists exactly this type among its members.
 pub fn unionHas(pool: *const Pool, union_index: Index, member: Index) bool {
+    return pool.unionMemberPosition(union_index, member) != null;
+}
+
+/// Where the union lists this type, or null when it does not.
+pub fn unionMemberPosition(pool: *const Pool, union_index: Index, member: Index) ?u32 {
     assert(pool.isUnion(union_index));
-    if (pool.isUnion(member)) return false;
+    if (pool.isUnion(member)) return null;
 
     const count = pool.unionMemberCount(union_index);
     var at: u32 = 0;
     while (at < count) : (at += 1) {
-        if (pool.unionMemberAt(union_index, at) == member) return true;
+        if (pool.unionMemberAt(union_index, at) == member) return at;
     }
-    return false;
+    return null;
 }
 
 /// The union without one member. The rest as a union, or the one member left.
@@ -664,8 +667,7 @@ pub const Fold = union(enum) {
     does_not_fit: struct { value: i128, type: Index },
     mismatch: struct { left: Index, right: Index },
     bad_operand: Index,
-    /// A comparison's answer. The checker spells it, because `bool` is a
-    /// declared type the pool does not know.
+    /// A comparison's answer, spelled by the checker, because `bool` is declared.
     truth: bool,
 };
 
@@ -725,8 +727,7 @@ pub fn foldBitNot(pool: *Pool, gpa: Allocator, operand: Index) Allocator.Error!F
     return pool.internInt(gpa, complementOf(number.int, number.type), number.type);
 }
 
-/// An unsigned type complements inside its width. Every other integer, an
-/// untyped one included, complements in two's complement.
+/// Unsigned complements inside the width, everything else in two's complement.
 fn complementOf(value: i128, type_index: Index) i128 {
     assert(isInteger(type_index));
     assert(fitsInt(value, type_index));
@@ -754,15 +755,13 @@ pub const Fit = union(enum) {
     wrong_kind,
 };
 
-/// By value rather than by type. Wrapping stays with the caller, because it
-/// produces instructions.
+/// By value rather than by type. Wrapping stays with the caller.
 pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocator.Error!Fit {
     if (value == .poison) return .{ .value = .poison };
     if (type_index == .poison) return .{ .value = .poison };
     assert(pool.isType(type_index));
 
-    // a union is met through its members, and the first that fits decides.
-    // fitting a member may intern, so the members are read by position.
+    // the first fitting member decides, read by position because fitting interns
     if (pool.isUnion(type_index)) {
         const count = pool.unionMemberCount(type_index);
         var wrong_size = false;
@@ -985,8 +984,7 @@ fn internWith(pool: *Pool, gpa: Allocator, value: i128, type_index: Index) Alloc
 
 // storage helpers
 
-/// One leading word, then the payload. A value leads with its type, and a
-/// union with its member count.
+/// One leading word, then the payload: a value's type, or a union's member count.
 fn addExtra(pool: *Pool, gpa: Allocator, lead: u32, words: []const u32) Allocator.Error!u32 {
     assert(words.len > 0);
     if (pool.extra.items.len + words.len + 1 > std.math.maxInt(u32)) return error.OutOfMemory;
@@ -1134,7 +1132,9 @@ test "a typed operand types the fold, and the type refuses what it cannot hold" 
     const gpa = testing.allocator;
 
     const typed = try pool.intern(gpa, .{ .value_int = .{ .type = .u8_type, .value = 200 } });
-    const untyped = try pool.intern(gpa, .{ .value_int = .{ .type = .untyped_int_type, .value = 100 } });
+    const untyped = try pool.intern(gpa, .{
+        .value_int = .{ .type = .untyped_int_type, .value = 100 },
+    });
 
     const folded = try pool.fold(gpa, .add, typed, untyped);
     try testing.expectEqual(@as(i128, 300), folded.does_not_fit.value);
@@ -1231,8 +1231,7 @@ test "a constant meets a union through its first fitting member" {
         .value_int = .{ .type = .untyped_int_type, .value = 42 },
     });
 
-    // both integer members hold 42, the first decides, and the constant
-    // remembers the union it entered
+    // both members hold 42, so the first decides and the constant remembers its union
     const wide = (try pool.unite(gpa, &.{ .i32_type, .i64_type })).index;
     const first = try pool.fit(gpa, number, wide);
     const held = pool.keyOf(first.value).value_union;
@@ -1271,7 +1270,9 @@ test "a constant meets a type by value, not by type" {
     const narrowed = try pool.fit(gpa, wide, .u8_type);
     try testing.expectEqual(Index.u8_type, pool.keyOf(narrowed.value).value_int.type);
 
-    const big = try pool.intern(gpa, .{ .value_int = .{ .type = .untyped_int_type, .value = 256 } });
+    const big = try pool.intern(gpa, .{
+        .value_int = .{ .type = .untyped_int_type, .value = 256 },
+    });
     try testing.expectEqual(Fit.does_not_fit, try pool.fit(gpa, big, .u8_type));
 
     const unit_type = try pool.intern(gpa, .{ .type_unit = .from(0) });

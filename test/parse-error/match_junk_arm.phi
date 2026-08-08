@@ -1,0 +1,10 @@
+type A
+type B
+
+fn f(e: A | B) u32 {
+    return match e {
+        42 => 1
+        A => 2
+        B => 3
+    }
+}

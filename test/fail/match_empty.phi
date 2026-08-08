@@ -1,0 +1,9 @@
+type true
+type false
+type bool = true | false
+
+fn f(flag: bool) u32 {
+    match flag {
+    }
+    return 0
+}

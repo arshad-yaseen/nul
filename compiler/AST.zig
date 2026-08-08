@@ -67,8 +67,7 @@ pub fn deinit(tree: *AST, gpa: Allocator) void {
 
 pub const Node = struct {
     tag: Tag,
-    /// The keyword or operator the node is named by. Every other token is
-    /// derived from it.
+    /// The keyword or operator the node is named by, every other token derived.
     main_token: Token.Index,
     data: Data,
 
@@ -123,14 +122,17 @@ pub const Node = struct {
         assign,
         defer_stmt,
         if_expr,
-        /// `loop { }` forever, `loop cond { }` while. `else` runs when the
-        /// loop ends on its own, and `label: loop` names it for `break :label`.
+        /// A loop, forever or while. `else` runs when it ends on its own.
         loop_expr,
         /// `break`, with an optional `:label` and an optional value.
         break_expr,
         /// `continue`, with an optional `:label`.
         continue_expr,
         return_expr,
+        /// `match e { ... }`, one arm per member of a union.
+        match_expr,
+        /// `Member => body`, or `else => body` when no label is stored.
+        match_arm,
 
         /// The `intrinsic` keyword, which only a `.name` call may follow.
         intrinsic,
@@ -296,8 +298,7 @@ pub const unary_table: [Token.tag_count]?UnaryOp = blk: {
     break :blk table;
 };
 
-/// The operator a compound assignment folds in. A plain `=` has none, so
-/// `assigns` is what tells an assignment from a token that is not one.
+/// What a compound assignment folds in. A plain `=` has none, so `assigns` decides.
 pub const assign_table: [Token.tag_count]?BinaryOp = blk: {
     @setEvalBranchQuota(8000);
     var table: [Token.tag_count]?BinaryOp = @splat(null);
@@ -323,12 +324,10 @@ pub fn assigns(tag: Token.Tag) bool {
 comptime {
     @setEvalBranchQuota(20000);
     for (std.enums.values(Token.Tag)) |tag| {
-        // `unpack` reads the op of every `.binary`, so an infix token that
-        // builds one must name it
+        // `unpack` reads the op of every `.binary`, so an infix token must name one
         const info = oper_table[@intFromEnum(tag)];
         if (info.prec > 0) assert(info.op != null);
-        // an assignment never also sits between two values, so a statement can
-        // tell where the expression on its left ends
+        // an assignment never sits between two values, so a statement sees its left end
         if (assigns(tag)) assert(info.prec == 0);
     }
 }
@@ -354,6 +353,8 @@ pub const View = union(enum) {
     /// The label, where one is written.
     continue_expr: ?Token.Index,
     return_expr: Node.OptionalIndex,
+    match_expr: Match,
+    match_arm: MatchArm,
 
     intrinsic: Token.Index,
     ident: Token.Index,
@@ -424,6 +425,9 @@ pub const View = union(enum) {
         else_node: Node.OptionalIndex,
     };
     pub const Break = struct { label: ?Token.Index, value: Node.OptionalIndex };
+    pub const Match = struct { scrutinee: Node.Index, arms: []const Node.Index };
+    /// `label` is `.none` for the `else` arm.
+    pub const MatchArm = struct { label: Node.OptionalIndex, body: Node.Index };
     pub const StructLiteral = struct {
         type_expr: Node.Index,
         fields: []const Node.Index,
@@ -532,6 +536,17 @@ inline fn unpack(tree: AST, node_tag: Node.Tag, main: Token.Index, data: Node.Da
         } },
         .continue_expr => .{ .continue_expr = tree.exitLabel(main) },
         .return_expr => .{ .return_expr = data.opt_node },
+        .match_expr => blk: {
+            var payload = tree.fields(data.extra);
+            break :blk .{ .match_expr = .{
+                .scrutinee = payload.node(),
+                .arms = payload.list(),
+            } };
+        },
+        .match_arm => .{ .match_arm = .{
+            .label = data.opt_node_and_node[0],
+            .body = data.opt_node_and_node[1],
+        } },
 
         .intrinsic => .{ .intrinsic = main },
         .ident => .{ .ident = main },
@@ -682,8 +697,7 @@ fn declStart(tree: AST, node: Node.Index) Token.Index {
 
 // tokens
 
-/// Past the last token reads as `.eof`, because a derived position can run
-/// off a tree that failed to parse.
+/// Past the last token reads as `.eof`, because derived positions outrun broken trees.
 pub fn tokenTag(tree: AST, index: Token.Index) Token.Tag {
     const tags = tree.tokens.items(.tag);
     assert(tags.len > 0);
@@ -812,6 +826,26 @@ fn edgeToken(tree: AST, node: Node.Index, side: Edgewise) Token.Index {
             .return_expr => |operand| switch (side) {
                 .leftmost => return main,
                 .rightmost => current = operand.unwrap() orelse return main,
+            },
+            .match_expr => |it| switch (side) {
+                .leftmost => return main,
+                .rightmost => {
+                    // recovery can leave a match with no arms
+                    if (it.arms.len > 0) {
+                        current = it.arms[it.arms.len - 1];
+                    } else current = it.scrutinee;
+                },
+            },
+            .match_arm => |it| switch (side) {
+                .leftmost => {
+                    if (it.label.unwrap()) |label| {
+                        current = label;
+                    } else {
+                        // an arm with no label began at the `else` keyword
+                        return main.before(1);
+                    }
+                },
+                .rightmost => current = it.body,
             },
             .field_access => |it| switch (side) {
                 .leftmost => current = it.lhs,

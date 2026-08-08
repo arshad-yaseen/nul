@@ -1,0 +1,4 @@
+pub type Timeout
+pub type NotFound
+
+pub type LoadError = Timeout | NotFound

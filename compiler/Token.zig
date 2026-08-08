@@ -31,6 +31,7 @@ pub const Tag = enum(u8) {
     kw_is,
     kw_let,
     kw_loop,
+    kw_match,
     kw_not,
     kw_or,
     kw_pub,
@@ -55,6 +56,8 @@ pub const Tag = enum(u8) {
 
     eq,
     eq_eq,
+    /// `=>`, between a match arm's label and its body.
+    eq_arrow,
     bang_eq,
     lt,
     lt_eq,
@@ -100,6 +103,7 @@ pub const Tag = enum(u8) {
             .kw_is => "is",
             .kw_let => "let",
             .kw_loop => "loop",
+            .kw_match => "match",
             .kw_not => "not",
             .kw_or => "or",
             .kw_pub => "pub",
@@ -122,6 +126,7 @@ pub const Tag = enum(u8) {
 
             .eq => "=",
             .eq_eq => "==",
+            .eq_arrow => "=>",
             .bang_eq => "!=",
             .lt => "<",
             .lt_eq => "<=",
@@ -244,8 +249,7 @@ const keywords = build: {
     break :build std.StaticStringMap(Tag).initComptime(entries[0..count].*);
 };
 
-/// Derived too, so a new operator needs no scanning code. Longest first, which
-/// is what makes `<<=` win over `<<`.
+/// Derived, longest first, which is what makes `<<=` win over `<<`.
 pub const punctuation: [256]Punctuation = build: {
     @setEvalBranchQuota(8000);
     var table: [256]Punctuation = @splat(.{ .tags = @splat(.invalid), .count = 0 });

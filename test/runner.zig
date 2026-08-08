@@ -176,7 +176,7 @@ fn runCompile(
     defer comp.deinit();
     try comp.compile(source);
 
-    const failed = comp.diagnostics.items.len > 0;
+    const failed = comp.hasErrors();
     switch (kind) {
         .ir => {
             if (failed) {

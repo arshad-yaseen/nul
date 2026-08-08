@@ -1,0 +1,8 @@
+error[E0259]: this match leaves out 'true', 'false'
+ --> test/fail/match_empty.phi:6:5
+  |
+6 |     match flag {
+  |     ^^^^^ not every member is handled
+  |
+  = help: add an arm per member, or 'else =>' for the rest
+

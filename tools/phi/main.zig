@@ -94,7 +94,7 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *Writer, log: *W
     const elapsed = start.untilNow(init.io, clock);
     assert(elapsed.nanoseconds >= 0);
 
-    const clean = comp.diagnostics.items.len == 0;
+    const clean = comp.hasErrors() == false;
     if (clean) {
         if (request.command == .ir) try comp.dumpIR(out);
     } else {

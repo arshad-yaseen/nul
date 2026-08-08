@@ -1,0 +1,128 @@
+type A
+type B
+type C
+
+fn statement_form(r: A | B) {
+    match r {
+        A => touch()
+        B => {}
+    }
+}
+
+fn value_form(r: A | B) u32 {
+    let v = match r {
+        A => 1
+        B => 0
+    }
+    return v
+}
+
+fn else_form(e: A | B | C) u32 {
+    return match e {
+        A => 1
+        else => 2
+    }
+}
+
+fn multi_member(e: A | B | C) u32 {
+    return match e {
+        A | B => 1
+        C => 2
+    }
+}
+
+fn separators(e: A | B) u32 {
+    return match e { A => 1, B => 2 }
+}
+
+fn trailing_comma(e: A | B) u32 {
+    return match e {
+        A => 1,
+        B => 2,
+    }
+}
+
+fn pointer_label(p: *A | B) u32 {
+    return match p {
+        *A => 1
+        B => 0
+    }
+}
+
+fn generic_label(b: Box[A] | B) u32 {
+    return match b {
+        Box[A] => 1
+        B => 0
+    }
+}
+
+fn block_bodies(e: A | B) u32 {
+    return match e {
+        A => {
+            let x = 1
+            x
+        }
+        else => {
+            0
+        }
+    }
+}
+
+fn expression_scrutinee(x: u32) u32 {
+    return match x > 0 {
+        true => 1
+        false => 0
+    }
+}
+
+fn call_scrutinee() u32 {
+    match fetch() {
+        A => touch()
+        B => {}
+    }
+    return 0
+}
+
+fn nested(a: A | B, b: A | B) u32 {
+    return match a {
+        A => match b {
+            A => 3
+            B => 2
+        }
+        B => 0
+    }
+}
+
+fn in_handler() u32 {
+    let v = load() or e {
+        match e {
+            A => touch()
+            else => {}
+        }
+        return 1
+    }
+    return v
+}
+
+fn arm_continues(e: A | B) u32 {
+    return match e {
+        A =>
+            1
+        B => 2
+    }
+}
+
+fn exits(e: A | B) u32 {
+    outer: loop {
+        loop {
+            match e {
+                A => break :outer
+                B => continue
+            }
+        }
+    }
+    return match e {
+        A => return 1
+        B => 0
+    }
+}

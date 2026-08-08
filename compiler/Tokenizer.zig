@@ -7,14 +7,10 @@ const Token = @import("Token.zig");
 
 source: [:0]const u8,
 cursor: u32,
-/// The last tag returned. A comment never lands here, so a line ends where it
-/// would have without one.
+/// The last tag returned, never a comment.
 previous: Token.Tag,
-/// The line break that ended a statement, held back until the next token says
-/// whether a selector continues the line.
-pending: u32,
-
-const no_pending = std.math.maxInt(u32);
+/// A statement-ending line break, held until the next token rules out a selector.
+pending: ?u32,
 
 pub const TokenList = std.MultiArrayList(Token);
 
@@ -35,7 +31,7 @@ pub fn init(source: [:0]const u8) Tokenizer {
     assert(source.len <= Source.bytes_max);
 
     const bom: u32 = if (std.mem.startsWith(u8, source, "\xEF\xBB\xBF")) 3 else 0;
-    return .{ .source = source, .cursor = bom, .previous = .semi, .pending = no_pending };
+    return .{ .source = source, .cursor = bom, .previous = .semi, .pending = null };
 }
 
 /// Comments are set aside, so the parser never meets one.
@@ -75,8 +71,7 @@ fn commentKind(tag: Token.Tag) ?Comment.Kind {
     };
 }
 
-/// The next token, with the `;` a line break stands for put in front of the
-/// token that proved the statement had ended.
+/// The next token, the held `;` first where a line break ended a statement.
 pub fn next(tokenizer: *Tokenizer) Token {
     const token = tokenizer.scan();
     switch (token.tag) {
@@ -86,22 +81,21 @@ pub fn next(tokenizer: *Tokenizer) Token {
         else => if (tokenizer.insertedSemi(token)) |semi| return semi,
     }
 
-    tokenizer.pending = no_pending;
+    tokenizer.pending = null;
     tokenizer.previous = token.tag;
     return token;
 }
 
 fn insertedSemi(tokenizer: *Tokenizer, token: Token) ?Token {
-    var start = tokenizer.pending;
-    if (start == no_pending) {
+    const start = tokenizer.pending orelse start: {
         // a file with no trailing newline still ends its last statement
         if (token.tag != .eof) return null;
         if (Token.endsStatement(tokenizer.previous) == false) return null;
-        start = token.start;
-    }
+        break :start token.start;
+    };
     assert(start <= token.start);
 
-    tokenizer.pending = no_pending;
+    tokenizer.pending = null;
     tokenizer.previous = .semi;
     // the token that follows is scanned again on the next call
     tokenizer.cursor = token.start;
@@ -120,7 +114,7 @@ fn scan(tokenizer: *Tokenizer) Token {
             ' ', '\t', '\r' => cursor += 1,
             '\n' => {
                 const ends = Token.endsStatement(tokenizer.previous);
-                if (ends and tokenizer.pending == no_pending) tokenizer.pending = cursor;
+                if (ends and tokenizer.pending == null) tokenizer.pending = cursor;
                 cursor += 1;
             },
             else => break,

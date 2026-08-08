@@ -1,0 +1,8 @@
+error[E0259]: this match leaves out 'B', 'C', 'D', 'E', 'F', and 2 more members
+  --> test/fail/match_missing_many.phi:11:5
+   |
+11 |     match e {
+   |     ^^^^^ not every member is handled
+   |
+   = help: add an arm per member, or 'else =>' for the rest
+

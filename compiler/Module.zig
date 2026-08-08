@@ -119,9 +119,7 @@ pub fn displayName(module: *const Module) []const u8 {
     return module.key[colon + 1 ..];
 }
 
-/// Parse one source and register its declarations. A parse error does not
-/// stop registration, so a broken file still answers for the names recovery
-/// preserved.
+/// Parse one source and register its declarations, parse errors notwithstanding.
 pub fn register(
     comp: *Compilation,
     key: []const u8,
@@ -449,8 +447,7 @@ pub fn resolveImport(comp: *Compilation, decl_index: Decl.Index) Allocator.Error
         }
     }
 
-    // the whole path as a module wins, otherwise the last name is a
-    // declaration in the module the rest names
+    // the whole path as a module wins, else the last name is a declaration in it
     const whole = try std.mem.join(comp.arena.allocator(), "/", names[first..count]);
     switch (try loadModule(comp, space, whole)) {
         .module => |target| {
@@ -524,8 +521,7 @@ pub fn importTarget(comp: *const Compilation, decl_index: Decl.Index) ImportReso
     };
 }
 
-/// Following re-exports to the end. Null once reported. The name token
-/// belongs to the origin module, and is what a report is keyed by.
+/// Follows re-exports to the end. Null once reported, keyed on the origin's token.
 pub fn findExported(
     comp: *Compilation,
     in: Module.Index,
@@ -658,7 +654,7 @@ fn suggestIn(
     name: []const u8,
 ) Allocator.Error!?[]const u8 {
     var closest: edit_distance.Closest = .{ .target = name };
-    for (comp.decls.items[module.decls.start..module.decls.end()]) |decl| {
+    for (comp.declsIn(module.decls)) |decl| {
         if (decl.owner != .none) continue;
         closest.consider(comp.pool.stringText(decl.name));
     }

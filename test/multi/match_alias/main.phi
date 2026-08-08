@@ -1,0 +1,21 @@
+import helper
+
+type true
+type false
+type bool = true | false
+
+fn source(flag: bool) u32 | helper.Timeout | helper.NotFound {
+    if flag {
+        return 1
+    }
+    return helper.Timeout
+}
+
+// an imported alias groups the members it names
+fn settle(flag: bool) u32 {
+    let r = source(flag)
+    return match r {
+        helper.LoadError => 0
+        u32 => r
+    }
+}

@@ -143,6 +143,38 @@ than retrofitted.
   uppercase base prefix, a second `.` or exponent, and a digit outside the
   base each get their own `E0247` message, where one generic refusal covered
   them all. A hex float such as `0x1.8p1` now folds instead of being refused.
+- `match e { }` splits a union into arms. An arm labels one member
+  (`Timeout => retry()`), several (`Timeout | NotFound =>`), or an alias,
+  which covers the members it names, and inside the arm the scrutinee is what
+  the label proved, the way a branch that passed an `is` sees it. No arm
+  binds a name: a scrutinee with no name is bound with `let` first, the rule
+  `is` already follows.
+- A match is exhaustive by counting. A member no arm handles is refused with
+  `E0259`, and an arm that cannot run, a repeated member, an arm after
+  `else`, or an `else` with nothing left, with `E0260`. An arm off the union
+  reports `E0257`, and a match on something that is not a union `E0256`.
+- `else =>` in a match covers the members no other arm did, and is the rest
+  as a type rather than a blind default: one member left stands bare, and
+  several stay a union, so the rest can be handed on whole.
+- A match is an expression, typed the way `if` arms are, and a match whose
+  arms all leave satisfies a function body on its own. Arms that leave narrow
+  what follows the match, the way a branch that leaves narrows what follows.
+- `match` is a keyword and `=>` a token, so a declaration named `match` must
+  be renamed. A malformed arm reports `E0119`.
+- A match needs no 'bool' in scope. Its member tests belong to the compiler
+  and only a branch reads them, so a file is asked for 'bool' where it writes
+  a truth value: an 'is', a comparison, 'and', or 'not'.
+- `E0258` now says what to declare: 'type true', 'type false', and
+  'type bool = true | false'.
+- A field or a method now reaches the member a branch proved, so
+  `if shape is Circle { shape.area() }` calls Circle's method, where the
+  receiver used to look up on the whole union and miss.
+- A condition or scrutinee that itself leaves, as in `if return 1 { }`,
+  now compiles and drops the unreachable branch, where it used to crash the
+  compiler.
+- An arm every path leaves out of, such as a block ending in an `if` whose
+  branches both return, no longer owes its `if` or match a value, where it
+  used to report that a value was expected and nothing found.
 
 ## [0.1.0] - 2026-08-04
 

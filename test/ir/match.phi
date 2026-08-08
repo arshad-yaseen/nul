@@ -1,0 +1,160 @@
+type true
+type false
+type bool = true | false
+
+type Timeout
+type NotFound
+
+type LoadError = Timeout | NotFound
+
+fn fetch(flag: bool) u32 | Timeout | NotFound {
+    if flag {
+        return 1
+    }
+    return Timeout
+}
+
+fn sink(value: u32) u32 {
+    return value
+}
+
+fn sink_error(e: LoadError) u32 {
+    _ = e
+    return 9
+}
+
+fn note(value: u32) {
+    _ = value
+}
+
+// each arm narrows the scrutinee, so no arm unwraps anything
+fn classify(flag: bool) u32 {
+    let r = fetch(flag)
+    return match r {
+        u32 => r
+        Timeout => 100
+        NotFound => 200
+    }
+}
+
+// an alias names a sub-union, so one arm covers its members
+fn grouped(flag: bool) u32 {
+    let r = fetch(flag)
+    return match r {
+        u32 => sink(r)
+        LoadError => sink_error(r)
+    }
+}
+
+// members joined with '|' narrow to that sub-union
+fn written_group(flag: bool) u32 {
+    let r = fetch(flag)
+    return match r {
+        Timeout | NotFound => sink_error(r)
+        u32 => r
+    }
+}
+
+// 'else' is the rest, and one member left stands bare
+fn rest_bare(flag: bool) u32 {
+    let r = fetch(flag)
+    return match r {
+        Timeout => 1
+        NotFound => 2
+        else => r + 1
+    }
+}
+
+// 'else' keeps the rest a union
+fn rest_union(flag: bool) u32 {
+    let r = fetch(flag)
+    return match r {
+        u32 => r
+        else => sink_error(r)
+    }
+}
+
+// 'else' may take everything, and is then the scrutinee's own type
+fn rest_everything(flag: bool) u32 {
+    let r = fetch(flag)
+    match r {
+        else => {}
+    }
+    return 0
+}
+
+// a statement match wants nothing from its arms
+fn statement_form(flag: bool) {
+    let r = fetch(flag)
+    match r {
+        u32 => note(r)
+        Timeout => {}
+        NotFound => {}
+    }
+}
+
+// bool is a union like any other, so no special case
+fn truthy(flag: bool) u32 {
+    return match flag {
+        true => 1
+        false => 0
+    }
+}
+
+// an expression scrutinee needs no name when no arm wants the value
+fn compare(a: u32, b: u32) u32 {
+    return match a < b {
+        true => 1
+        false => 0
+    }
+}
+
+// a constant scrutinee still lowers, and a backend may fold it later
+fn folded() u32 {
+    let truth = 1 < 2
+    return match truth {
+        true => 1
+        false => 0
+    }
+}
+
+// the annotation types every arm
+fn hinted(flag: bool) u32 {
+    let n: u32 = match flag {
+        true => 255
+        false => 0
+    }
+    return n
+}
+
+// a match is an arm body like anything else
+fn nested(a: bool, b: bool) u32 {
+    return match a {
+        true => match b {
+            true => 3
+            false => 2
+        }
+        false => 0
+    }
+}
+
+// the handler names the rest, and the match inside it counts that union
+fn styled(flag: bool) u32 {
+    let value = fetch(flag) or e {
+        match e {
+            Timeout => note(1)
+            NotFound => note(2)
+        }
+        return 0
+    }
+    return value
+}
+
+// an 'if' guards inside an arm, so arms need no guard syntax
+fn arm_guard(flag: bool) u32 {
+    let r = fetch(flag)
+    return match r {
+        u32 => if r > 10 { 1 } else { 2 }
+        else => 0
+    }
+}

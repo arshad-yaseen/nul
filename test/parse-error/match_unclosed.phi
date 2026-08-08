@@ -1,0 +1,8 @@
+type A
+type B
+
+fn f(e: A | B) u32 {
+    match e {
+        A => 1
+    return 0
+}

@@ -1,8 +1,5 @@
 //! The operations the compiler performs itself, reached as `intrinsic.name`.
-//!
-//! An intrinsic is not a function. It has no declaration, no body, and no
-//! address. The checker knows its shape from the table here and its meaning
-//! from `Check.checkIntrinsic`, which is where a new one is typed and lowered.
+//! Shape from the table here, meaning in `Check.checkIntrinsic`.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -12,8 +9,7 @@ pub const Intrinsic = enum {
     /// `intrinsic.ptr_cast[T](pointer)`, retyping a pointer without moving it.
     ptr_cast,
 
-    /// What the checker validates before typing a call. Type rules live with
-    /// the case that needs them, because no two intrinsics share one.
+    /// Validated before typing a call. Type rules live with the case that needs them.
     pub const Shape = struct {
         type_params: u8,
         params: u8,
@@ -34,8 +30,7 @@ pub const Intrinsic = enum {
     pub const names = std.meta.fieldNames(Intrinsic);
 };
 
-/// Sized from the table, so a buffer holding one call's arguments cannot
-/// overflow and no call site has to check.
+/// Sized from the table, so no call site has to check its buffers.
 pub const type_params_max = 1;
 pub const params_max = 1;
 

@@ -44,6 +44,7 @@ pub const Code = enum(u16) {
     var_at_top_level = 116,
     ambiguous_line = 117,
     too_many_type_params = 118,
+    expected_match_arm = 119,
 
     undefined_name = 201,
     not_a_type = 202,
@@ -88,6 +89,8 @@ pub const Code = enum(u16) {
     not_a_union = 256,
     not_a_member = 257,
     no_bool = 258,
+    missing_arm = 259,
+    duplicate_arm = 260,
 };
 
 pub const Color = enum { off, on };

@@ -1,0 +1,6 @@
+fn f() u32 {
+    match {
+        else => 1
+    }
+    return 0
+}

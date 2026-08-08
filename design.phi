@@ -206,8 +206,8 @@ fn caller(store: Store) i32 | LoadError {
 fn report(store: Store) u8 {
     let cfg = load(store, "zol.toml") or e {
         match e {                       // e : LoadError, so three arms cover it
-            FileError f => log("cannot read {}", f.path)
-            BadSyntax b => log("bad syntax on line {}", b.line)
+            FileError => log("cannot read {}", e.path)
+            BadSyntax => log("bad syntax on line {}", e.line)
             Timeout => log("gave up waiting")
         }
         return 1
@@ -220,13 +220,16 @@ fn settle(store: Store) i32 {
 }
 
 
-// Arms are `Type name =>`, or bare `Type =>` where the payload is not wanted.
-// Exhaustive, so adding a member to a union shows you every match that needs
-// a new arm. `_` is the catch-all.
+// An arm labels a member, or several with `|`, and inside the arm the value
+// is what the label proved, the way a branch that passed an `is` sees it. No
+// arm binds a name: where the scrutinee has no name, make one with `let`,
+// the same rule `is` follows. Exhaustive by counting: every member covered
+// exactly once, so adding a member to a union shows you every match that
+// needs a new arm, and an arm that cannot run is refused.
 
 match shape {
-    Circle c => PI * c.r * c.r
-    Rect r => r.w * r.h
+    Circle => PI * shape.r * shape.r
+    Rect => shape.w * shape.h
     Line => 0.0
 }
 
@@ -234,6 +237,28 @@ let label = match reply {
     Config => "loaded"
     Timeout => "slow"
     NotFound => "missing"
+}
+
+// An alias arm covers the members it names, so a failure set handles as one
+// arm and stays one name end to end. `else` covers what is left, and is the
+// rest as a type rather than a blind default: one member left stands bare,
+// several stay a union, so the rest can be handed on whole.
+
+fn code(reply: Reply) u8 {
+    return match reply {
+        Config => 0
+        else => classify(reply)         // reply : Timeout | NotFound
+    }
+}
+
+// Arms that leave narrow what follows, the way any branch that leaves does.
+
+fn settle(reply: Reply) Config {
+    match reply {
+        Timeout | NotFound => return Config.fallback()
+        Config => {}
+    }
+    return reply                        // reply : Config
 }
 
 

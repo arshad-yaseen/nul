@@ -1,0 +1,155 @@
+fn fetch(flag: true | false) u32 | Timeout | NotFound
+b0:
+  %0 = param flag : true | false
+  branch %0, b1, b2
+b1:
+  return 1:u32
+b2:
+  jump b3
+b3:
+  return Timeout
+
+fn all_leave(flag: true | false) u32
+b0:
+  %0 = param flag : true | false
+  %1 = union_is %0, true
+  branch %1, b1, b2
+b1:
+  %2 = union_narrow %0 : true
+  return 1:u32
+b2:
+  jump b3
+b3:
+  %3 = union_narrow %0 : false
+  return 0:u32
+
+fn some_leave(flag: true | false) u32
+b0:
+  %0 = param flag : true | false
+  %1 = local : *var u32
+  %2 = union_is %0, true
+  branch %2, b2, b3
+b1:
+  %6 = union_narrow %0 : true
+  %7 = load %1 : u32
+  return %7
+b2:
+  %3 = union_narrow %0 : true
+  %4 = store %1, 4:u32
+  jump b1
+b3:
+  jump b4
+b4:
+  %5 = union_narrow %0 : false
+  return 0:u32
+
+fn drain(flag: true | false) u32
+b0:
+  %0 = param flag : true | false
+  %1 = local total : *var u32
+  %2 = store %1, 0:u32
+  jump b1
+b1:
+  jump b2
+b2:
+  %3 = call fetch(%0) : u32 | Timeout | NotFound
+  %4 = union_is %3, u32
+  branch %4, b5, b6
+b3:
+  %13 = load %1 : u32
+  return %13
+b4:
+  %12 = union_narrow %3 : u32
+  jump b1
+b5:
+  %5 = union_narrow %3 : u32
+  %6 = load %1 : u32
+  %7 = add %6, %5 : u32
+  %8 = store %1, %7
+  jump b4
+b6:
+  %9 = union_is %3, Timeout
+  branch %9, b7, b8
+b7:
+  %10 = union_narrow %3 : Timeout
+  jump b1
+b8:
+  jump b9
+b9:
+  %11 = union_narrow %3 : NotFound
+  jump b3
+
+fn labeled(flag: true | false) u32
+b0:
+  %0 = param flag : true | false
+  jump b1
+b1:
+  jump b2
+b2:
+  jump b4
+b3:
+  return 1:u32
+b4:
+  jump b5
+b5:
+  %1 = call fetch(%0) : u32 | Timeout | NotFound
+  %2 = union_is %1, u32
+  branch %2, b7, b8
+b6:
+  jump b1
+b7:
+  jump b3
+b8:
+  %3 = union_is %1, Timeout
+  branch %3, b9, b10
+b9:
+  jump b4
+b10:
+  jump b11
+b11:
+  jump b6
+
+fn deferred(flag: true | false) u32
+b0:
+  %0 = param flag : true | false
+  %1 = union_is %0, true
+  branch %1, b2, b3
+b1:
+  return 1:u32
+b2:
+  %2 = union_narrow %0 : true
+  jump b1
+b3:
+  jump b4
+b4:
+  %3 = union_narrow %0 : false
+  jump b1
+
+fn loop_value(flag: true | false) u32
+b0:
+  %0 = param flag : true | false
+  %1 = local : *var u32
+  jump b1
+b1:
+  jump b2
+b2:
+  %2 = local : *var u32
+  %3 = union_is %0, true
+  branch %3, b5, b6
+b3:
+  %10 = load %1 : u32
+  return %10
+b4:
+  %8 = load %2 : u32
+  %9 = store %1, %8
+  jump b3
+b5:
+  %4 = union_narrow %0 : true
+  %5 = store %2, 1:u32
+  jump b4
+b6:
+  jump b7
+b7:
+  %6 = union_narrow %0 : false
+  %7 = store %2, 0:u32
+  jump b4

@@ -1,0 +1,8 @@
+error[E0230]: this value goes nowhere
+ --> test/fail/match_statement_value.phi:7:17
+  |
+7 |         true => 5
+  |                 ^ unused value
+  |
+  = help: bind it, return it, or drop it with '_ ='
+

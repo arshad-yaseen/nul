@@ -20,6 +20,35 @@ pub const Func = struct {
     extra: Compilation.Range,
     /// Block zero is the entry, and every block is reachable.
     blocks: Compilation.Range,
+
+    pub const Index = enum(u32) {
+        _,
+
+        pub fn from(raw: usize) Index {
+            assert(raw < std.math.maxInt(u32));
+            return @enumFromInt(@as(u32, @intCast(raw)));
+        }
+
+        pub fn int(index: Index) u32 {
+            return @intFromEnum(index);
+        }
+
+        pub fn toOptional(index: Index) OptionalIndex {
+            const optional: OptionalIndex = @enumFromInt(@intFromEnum(index));
+            assert(optional != .none);
+            return optional;
+        }
+    };
+
+    pub const OptionalIndex = enum(u32) {
+        none = std.math.maxInt(u32),
+        _,
+
+        pub fn unwrap(optional: OptionalIndex) ?Index {
+            if (optional == .none) return null;
+            return @enumFromInt(@intFromEnum(optional));
+        }
+    };
 };
 
 /// Reads a call payload out of one function's extra words.
@@ -93,7 +122,7 @@ pub const Inst = struct {
         none: void,
         un: Ref,
         bin: struct { lhs: Ref, rhs: Ref },
-        field: struct { base: Ref, row: u32 },
+        field: struct { base: Ref, row: Compilation.Row.Index },
         probe: struct { operand: Ref, member: Pool.Index },
         name: Pool.String,
         payload: ExtraIndex,
@@ -140,13 +169,11 @@ pub const Inst = struct {
         /// Uses `un`. Retypes a pointer and emits nothing.
         ptr_cast,
 
-        /// Uses `un`. A value entering a union that lists its type, or a
-        /// narrower union widening. The tag stays the backend's.
+        /// Uses `un`. A value entering a union that lists it, or a union widening.
         union_init,
-        /// Uses `probe`. Whether the union holds that member, as a bool.
+        /// Uses `probe`. Whether the union holds that member. Void where only a branch reads it.
         union_is,
-        /// Uses `un`. A union retyped to what a passed test proved, one
-        /// member or the rest of the union.
+        /// Uses `un`. A union retyped to what a passed test proved.
         union_narrow,
 
         /// Uses `payload`, an `IR.Call`.
@@ -186,8 +213,7 @@ pub const Terminator = union(enum) {
     /// Still being built.
     none,
     jump: Block.Index,
-    /// The condition is a union, and the then edge is taken when it holds
-    /// its first member.
+    /// The then edge is taken when the union condition holds its first member.
     branch: struct { cond: Ref, then_block: Block.Index, else_block: Block.Index },
     /// `.none` returns nothing.
     ret: Ref,

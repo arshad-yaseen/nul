@@ -1,0 +1,13 @@
+type true
+type false
+type bool = true | false
+
+type none
+
+fn f() u32 {
+    var v: u32 | none = 5
+    match v {
+        u32 => return v + 1
+        none => return 0
+    }
+}

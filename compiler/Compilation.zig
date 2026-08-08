@@ -36,8 +36,7 @@ instance_map: std.HashMapUnmanaged(
     InstanceIndexContext,
     std.hash_map.default_max_load_percentage,
 ),
-/// Parameters and fields share one shape, so one table. An instance holds a
-/// contiguous range.
+/// Parameters and fields share one shape, so one table.
 rows: std.ArrayList(Row),
 /// Marked and restored, because one signature can demand another.
 rows_scratch: std.ArrayList(Row),
@@ -52,8 +51,7 @@ blocks: std.ArrayList(IR.Block),
 diagnostics: std.ArrayList(Entry),
 /// One row per (module, code, anchor), so re-walked code reports once.
 reported: std.AutoHashMapUnmanaged(ReportKey, void),
-/// Each checked expression's type, an output of the body unit, recorded only
-/// when the host asked for it.
+/// Each checked expression's type, recorded only when the host asked.
 expr_types: std.AutoHashMapUnmanaged(ExprKey, Pool.Index),
 
 // transient analysis state
@@ -95,14 +93,12 @@ pub const Instance = struct {
     parent: Pool.OptionalInstance,
     /// Generic ancestors, this instance included.
     depth: u32,
-    /// Row in `funcs` once the body committed, `no_func` before.
-    func: u32,
+    /// Row in `funcs` once the body committed.
+    func: IR.Func.OptionalIndex,
     /// Fields resolved, or signature resolved.
     rows_state: Decl.State,
     /// The embedding walk, or the body check.
     deep_state: Decl.State,
-
-    pub const no_func = std.math.maxInt(u32);
 };
 
 /// The one loading seam. A host replaces it to serve unsaved editor buffers.
@@ -151,6 +147,19 @@ pub const Row = struct {
     name: Pool.String,
     type: Pool.Index,
     node: AST.Node.Index,
+
+    pub const Index = enum(u32) {
+        _,
+
+        pub fn from(raw: usize) Index {
+            assert(raw < std.math.maxInt(u32));
+            return @enumFromInt(@as(u32, @intCast(raw)));
+        }
+
+        pub fn int(index: Index) u32 {
+            return @intFromEnum(index);
+        }
+    };
 };
 
 /// One memoized computation, runnable only through `ensure`.
@@ -180,8 +189,7 @@ pub const Origin = struct { module: Module.Index, node: AST.Node.Index };
 
 const Frame = struct { unit: Unit, origin: Origin };
 
-/// A report names a node or a token. An offset would shift under an edit, so
-/// it is never the identity.
+/// A report names a node or a token, never an offset that shifts under edits.
 const ReportAnchor = enum(u8) { node, token };
 
 const ReportKey = struct {
@@ -193,9 +201,7 @@ const ReportKey = struct {
 
 const ExprKey = struct { instance: Pool.Instance, node: AST.Node.Index };
 
-/// A diagnostic and the unit that produced it, so re-running one unit can
-/// replace exactly its own reports. Null marks a report from parsing or
-/// registration, which belongs to the module itself.
+/// A diagnostic and the unit that produced it. Null belongs to parsing and registration.
 pub const Entry = struct {
     module: Module.Index,
     unit: ?Unit,
@@ -205,8 +211,7 @@ pub const Entry = struct {
 pub const Options = struct {
     root_path: []const u8,
     std_dir: ?[]const u8,
-    /// An editor host records every expression's type to answer position
-    /// queries. A batch compile leaves it off, because nothing reads it.
+    /// An editor host records every expression's type. A batch compile leaves it off.
     record_expr_types: bool = false,
     loader: Loader = .disk,
 };
@@ -328,7 +333,11 @@ fn enqueueBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) All
     }
 }
 
-fn enqueueBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
+fn enqueueBodiesFn(
+    comp: *Compilation,
+    decl_index: Decl.Index,
+    origin: Origin,
+) Allocator.Error!void {
     const decl = comp.declAt(decl_index);
     if (decl.kind != .fn_decl) return;
     if (decl.state == .poisoned) return;
@@ -578,7 +587,7 @@ fn newInstance(
         .origin = origin,
         .parent = parent,
         .depth = depth,
-        .func = Instance.no_func,
+        .func = .none,
         .rows_state = .unanalyzed,
         .deep_state = .unanalyzed,
     });
@@ -621,9 +630,24 @@ pub fn treeOf(comp: *const Compilation, index: Module.Index) *const AST {
     return &comp.moduleAt(index).tree;
 }
 
-pub fn rowAt(comp: *const Compilation, at: u32) Row {
-    assert(at < comp.rows.items.len);
-    return comp.rows.items[at];
+pub fn rowAt(comp: *const Compilation, index: Row.Index) Row {
+    assert(index.int() < comp.rows.items.len);
+    return comp.rows.items[index.int()];
+}
+
+pub fn funcAt(comp: *const Compilation, index: IR.Func.Index) IR.Func {
+    assert(index.int() < comp.funcs.items.len);
+    return comp.funcs.items[index.int()];
+}
+
+/// The declaration rows a range names, a module's usually.
+pub fn declsIn(comp: *const Compilation, range: Range) []const Decl {
+    assert(range.end() <= comp.decls.items.len);
+    return comp.decls.items[range.start..range.end()];
+}
+
+pub fn hasErrors(comp: *const Compilation) bool {
+    return comp.diagnostics.items.len > 0;
 }
 
 pub fn instanceDecl(comp: *const Compilation, index: Pool.Instance) Decl.Index {
@@ -677,8 +701,7 @@ pub fn rememberExprType(
     try comp.expr_types.put(comp.gpa, .{ .instance = instance, .node = node }, type_index);
 }
 
-/// The type checking decided for an expression, when recording was on. This
-/// is the editor's question, answered from data rather than from the IR.
+/// The type checking decided, the editor's question answered from data.
 pub fn exprType(
     comp: *const Compilation,
     instance: Pool.Instance,
@@ -793,15 +816,13 @@ fn report(
     });
 }
 
-/// The unit being run owns what it reports. Null belongs to parsing and
-/// registration, which run before any unit.
+/// The unit being run owns what it reports. Null before any unit runs.
 fn currentUnit(comp: *const Compilation) ?Unit {
     if (comp.stack.items.len == 0) return null;
     return comp.stack.items[comp.stack.items.len - 1].unit;
 }
 
-/// Parse diagnostics enter as the parser recorded them. The parser budgets
-/// and orders its own reports, so nothing is deduplicated here.
+/// The parser budgets and orders its own reports, so nothing is deduplicated here.
 pub fn adoptParseErrors(
     comp: *Compilation,
     module: Module.Index,
@@ -923,10 +944,10 @@ fn entryBefore(_: void, entry: Entry, other: Entry) bool {
 pub fn dumpIR(comp: *const Compilation, writer: *Writer) Writer.Error!void {
     var printed = false;
     for (comp.instances.items) |instance| {
-        if (instance.func == Instance.no_func) continue;
+        const index = instance.func.unwrap() orelse continue;
         if (printed) try writer.writeByte('\n');
         printed = true;
-        try dump.func(comp, comp.funcs.items[instance.func], writer);
+        try dump.func(comp, comp.funcAt(index), writer);
     }
 }
 
@@ -952,9 +973,8 @@ pub fn spellValue(comp: *Compilation, value: Pool.Index) Allocator.Error![]const
     return comp.spelled(spell.writeConstantBare, value);
 }
 
-pub fn rowName(comp: *const Compilation, row: u32) []const u8 {
-    assert(row < comp.rows.items.len);
-    return comp.pool.stringText(comp.rowAt(row).name);
+pub fn rowName(comp: *const Compilation, index: Row.Index) []const u8 {
+    return comp.pool.stringText(comp.rowAt(index).name);
 }
 
 pub fn typeParamCount(comp: *const Compilation, decl_index: Decl.Index) u32 {

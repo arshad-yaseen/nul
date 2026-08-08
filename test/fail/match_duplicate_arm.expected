@@ -1,0 +1,11 @@
+error[E0260]: 'u32' is already handled by an earlier arm
+  --> test/fail/match_duplicate_arm.phi:11:9
+   |
+11 |         u32 => {}
+   |         ^^^ handled again here
+note: handled here
+  --> test/fail/match_duplicate_arm.phi:9:9
+   |
+ 9 |         u32 => {}
+   |         ^^^
+

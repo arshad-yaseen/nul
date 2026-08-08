@@ -151,8 +151,7 @@ fn ensureProgress(self: *Parse, before: Token.Index) void {
 
 // nesting
 
-/// One level deeper, or false when the limit is reached. Every `enter` that
-/// returned true is paired with a `leave`.
+/// One level deeper, or false at the limit. Every true `enter` pairs with a `leave`.
 fn enter(self: *Parse) bool {
     assert(self.depth <= depth_max);
     if (self.depth == depth_max) return false;
@@ -197,8 +196,7 @@ fn err(self: *Parse, diagnostic: Diagnostic) Allocator.Error!void {
     assert(diagnostic.message.len > 0);
     assert(diagnostic.span.start <= diagnostic.span.end);
 
-    // recovery that unwinds without consuming asks one question over and
-    // over, so a diagnostic already recorded at this position is an echo
+    // unwinding recovery re-asks, so an identical report at this spot is an echo
     var index = self.errors.items.len;
     while (index > 0) {
         index -= 1;
@@ -266,8 +264,7 @@ fn errChainedComparison(self: *Parse) Allocator.Error!void {
     });
 }
 
-/// The first overflow reports, and parsing carries on with holes, so
-/// everything past the deep spot is still read.
+/// The first overflow reports, and parsing carries on with holes.
 fn tooDeep(self: *Parse) Allocator.Error!Node.Index {
     @branchHint(.cold);
     if (self.reported_too_deep == false) {
@@ -332,8 +329,7 @@ fn expectTerminator(self: *Parse, closer: Token.Tag) Allocator.Error!void {
     self.skipToTerminator(closer);
 }
 
-/// A line opening with one of these may be continuing the line above. A line
-/// opening with `.` is not among them, because the tokenizer already joined it.
+/// A line opening with one of these may continue the line above. `.` is already joined.
 const continues_line = TokenSet.initMany(&.{ .minus, .ampersand, .tilde, .l_paren });
 
 fn errAmbiguousLine(self: *Parse) Allocator.Error!void {
@@ -455,14 +451,14 @@ fn extraList(self: *Parse, items: []const Node.Index) Allocator.Error!void {
 const TokenSet = std.EnumSet(Token.Tag);
 
 const starts_expr = TokenSet.initMany(&.{
-    .ident,        .number,
-    .l_paren,      .dot,
-    .minus,        .kw_not,
-    .tilde,        .ampersand,
-    .invalid,      .kw_if,
-    .kw_loop,      .kw_return,
-    .kw_break,     .kw_continue,
-    .kw_intrinsic,
+    .ident,       .number,
+    .l_paren,     .dot,
+    .minus,       .kw_not,
+    .tilde,       .ampersand,
+    .invalid,     .kw_if,
+    .kw_loop,     .kw_match,
+    .kw_return,   .kw_break,
+    .kw_continue, .kw_intrinsic,
 });
 
 const starts_stmt = starts_expr.unionWith(TokenSet.initMany(&.{
@@ -477,6 +473,9 @@ const starts_type = TokenSet.initMany(&.{ .ident, .star });
 const starts_bracket_item = starts_expr.unionWith(TokenSet.initOne(.star));
 
 const starts_name = TokenSet.initOne(.ident);
+
+/// A label opens like a type, and `else` labels the rest.
+const starts_arm = TokenSet.initMany(&.{ .ident, .star, .kw_else });
 
 const starts_decl = TokenSet.initMany(&.{
     .kw_pub, .kw_import, .kw_type,
@@ -635,9 +634,7 @@ fn parsePath(self: *Parse) Allocator.Error!Node.Index {
     return node;
 }
 
-/// `type Name` a unit
-/// `type Name = { ... }` a struct
-/// `type Name = T` an alias, which `A | B` makes a union
+/// `type Name` a unit, `= { }` a struct, `= T` an alias, which `A | B` makes a union.
 fn parseTypeDecl(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_type));
     const type_token = self.nextToken();
@@ -773,19 +770,22 @@ fn parseTypeParam(self: *Parse) Allocator.Error!Node.Index {
 }
 
 fn parseParam(self: *Parse) Allocator.Error!Node.Index {
-    assert(self.at(.ident));
-    const name = self.nextToken();
-    try self.expectToken(.colon);
-    const type_expr = try self.parseType();
-    return self.addUnary(.param, name, type_expr);
+    return self.parseTypedName(.param);
 }
 
 fn parseField(self: *Parse) Allocator.Error!Node.Index {
+    return self.parseTypedName(.field);
+}
+
+/// `name: Type`, a parameter or a field.
+fn parseTypedName(self: *Parse, node_tag: Node.Tag) Allocator.Error!Node.Index {
+    assert(node_tag == .param or node_tag == .field);
     assert(self.at(.ident));
+
     const name = self.nextToken();
     try self.expectToken(.colon);
     const type_expr = try self.parseType();
-    return self.addUnary(.field, name, type_expr);
+    return self.addUnary(node_tag, name, type_expr);
 }
 
 /// A struct body holds fields and functions, and `pub` introduces a function.
@@ -848,8 +848,7 @@ fn parseStatement(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-/// The likeliest cause is the newline that ended the `if`. The arm is read
-/// anyway, so the mistake reports once.
+/// Likeliest the newline that ended the `if`. The arm is read, so it reports once.
 fn parseStrayElse(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_else));
     try self.err(.{
@@ -943,8 +942,7 @@ fn parseIf(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// `loop { }` forever, `loop cond { }` while. `else` runs when the loop ends
-/// on its own, which a `break` skips.
+/// `loop { }` forever, `loop cond { }` while. `else` runs when it ends on its own.
 fn parseLoop(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_loop));
     if (self.enter() == false) return self.tooDeep();
@@ -987,6 +985,76 @@ fn parseLabeledLoop(self: *Parse) Allocator.Error!Node.Index {
     _ = self.nextToken();
     _ = self.eatToken(.colon).?;
     return self.parseLoop();
+}
+
+/// `match e { ... }`. No parentheses, and mandatory braces, like `if`.
+fn parseMatch(self: *Parse) Allocator.Error!Node.Index {
+    assert(self.at(.kw_match));
+    if (self.enter() == false) return self.tooDeep();
+    defer self.leave();
+
+    const match_token = self.nextToken();
+    const scrutinee = try self.parseCondition();
+
+    if (self.at(.l_brace) == false) {
+        try self.errExpected(.expected_token, Token.Tag.l_brace.symbol(), null);
+        return self.hole();
+    }
+    const lbrace = self.nextToken();
+
+    const top = self.scratch.items.len;
+    defer self.scratch.shrinkRetainingCapacity(top);
+
+    try self.parseList(.{
+        .item = parseMatchArm,
+        .starts = starts_arm,
+        .closer = .r_brace,
+        .opener = lbrace,
+        .code = .expected_match_arm,
+        .expected = "a match arm",
+        .help = "an arm is 'Member => expression', or 'else =>' for the rest",
+    });
+
+    const start = self.extraStart();
+    try self.extraNode(scrutinee);
+    try self.extraList(self.scratch.items[top..]);
+    return self.addNode(.{
+        .tag = .match_expr,
+        .main_token = match_token,
+        .data = .{ .extra = start },
+    });
+}
+
+/// `Member => body`, `A | B => body`, or `else => body`. A label is a type, never a binder.
+fn parseMatchArm(self: *Parse) Allocator.Error!Node.Index {
+    assert(starts_arm.contains(self.current()));
+
+    const label: Node.OptionalIndex = if (self.eatToken(.kw_else) != null)
+        .none
+    else
+        (try self.parseType()).toOptional();
+
+    const arrow = self.eatToken(.eq_arrow) orelse {
+        try self.errExpected(
+            .expected_token,
+            Token.Tag.eq_arrow.symbol(),
+            "an arm is 'Member => expression', or 'else =>' for the rest",
+        );
+        // the rest of the line was this arm, so the mistake reports once
+        return self.skipItem(.r_brace);
+    };
+
+    // a handler block is unambiguous inside an arm
+    const outer = self.in_condition;
+    self.in_condition = false;
+    defer self.in_condition = outer;
+
+    const body = if (self.at(.l_brace)) try self.parseBlock() else try self.parseExpr();
+    return self.addNode(.{
+        .tag = .match_arm,
+        .main_token = arrow,
+        .data = .{ .opt_node_and_node = .{ label, body } },
+    });
 }
 
 // expressions
@@ -1056,6 +1124,7 @@ fn parsePrefixExpr(self: *Parse) Allocator.Error!Node.Index {
     switch (self.current()) {
         .kw_if => return self.parseIf(),
         .kw_loop => return self.parseLoop(),
+        .kw_match => return self.parseMatch(),
         .kw_return => return self.parseReturn(),
         .kw_break, .kw_continue => return self.parseLoopExit(),
         else => {},
@@ -1087,8 +1156,7 @@ fn parseReturn(self: *Parse) Allocator.Error!Node.Index {
     });
 }
 
-/// `break` and `continue`, each with an optional `:label`, and `break` with
-/// an optional value.
+/// `break` and `continue` with an optional `:label`, and `break` with an optional value.
 fn parseLoopExit(self: *Parse) Allocator.Error!Node.Index {
     assert(self.at(.kw_break) or self.at(.kw_continue));
 
@@ -1176,8 +1244,7 @@ fn parseCall(self: *Parse, callee: Node.Index) Allocator.Error!Node.Index {
     });
 }
 
-/// `Box[i64]`, `create[Node](...)`, and `row[0]` are one node. Only the
-/// checker can tell which, from what the base names.
+/// `Box[i64]` and `row[0]` are one node. Only the checker can tell which.
 fn parseBracket(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     assert(self.at(.l_bracket));
     assert(base.int() < self.nodes.len);
@@ -1204,8 +1271,7 @@ fn parseBracket(self: *Parse, base: Node.Index) Allocator.Error!Node.Index {
     });
 }
 
-/// Only a type opens with `*`. Everything else is an expression, which the
-/// checker reads as a type when the base turns out to be generic.
+/// Only a type opens with `*`. Everything else parses as an expression.
 fn parseBracketItem(self: *Parse) Allocator.Error!Node.Index {
     return switch (self.current()) {
         .star => self.parseType(),
@@ -1258,8 +1324,7 @@ fn parsePrimaryExpr(self: *Parse) Allocator.Error!Node.Index {
     }
 }
 
-/// `Point.{ x: 1 }`. The type is written, so nothing has to infer it and a
-/// union member names which one it is.
+/// `Point.{ x: 1 }`. The type is written, so nothing infers it.
 fn parseStructLiteral(
     self: *Parse,
     type_expr: Node.Index,

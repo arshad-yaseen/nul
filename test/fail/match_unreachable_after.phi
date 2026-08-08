@@ -1,0 +1,11 @@
+type true
+type false
+type bool = true | false
+
+fn f(flag: bool) u32 {
+    match flag {
+        true => return 1
+        false => return 0
+    }
+    return 2
+}

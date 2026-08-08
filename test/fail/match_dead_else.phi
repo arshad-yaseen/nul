@@ -1,0 +1,23 @@
+type true
+type false
+type bool = true | false
+
+type Timeout
+
+fn f(e: u32 | Timeout) u32 {
+    match e {
+        u32 => {}
+        Timeout => {}
+        else => {}
+    }
+    return 0
+}
+
+fn second_else(e: u32 | Timeout) u32 {
+    match e {
+        u32 => {}
+        else => {}
+        else => {}
+    }
+    return 0
+}

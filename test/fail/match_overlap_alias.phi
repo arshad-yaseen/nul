@@ -1,0 +1,17 @@
+type true
+type false
+type bool = true | false
+
+type Timeout
+type NotFound
+
+type LoadError = Timeout | NotFound
+
+fn f(e: u32 | Timeout | NotFound) u32 {
+    match e {
+        Timeout => {}
+        LoadError => {}
+        u32 => {}
+    }
+    return 0
+}

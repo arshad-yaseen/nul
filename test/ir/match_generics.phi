@@ -1,0 +1,29 @@
+type true
+type false
+type bool = true | false
+
+type none
+
+type Box[T] = {
+    item: T
+}
+
+// a type parameter labels an arm once substitution resolves it
+fn unwrap_or[T](v: T | none, fallback: T) T {
+    return match v {
+        T => v
+        none => fallback
+    }
+}
+
+// a generic instantiation labels an arm by its interned identity
+fn open(b: Box[u32] | none) u32 {
+    return match b {
+        Box[u32] => b.item
+        none => 0
+    }
+}
+
+fn drive(v: u32 | none, b: Box[u32] | none) u32 {
+    return unwrap_or[u32](v, 5) + open(b)
+}

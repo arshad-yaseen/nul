@@ -1,0 +1,285 @@
+root
+  unit_decl A
+  unit_decl B
+  unit_decl C
+  fn_decl statement_form
+    param r
+      type: union_type
+        ident A
+        ident B
+    body: block
+      match_expr
+        on: ident r
+        match_arm
+          label: ident A
+          body: call
+            callee: ident touch
+        match_arm
+          label: ident B
+          body: block
+  fn_decl value_form
+    param r
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      var_decl v let
+        init: match_expr
+          on: ident r
+          match_arm
+            label: ident A
+            body: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 0
+      return_expr
+        value: ident v
+  fn_decl else_form
+    param e
+      type: union_type
+        ident A
+        ident B
+        ident C
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: ident A
+            body: number_literal 1
+          match_arm else
+            body: number_literal 2
+  fn_decl multi_member
+    param e
+      type: union_type
+        ident A
+        ident B
+        ident C
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: union_type
+              ident A
+              ident B
+            body: number_literal 1
+          match_arm
+            label: ident C
+            body: number_literal 2
+  fn_decl separators
+    param e
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: ident A
+            body: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 2
+  fn_decl trailing_comma
+    param e
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: ident A
+            body: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 2
+  fn_decl pointer_label
+    param p
+      type: union_type
+        pointer_type
+          child: ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident p
+          match_arm
+            label: pointer_type
+              child: ident A
+            body: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 0
+  fn_decl generic_label
+    param b
+      type: union_type
+        bracket
+          base: ident Box
+          arg: ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident b
+          match_arm
+            label: bracket
+              base: ident Box
+              arg: ident A
+            body: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 0
+  fn_decl block_bodies
+    param e
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: ident A
+            body: block
+              var_decl x let
+                init: number_literal 1
+              ident x
+          match_arm else
+            body: block
+              number_literal 0
+  fn_decl expression_scrutinee
+    param x
+      type: ident u32
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: binary greater_than
+            lhs: ident x
+            rhs: number_literal 0
+          match_arm
+            label: ident true
+            body: number_literal 1
+          match_arm
+            label: ident false
+            body: number_literal 0
+  fn_decl call_scrutinee
+    ret: ident u32
+    body: block
+      match_expr
+        on: call
+          callee: ident fetch
+        match_arm
+          label: ident A
+          body: call
+            callee: ident touch
+        match_arm
+          label: ident B
+          body: block
+      return_expr
+        value: number_literal 0
+  fn_decl nested
+    param a
+      type: union_type
+        ident A
+        ident B
+    param b
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident a
+          match_arm
+            label: ident A
+            body: match_expr
+              on: ident b
+              match_arm
+                label: ident A
+                body: number_literal 3
+              match_arm
+                label: ident B
+                body: number_literal 2
+          match_arm
+            label: ident B
+            body: number_literal 0
+  fn_decl in_handler
+    ret: ident u32
+    body: block
+      var_decl v let
+        init: or_bind
+          lhs: call
+            callee: ident load
+          binds: ident e
+          handler: block
+            match_expr
+              on: ident e
+              match_arm
+                label: ident A
+                body: call
+                  callee: ident touch
+              match_arm else
+                body: block
+            return_expr
+              value: number_literal 1
+      return_expr
+        value: ident v
+  fn_decl arm_continues
+    param e
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: ident A
+            body: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 2
+  fn_decl exits
+    param e
+      type: union_type
+        ident A
+        ident B
+    ret: ident u32
+    body: block
+      loop_expr outer
+        body: block
+          loop_expr
+            body: block
+              match_expr
+                on: ident e
+                match_arm
+                  label: ident A
+                  body: break_expr outer
+                match_arm
+                  label: ident B
+                  body: continue_expr
+      return_expr
+        value: match_expr
+          on: ident e
+          match_arm
+            label: ident A
+            body: return_expr
+              value: number_literal 1
+          match_arm
+            label: ident B
+            body: number_literal 0

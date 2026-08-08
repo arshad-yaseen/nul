@@ -1,0 +1,11 @@
+error[E0260]: 'Timeout' is already handled by an earlier arm
+  --> test/fail/match_overlap_alias.phi:13:9
+   |
+13 |         LoadError => {}
+   |         ^^^^^^^^^ handled again here
+note: handled here
+  --> test/fail/match_overlap_alias.phi:12:9
+   |
+12 |         Timeout => {}
+   |         ^^^^^^^
+

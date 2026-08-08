@@ -1,0 +1,27 @@
+//! A match needs no 'bool' in scope. Its member tests belong to the
+//! compiler, so only a written test, a comparison, 'and', or 'not' asks
+//! the file for the type.
+
+type A
+type B
+type C
+
+fn pick(e: A | B | C) u32 {
+    match e {
+        A => {}
+        B => {}
+        C => {}
+    }
+    return 0
+}
+
+pub fn main() u32 {
+    let a: u32 | u8 = 10
+
+    match a {
+        u32 => return a,
+        u8 => {}
+    }
+
+    return 10
+}

@@ -1,0 +1,29 @@
+//! A header expression that leaves closes the block it stood in, and what
+//! the construct builds after it lands in blocks nothing reaches, which
+//! `finishFunc` drops.
+
+type true
+type false
+type bool = true | false
+
+fn if_cond_leaves() u32 {
+    if return 1 { }
+    return 2
+}
+
+fn loop_cond_leaves() u32 {
+    loop return 3 { }
+    return 4
+}
+
+fn match_scrutinee_leaves() u32 {
+    match return 5 {
+        else => {}
+    }
+    return 6
+}
+
+fn if_value_cond_leaves() u32 {
+    let n: u32 = if return 7 { 8 } else { 9 }
+    return n
+}

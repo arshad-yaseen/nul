@@ -1,0 +1,15 @@
+type true
+type false
+type bool = true | false
+
+type Timeout
+type NotFound
+
+fn f(e: u32 | Timeout | NotFound) u32 {
+    match e {
+        u32 => {}
+        else => {}
+        Timeout => {}
+    }
+    return 0
+}

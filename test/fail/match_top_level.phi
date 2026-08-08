@@ -1,0 +1,5 @@
+type Flag
+
+let x = match Flag {
+    Flag => 1
+}
