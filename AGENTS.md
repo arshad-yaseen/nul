@@ -77,6 +77,13 @@ compiler is a rewrite, so every change is judged against it now.
 - Use only very simple, explicit control flow. Avoid recursion where iteration suffices; when recursion is unavoidable, give it a bounded depth and assert that bound. Bounded execution must be guaranteed.
 - Use only a minimum of excellent abstractions, and only when they make the best sense of the domain. Abstractions are never zero cost, and every abstraction introduces the risk of leaking.
 - **Put a limit on everything.** All loops and all queues must have a fixed upper bound to prevent infinite loops or tail-latency spikes. Where a loop cannot terminate (e.g. an event loop), assert this.
+- **A limit is invisible or diagnosed, never silent.** Every bound is one of two
+  kinds. An engineering bound guards an implementation choice that no input can
+  reach. Pick it generously and assert it at the boundary. A language limit can
+  be reached by a written program, so it is a design decision. It gets a
+  diagnostic code, and crossing it reports an error that names the limit. What
+  no bound may do is silently change what a program means. A cap that quietly
+  degrades behavior when reached is a bug wearing a limit's uniform.
 - Use explicitly-sized integer types like `u32`. Avoid architecture-specific types like `usize`. The one accepted exception is the seam with the Zig standard library: `std.ArrayList.len`, slice indices into `[]const u8`, and similar interop are typed `usize` by the language. Keep `u32` everywhere we own the type, and limit `usize` to those boundaries (no `@intCast` chains that just propagate the boundary outward).
 
 ### Assertions
