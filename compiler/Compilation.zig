@@ -61,6 +61,7 @@ arena: std.heap.ArenaAllocator,
 
 // configuration
 
+loader: Loader,
 /// Directory of the root file. Bare module paths resolve against it.
 root_dir: []const u8,
 /// Stem of the root file, its name if something imports it back.
@@ -98,6 +99,30 @@ pub const Instance = struct {
     deep_state: Decl.State,
 
     pub const no_func = std.math.maxInt(u32);
+};
+
+/// The one loading seam. A host replaces it to serve unsaved editor buffers.
+pub const Loader = struct {
+    context: ?*anyopaque,
+    load: *const fn (
+        context: ?*anyopaque,
+        gpa: Allocator,
+        io: std.Io,
+        path: []const u8,
+    ) Source.LoadError!Source,
+
+    pub const disk: Loader = .{ .context = null, .load = loadFromDisk };
+
+    fn loadFromDisk(
+        context: ?*anyopaque,
+        gpa: Allocator,
+        io: std.Io,
+        path: []const u8,
+    ) Source.LoadError!Source {
+        assert(context == null);
+        assert(path.len > 0);
+        return Source.load(gpa, io, .cwd(), path);
+    }
 };
 
 /// A contiguous run in a table.
@@ -179,6 +204,7 @@ pub const Options = struct {
     /// An editor host records every expression's type to answer position
     /// queries. A batch compile leaves it off, because nothing reads it.
     record_expr_types: bool = false,
+    loader: Loader = .disk,
 };
 
 pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Allocator.Error!void {
@@ -204,6 +230,7 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .expr_types = .empty,
         .stack = .empty,
         .arena = .init(gpa),
+        .loader = options.loader,
         .root_dir = std.fs.path.dirname(options.root_path) orelse ".",
         .root_stem = std.fs.path.stem(options.root_path),
         .std_dir = options.std_dir,

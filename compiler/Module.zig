@@ -386,10 +386,11 @@ fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error
 
     const path = try comp.fmt("{s}/{s}.phi", .{ std.mem.trimEnd(u8, base, "/\\"), sub });
 
-    const source = Source.load(comp.gpa, comp.io, .cwd(), path) catch |err| switch (err) {
-        error.ReadFailed, error.SourceTooLarge => return .not_found,
-        error.OutOfMemory => return error.OutOfMemory,
-    };
+    const source = comp.loader.load(comp.loader.context, comp.gpa, comp.io, path) catch |err|
+        switch (err) {
+            error.ReadFailed, error.SourceTooLarge => return .not_found,
+            error.OutOfMemory => return error.OutOfMemory,
+        };
 
     return .{ .module = try register(comp, key, space, source) };
 }
