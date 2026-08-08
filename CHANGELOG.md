@@ -131,6 +131,12 @@ than retrofitted.
   can read `let port = maybe or 8080`, where it used to crash the compiler.
 - `&` in a top-level binding reports that taking an address is not constant,
   where it used to crash the compiler.
+- A call chain of any depth compiles. Function bodies are checked from a flat
+  worklist instead of inside the call that first needed them, so `E0249` now
+  reports only a real definition chain, declarations whose meaning needs the
+  next one, and never call depth.
+- `phi ir` prints functions in the order the program first needed them, so
+  the output no longer depends on which body finished first.
 
 ## [0.1.0] - 2026-08-04
 

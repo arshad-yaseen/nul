@@ -1,13 +1,3 @@
-fn direct[Wide](value: Wide) Wide
-b0:
-  %0 = param value : Wide
-  return %0
-
-fn through[Wide](value: *var Wide) *var Wide
-b0:
-  %0 = param value : *var Wide
-  return %0
-
 fn drive(wide: Wide) i64
 b0:
   %0 = param wide : Wide
@@ -21,3 +11,13 @@ b0:
   %8 = load %7 : i64
   %9 = add %6, %8 : i64
   return %9
+
+fn direct[Wide](value: Wide) Wide
+b0:
+  %0 = param value : Wide
+  return %0
+
+fn through[Wide](value: *var Wide) *var Wide
+b0:
+  %0 = param value : *var Wide
+  return %0

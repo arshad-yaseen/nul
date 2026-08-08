@@ -68,6 +68,16 @@ pub const Instance = enum(u32) {
     }
 };
 
+pub const OptionalInstance = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn unwrap(optional: OptionalInstance) ?Instance {
+        if (optional == .none) return null;
+        return @enumFromInt(@intFromEnum(optional));
+    }
+};
+
 /// An offset into `bytes`. The text runs to the next zero byte.
 pub const String = enum(u32) {
     empty = 0,

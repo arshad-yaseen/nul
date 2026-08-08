@@ -41,8 +41,9 @@ instance_map: std.HashMapUnmanaged(
 rows: std.ArrayList(Row),
 /// Marked and restored, because one signature can demand another.
 rows_scratch: std.ArrayList(Row),
-/// Finished body builders, kept for their lists' capacity.
-body_builders: std.ArrayList(Check.Builder),
+/// Bodies never nest, so one builder serves them all.
+body_builder: Check.Builder,
+body_queue: std.ArrayList(Pool.Instance),
 funcs: std.ArrayList(IR.Func),
 diagnostics: std.ArrayList(Entry),
 /// One row per (module, code, anchor), so re-walked code reports once.
@@ -53,10 +54,8 @@ expr_types: std.AutoHashMapUnmanaged(ExprKey, Pool.Index),
 
 // transient analysis state
 
-/// What is being analyzed, the cycle chain, and the trail.
+/// What is being analyzed, for cycle reports.
 stack: std.ArrayList(Frame),
-/// Frames on the stack that are instantiations, capped at `instantiate_max`.
-instance_depth: u32,
 /// Backs diagnostic text, module keys, and paths until deinit.
 arena: std.heap.ArenaAllocator,
 
@@ -85,10 +84,20 @@ pub const Instance = struct {
     type: Pool.Index,
     /// Fields for a struct, parameters for a function.
     rows: Range,
+    /// Where this instance was first demanded.
+    origin: Origin,
+    /// The instance whose checking first demanded this one.
+    parent: Pool.OptionalInstance,
+    /// Generic ancestors, this instance included.
+    depth: u32,
+    /// Row in `funcs` once the body committed, `no_func` before.
+    func: u32,
     /// Fields resolved, or signature resolved.
     rows_state: Decl.State,
     /// The embedding walk, or the body check.
     deep_state: Decl.State,
+
+    pub const no_func = std.math.maxInt(u32);
 };
 
 /// A contiguous run in a table.
@@ -187,13 +196,13 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .instance_map = .empty,
         .rows = .empty,
         .rows_scratch = .empty,
-        .body_builders = .empty,
+        .body_builder = .empty,
+        .body_queue = .empty,
         .funcs = .empty,
         .diagnostics = .empty,
         .reported = .empty,
         .expr_types = .empty,
         .stack = .empty,
-        .instance_depth = 0,
         .arena = .init(gpa),
         .root_dir = std.fs.path.dirname(options.root_path) orelse ".",
         .root_stem = std.fs.path.stem(options.root_path),
@@ -221,9 +230,8 @@ pub fn deinit(comp: *Compilation) void {
     for (comp.funcs.items) |*func| func.deinit(gpa);
     comp.funcs.deinit(gpa);
 
-    for (comp.body_builders.items) |*builder| builder.deinit(gpa);
-    comp.body_builders.deinit(gpa);
-
+    comp.body_builder.deinit(gpa);
+    comp.body_queue.deinit(gpa);
     comp.pool.deinit(gpa);
     comp.decls.deinit(gpa);
     comp.instances.deinit(gpa);
@@ -260,38 +268,56 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
 
         const origin: Origin = .{ .module = index, .node = decl.node };
         try comp.ensure(.forDecl(decl_index), origin);
-        try comp.ensureBodies(decl_index, origin);
+        try comp.enqueueBodies(decl_index, origin);
     }
+    try comp.drainBodies();
     assert(comp.stack.items.len == 0);
 }
 
 /// A plain function, and the plain methods of a plain struct.
-fn ensureBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
+fn enqueueBodies(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
     const decl = comp.declAt(decl_index);
     switch (decl.kind) {
         .import, .type_alias, .unit_decl, .let => {},
-        .fn_decl => try comp.ensureBodiesFn(decl_index, origin),
+        .fn_decl => try comp.enqueueBodiesFn(decl_index, origin),
         .struct_decl => {
             if (decl.state != .done) return;
             if (comp.isGeneric(decl_index)) return;
             const members = decl.members();
             for (members.start..members.start + members.len) |raw| {
                 const member: Decl.Index = .from(raw);
-                try comp.ensureBodiesFn(member, origin);
+                try comp.enqueueBodiesFn(member, origin);
             }
         },
     }
 }
 
-fn ensureBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
+fn enqueueBodiesFn(comp: *Compilation, decl_index: Decl.Index, origin: Origin) Allocator.Error!void {
     const decl = comp.declAt(decl_index);
     if (decl.kind != .fn_decl) return;
     if (decl.state == .poisoned) return;
     if (comp.isGeneric(decl_index)) return;
 
-    const instance = try comp.instantiate(decl_index, &.{});
-    try comp.ensure(.of(.signature, instance), origin);
-    try comp.ensure(.of(.body, instance), origin);
+    try comp.enqueueBody(try comp.instantiate(decl_index, &.{}, origin));
+}
+
+/// The drain's `ensure` makes a duplicate enqueue a no-op.
+pub fn enqueueBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!void {
+    assert(comp.declAt(comp.instanceDecl(instance)).kind == .fn_decl);
+    if (comp.instanceAt(instance).deep_state != .unanalyzed) return;
+    try comp.body_queue.append(comp.gpa, instance);
+}
+
+/// Draining enqueues more, and stops because `ensure` runs each instance once.
+fn drainBodies(comp: *Compilation) Allocator.Error!void {
+    var next: usize = 0;
+    while (next < comp.body_queue.items.len) : (next += 1) {
+        const instance = comp.body_queue.items[next];
+        const origin = comp.instanceAt(instance).origin;
+        try comp.ensure(.of(.signature, instance), origin);
+        try comp.ensure(.of(.body, instance), origin);
+    }
+    comp.body_queue.clearRetainingCapacity();
 }
 
 /// Whether a declaration only means something once instantiated.
@@ -307,11 +333,7 @@ pub fn isGeneric(comp: *const Compilation, decl_index: Decl.Index) bool {
 pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!void {
     switch (comp.unitState(unit)) {
         .done, .poisoned => return,
-        .in_progress => {
-            // recursion, not a cycle. a signature is all a call needs
-            if (unit.kind == .body) return;
-            return comp.reportCycle(unit, origin);
-        },
+        .in_progress => return comp.reportCycle(unit, origin),
         .unanalyzed => {},
     }
 
@@ -332,9 +354,9 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
     }
 
     // only bracket arguments count against the instantiation limit
-    const instantiates = comp.unitIsInstantiation(unit);
-    if (instantiates) {
-        if (comp.instance_depth >= instantiate_max) {
+    if (unit.kind != .decl) {
+        const depth = comp.instanceAt(@enumFromInt(unit.index)).depth;
+        if (depth > instantiate_max) {
             try comp.reportNode(origin.module, origin.node, .{
                 .code = .instantiates_too_deep,
                 .message = try comp.fmt("this instantiates more than {d} levels deep", .{
@@ -346,11 +368,7 @@ pub fn ensure(comp: *Compilation, unit: Unit, origin: Origin) Allocator.Error!vo
             comp.setUnitState(unit, .poisoned);
             return;
         }
-        comp.instance_depth += 1;
     }
-    defer if (instantiates) {
-        comp.instance_depth -= 1;
-    };
 
     comp.setUnitState(unit, .in_progress);
     // cannot fail, the depth check above holds it under `analyze_max`
@@ -380,8 +398,8 @@ fn runDecl(comp: *Compilation, decl_index: Decl.Index) Allocator.Error!bool {
         .fn_decl => return true,
         .struct_decl => {
             if (comp.isGeneric(decl_index)) return true;
-            const instance = try comp.instantiate(decl_index, &.{});
             const origin: Origin = .{ .module = decl.module, .node = decl.node };
+            const instance = try comp.instantiate(decl_index, &.{}, origin);
             try comp.ensure(.of(.rows, instance), origin);
             try comp.ensure(.of(.embedding, instance), origin);
             return true;
@@ -472,6 +490,7 @@ pub fn instantiate(
     comp: *Compilation,
     decl_index: Decl.Index,
     args: []const Pool.Index,
+    origin: Origin,
 ) Allocator.Error!Pool.Instance {
     const decl = comp.declAt(decl_index);
     assert(decl.kind == .struct_decl or decl.kind == .fn_decl);
@@ -487,6 +506,14 @@ pub fn instantiate(
     if (comp.instances.items.len >= std.math.maxInt(u32)) return error.OutOfMemory;
     const index: Pool.Instance = .from(comp.instances.items.len);
 
+    const parent: Pool.OptionalInstance = parent: {
+        const unit = comp.currentUnit() orelse break :parent .none;
+        if (unit.kind == .decl) break :parent .none;
+        break :parent @enumFromInt(unit.index);
+    };
+    var depth: u32 = @intFromBool(args.len > 0);
+    if (parent.unwrap()) |above| depth += comp.instanceAt(above).depth;
+
     const args_start: u32 = @intCast(comp.instance_args.items.len);
     try comp.instance_args.appendSlice(comp.gpa, args);
     try comp.instances.append(comp.gpa, .{
@@ -494,6 +521,10 @@ pub fn instantiate(
         .args = .{ .start = args_start, .len = @intCast(args.len) },
         .type = .poison,
         .rows = .empty,
+        .origin = origin,
+        .parent = parent,
+        .depth = depth,
+        .func = Instance.no_func,
         .rows_state = .unanalyzed,
         .deep_state = .unanalyzed,
     });
@@ -723,59 +754,55 @@ pub fn adoptParseErrors(
     }
 }
 
-/// Appended to every report, so no site can forget the trail.
+/// Appended to every report, innermost instance first.
 fn withTrail(
     comp: *Compilation,
     notes_in: []const Diagnostic.Note,
 ) Allocator.Error![]Diagnostic.Note {
     const trail_cap = 8;
 
-    var generic_frames: u32 = 0;
-    for (comp.stack.items) |frame| {
-        if (comp.unitIsInstantiation(frame.unit)) generic_frames += 1;
+    var shown: [trail_cap]Pool.Instance = undefined;
+    var generic_count: u32 = 0;
+    var current: Pool.OptionalInstance = current: {
+        const unit = comp.currentUnit() orelse break :current .none;
+        if (unit.kind == .decl) break :current .none;
+        break :current @enumFromInt(unit.index);
+    };
+    while (current.unwrap()) |instance| {
+        const row = comp.instanceAt(instance);
+        if (row.args.len > 0) {
+            if (generic_count < trail_cap) shown[generic_count] = instance;
+            generic_count += 1;
+        }
+        // a parent is created before its child, so the walk must descend
+        if (row.parent.unwrap()) |above| assert(above.int() < instance.int());
+        current = row.parent;
     }
 
-    const shown = @min(generic_frames, trail_cap);
-    const extra: u32 = if (generic_frames > trail_cap) 1 else 0;
-    const total = notes_in.len + shown + extra;
+    const shown_count = @min(generic_count, trail_cap);
+    const extra: u32 = if (generic_count > trail_cap) 1 else 0;
+    const total = notes_in.len + shown_count + extra;
     if (total == 0) return &.{};
 
     const out = try comp.arena.allocator().alloc(Diagnostic.Note, total);
     @memcpy(out[0..notes_in.len], notes_in);
 
-    var at = notes_in.len;
-    var used: u32 = 0;
-    var index = comp.stack.items.len;
-    while (index > 0 and used < shown) {
-        index -= 1;
-        const frame = comp.stack.items[index];
-        if (comp.unitIsInstantiation(frame.unit) == false) continue;
+    for (shown[0..shown_count], notes_in.len..) |instance, at| {
+        const origin = comp.instanceAt(instance).origin;
         out[at] = comp.noteAt(
-            frame.origin.module,
-            frame.origin.node,
-            try comp.fmt("while checking '{s}', needed here", .{try comp.unitName(frame.unit)}),
+            origin.module,
+            origin.node,
+            try comp.fmt("while checking '{s}', needed here", .{
+                try comp.instanceName(instance),
+            }),
         );
-        at += 1;
-        used += 1;
     }
     if (extra == 1) {
-        out[at] = .{ .message = try comp.fmt("and {d} more instantiation levels", .{
-            generic_frames - trail_cap,
+        out[total - 1] = .{ .message = try comp.fmt("and {d} more instantiation levels", .{
+            generic_count - trail_cap,
         }) };
-        at += 1;
     }
-    assert(at == total);
     return out;
-}
-
-/// Whether a unit carries bracket arguments.
-fn unitIsInstantiation(comp: *const Compilation, unit: Unit) bool {
-    switch (unit.kind) {
-        .decl => return false,
-        .rows, .embedding, .signature, .body => {
-            return comp.instanceAt(@enumFromInt(unit.index)).args.len > 0;
-        },
-    }
 }
 
 pub fn noteAt(
@@ -822,9 +849,12 @@ pub fn renderAll(comp: *Compilation, writer: *Writer, color: Diagnostic.Color) !
 }
 
 pub fn dumpIR(comp: *const Compilation, writer: *Writer) Writer.Error!void {
-    for (comp.funcs.items, 0..) |*func, index| {
-        if (index > 0) try writer.writeByte('\n');
-        try dump.func(comp, func, writer);
+    var printed = false;
+    for (comp.instances.items) |instance| {
+        if (instance.func == Instance.no_func) continue;
+        if (printed) try writer.writeByte('\n');
+        printed = true;
+        try dump.func(comp, &comp.funcs.items[instance.func], writer);
     }
 }
 
@@ -904,7 +934,10 @@ test "instantiation identity is index equality" {
     try testing.expectEqual(0, comp.diagnostics.items.len);
 
     const hold = comp.moduleAt(.root).findDecl(try comp.pool.string(gpa, "hold")).?;
-    const instance = try comp.instantiate(hold, &.{});
+    const instance = try comp.instantiate(hold, &.{}, .{
+        .module = .root,
+        .node = comp.declAt(hold).node,
+    });
     const rows = comp.instanceRows(instance);
     try testing.expectEqual(3, rows.len);
 
@@ -915,23 +948,27 @@ test "instantiation identity is index equality" {
     try testing.expect(rows[0].type != rows[2].type);
 }
 
-test "plain depth is bounded by the budget, not the instantiation limit" {
+test "a call chain compiles at any depth" {
     const gpa = testing.allocator;
+
+    // far past `analyze_max`, which bodies do not count against
+    const levels = 1000;
 
     var deep: Writer.Allocating = .init(gpa);
     defer deep.deinit();
-    for (0..90) |level| {
+    for (0..levels) |level| {
         try deep.writer.print("fn g{d}(n: i64) i64 {{ return g{d}(n) }}\n", .{
             level, level + 1,
         });
     }
-    try deep.writer.writeAll("fn g90(n: i64) i64 { return n }\n");
+    try deep.writer.print("fn g{d}(n: i64) i64 {{ return n }}\n", .{levels});
 
     var comp: Compilation = undefined;
     try comp.init(gpa, testing.io, .{ .root_path = "test.phi", .std_dir = null });
     defer comp.deinit();
     try comp.compile(try testSource(gpa, deep.written()));
     try testing.expectEqual(0, comp.diagnostics.items.len);
+    try testing.expectEqual(levels + 1, comp.funcs.items.len);
 }
 
 test "the deepest nesting that reaches analysis does not overflow the stack" {
@@ -1048,7 +1085,10 @@ test "the checker answers a type question as data" {
     try testing.expectEqual(0, comp.diagnostics.items.len);
 
     const f = comp.moduleAt(.root).findDecl(try comp.pool.string(gpa, "f")).?;
-    const instance = try comp.instantiate(f, &.{});
+    const instance = try comp.instantiate(f, &.{}, .{
+        .module = .root,
+        .node = comp.declAt(f).node,
+    });
 
     const tree = comp.treeOf(.root);
     const decl_view = tree.viewOf(comp.declAt(f).node).fn_decl;

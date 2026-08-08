@@ -465,7 +465,7 @@ fn declAsType(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocator
                 });
                 return .poison;
             }
-            const instance = try comp.instantiate(decl_index, &.{});
+            const instance = try comp.instantiate(decl_index, &.{}, check.origin(node));
             return comp.instanceType(instance);
         },
         .type_alias => {
@@ -554,7 +554,11 @@ fn resolveBracketType(check: *Check, node: Node.Index) Allocator.Error!Pool.Inde
         args_buffer[position] = resolved;
     }
 
-    const instance = try comp.instantiate(decl_index, args_buffer[0..view.args.len]);
+    const instance = try comp.instantiate(
+        decl_index,
+        args_buffer[0..view.args.len],
+        check.origin(node),
+    );
     return comp.instanceType(instance);
 }
 
@@ -672,21 +676,6 @@ pub const Builder = struct {
         .reachable = undefined,
     };
 
-    fn fresh(gpa: Allocator) Allocator.Error!Builder {
-        var builder: Builder = .empty;
-        errdefer builder.deinit(gpa);
-
-        try builder.blocks.ensureTotalCapacity(gpa, 8);
-        try builder.extra.ensureTotalCapacity(gpa, 32);
-        try builder.locals.ensureTotalCapacity(gpa, 16);
-        try builder.scopes.ensureTotalCapacity(gpa, 8);
-        try builder.defer_nodes.ensureTotalCapacity(gpa, 8);
-        try builder.narrows.ensureTotalCapacity(gpa, 8);
-        try builder.operands.ensureTotalCapacity(gpa, 16);
-        try builder.loops.ensureTotalCapacity(gpa, 4);
-        return builder;
-    }
-
     fn blockAt(builder: *Builder, index: IR.Block.Index) *BlockBuild {
         assert(index.int() < builder.blocks.items.len);
         return &builder.blocks.items[index.int()];
@@ -732,8 +721,7 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
     const bindings = try bindTypeParams(comp, instance, &buffer);
     var check = context(comp, decl_index, bindings);
 
-    var builder: Builder = comp.body_builders.pop() orelse try Builder.fresh(comp.gpa);
-
+    const builder = &comp.body_builder;
     assert(builder.insts.len == 0);
     assert(builder.locals.items.len == 0);
 
@@ -743,13 +731,9 @@ pub fn fnBody(comp: *Compilation, instance: Pool.Instance) Allocator.Error!bool 
     builder.defer_loops_floor = 0;
     builder.in_defer = false;
     builder.reachable = true;
+    defer builder.clear();
 
-    defer {
-        builder.clear();
-        comp.body_builders.append(comp.gpa, builder) catch builder.deinit(comp.gpa);
-    }
-
-    check.builder = &builder;
+    check.builder = builder;
 
     try builder.insts.ensureTotalCapacity(comp.gpa, 64);
 
@@ -2203,7 +2187,7 @@ fn declAsValue(check: *Check, decl_index: Decl.Index, node: Node.Index) Allocato
         .fn_decl => return .{ .named_fn = decl_index },
         .struct_decl => {
             if (comp.typeParamCount(decl_index) > 0) return .{ .named_generic = decl_index };
-            const instance = try comp.instantiate(decl_index, &.{});
+            const instance = try comp.instantiate(decl_index, &.{}, check.origin(node));
             return .{ .named_type = comp.instanceType(instance) };
         },
         .type_alias => {
@@ -3487,9 +3471,14 @@ fn checkCallResolved(
     }
     const start: u32 = if (inferred) mark + @as(u32, @intCast(args.len)) else mark;
 
-    const instance = try comp.instantiate(decl_index, full_args[0 .. owner_count + own_count]);
+    const instance = try comp.instantiate(
+        decl_index,
+        full_args[0 .. owner_count + own_count],
+        check.origin(node),
+    );
     try comp.ensure(.of(.signature, instance), check.origin(node));
     if (comp.instanceAt(instance).rows_state != .done) return .poison;
+    try comp.enqueueBody(instance);
     const return_type = comp.instanceType(instance);
 
     // a receiver consumes the first parameter
@@ -3548,9 +3537,6 @@ fn checkCallResolved(
     }
     if (clean == false) return .poison;
     assert(builder.operands.items.len == start + receiver_count + args.len);
-
-    // on its own `Builder`, so the operands staged here cannot move
-    try comp.ensure(.of(.body, instance), check.origin(node));
 
     const operands = builder.operands.items[start..];
     const payload = try check.emitExtra(&.{ instance.int(), @intCast(operands.len) }, operands);
@@ -4619,6 +4605,9 @@ fn finishFunc(check: *Check) Allocator.Error!void {
         .extra = extra,
         .blocks = blocks_owned,
     });
+
+    assert(comp.instanceAt(builder.instance).func == Compilation.Instance.no_func);
+    comp.instancePtr(builder.instance).func = @intCast(comp.funcs.items.len - 1);
 }
 
 fn finishFuncVisit(

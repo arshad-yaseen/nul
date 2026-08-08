@@ -11,9 +11,8 @@ const test_dirs = [_][]const u8{
     "test/std",
 };
 
-/// Analysis recurses once per nesting level, so every binary that runs it asks
-/// for room for the deepest source the parser allows.
-const analysis_stack_bytes = 256 << 20;
+/// Room for the deepest analysis recursion the parser allows.
+const analysis_stack_bytes = 128 << 20;
 
 const release_targets = [_][]const u8{
     "aarch64-macos",

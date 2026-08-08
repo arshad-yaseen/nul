@@ -3,16 +3,6 @@ b0:
   %0 = struct_init .{ key: true, value: 41:i64 } : Pair[true | false, i64]
   return %0
 
-fn Pair[true | false, i64].swap_value(self: *var Pair[true | false, i64], value: i64) i64
-b0:
-  %0 = param self : *var Pair[true | false, i64]
-  %1 = param value : i64
-  %2 = field_ptr %0, .value : *var i64
-  %3 = load %2 : i64
-  %4 = field_ptr %0, .value : *var i64
-  %5 = store %4, %1
-  return %3
-
 fn use_them() i64
 b0:
   %0 = call make() : Pair[true | false, i64]
@@ -23,3 +13,13 @@ b0:
   %5 = field_val %4, .value : i64
   %6 = add %3, %5 : i64
   return %6
+
+fn Pair[true | false, i64].swap_value(self: *var Pair[true | false, i64], value: i64) i64
+b0:
+  %0 = param self : *var Pair[true | false, i64]
+  %1 = param value : i64
+  %2 = field_ptr %0, .value : *var i64
+  %3 = load %2 : i64
+  %4 = field_ptr %0, .value : *var i64
+  %5 = store %4, %1
+  return %3

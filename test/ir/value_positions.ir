@@ -69,11 +69,6 @@ b2:
 b3:
   return
 
-fn take(n: i64) i64
-b0:
-  %0 = param n : i64
-  return %0
-
 fn as_an_argument(c: true | false) i64
 b0:
   %0 = param c : true | false
@@ -89,6 +84,11 @@ b3:
   %4 = load %1 : i64
   %5 = call take(%4) : i64
   return %5
+
+fn take(n: i64) i64
+b0:
+  %0 = param n : i64
+  return %0
 
 fn every_arm_leaves(a: true | false, b: true | false) i64
 b0:
