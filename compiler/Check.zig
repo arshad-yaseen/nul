@@ -2772,9 +2772,13 @@ fn emitBinary(check: *Check, it: Operation) Allocator.Error!Value {
     var lhs = it.lhs;
     var rhs = it.rhs;
 
-    // a constant takes the runtime side's type
-    if (lhs == .constant) lhs = try check.coerce(lhs, check.typeOf(rhs), it.lhs_node);
-    if (rhs == .constant) rhs = try check.coerce(rhs, check.typeOf(lhs), it.rhs_node);
+    // an untyped constant adopts the runtime side's type, a typed one agrees or mixes
+    if (lhs == .constant and Pool.isUntyped(check.typeOf(lhs))) {
+        lhs = try check.coerce(lhs, check.typeOf(rhs), it.lhs_node);
+    }
+    if (rhs == .constant and Pool.isUntyped(check.typeOf(rhs))) {
+        rhs = try check.coerce(rhs, check.typeOf(lhs), it.rhs_node);
+    }
     if (lhs == .poison or rhs == .poison) return .poison;
 
     const left = check.typeOf(lhs);
@@ -4116,7 +4120,7 @@ fn inferTypeArguments(
         const pinned = builder.operands.items[early + pin.argument].value;
         var found = check.typeOf(pinned);
         if (found == .poison) return false;
-        if (found == .untyped_int_type or found == .untyped_float_type) {
+        if (Pool.isUntyped(found)) {
             try check.fail(args[pin.argument], .{
                 .code = .inference_failed,
                 .message = "a bare number has no type to read",
@@ -4634,8 +4638,7 @@ fn refOf(value: Value) Ref {
 /// Whether a slot can be made of this.
 fn typeCanHold(check: *const Check, type_index: Pool.Index) bool {
     if (type_index == .void_type) return false;
-    if (type_index == .untyped_int_type) return false;
-    if (type_index == .untyped_float_type) return false;
+    if (Pool.isUntyped(type_index)) return false;
     return check.comp.pool.isType(type_index);
 }
 
@@ -4749,7 +4752,8 @@ fn reportDoesNotFit(
             try check.comp.typeName(wanted),
         }),
         .label = "past the type's edge",
-        .help = "a constant takes any type its value fits, and this value does not fit this one",
+        .help = "an untyped constant takes any type its value fits, " ++
+            "and this value does not fit this one",
     });
 }
 

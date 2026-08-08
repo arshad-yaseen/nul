@@ -13,7 +13,7 @@ let past_u64 = 18446744073709551616
 let hex_float: f64 = 0x1.8p1
 
 pub let bytes_max: u32 = scaled
-let narrow_seed: i64 = 200
+let narrow_seed = 200
 
 let seat: i64 | none = none
 let fallback = seat or 41

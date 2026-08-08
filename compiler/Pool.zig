@@ -630,6 +630,12 @@ pub fn isFloat(index: Index) bool {
     };
 }
 
+/// A constant that has not met a type yet, so it may still take one.
+pub fn isUntyped(index: Index) bool {
+    if (index == .untyped_int_type) return true;
+    return index == .untyped_float_type;
+}
+
 pub fn isNumeric(index: Index) bool {
     if (isInteger(index)) return true;
     return isFloat(index);
@@ -755,7 +761,7 @@ pub const Fit = union(enum) {
     wrong_kind,
 };
 
-/// By value rather than by type. Wrapping stays with the caller.
+/// An untyped constant meets any type its value fits, a typed one only its own.
 pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocator.Error!Fit {
     if (value == .poison) return .{ .value = .poison };
     if (type_index == .poison) return .{ .value = .poison };
@@ -786,6 +792,9 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
             return pool.fit(gpa, it.value, type_index);
         },
         .value_int => |it| {
+            if (isUntyped(it.type) == false) {
+                return if (type_index == it.type) .{ .value = value } else .wrong_kind;
+            }
             if (isInteger(type_index)) {
                 if (fitsInt(it.value, type_index) == false) return .does_not_fit;
                 return .{ .value = try pool.internWith(gpa, it.value, type_index) };
@@ -796,6 +805,9 @@ pub fn fit(pool: *Pool, gpa: Allocator, value: Index, type_index: Index) Allocat
             return .wrong_kind;
         },
         .value_float => |it| {
+            if (isUntyped(it.type) == false) {
+                return if (type_index == it.type) .{ .value = value } else .wrong_kind;
+            }
             if (isFloat(type_index)) {
                 const wide = it.value;
                 const narrowed: f64 = if (type_index == .f32_type)
@@ -1260,15 +1272,23 @@ test "a constant meets a union through its first fitting member" {
     try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, other_value, maybe));
 }
 
-test "a constant meets a type by value, not by type" {
+test "an untyped constant adapts by value, and a typed one is sealed" {
     var pool: Pool = undefined;
     try pool.init(testing.allocator);
     defer pool.deinit(testing.allocator);
     const gpa = testing.allocator;
 
-    const wide = try pool.intern(gpa, .{ .value_int = .{ .type = .i64_type, .value = 100 } });
-    const narrowed = try pool.fit(gpa, wide, .u8_type);
+    const loose = try pool.intern(gpa, .{
+        .value_int = .{ .type = .untyped_int_type, .value = 100 },
+    });
+    const narrowed = try pool.fit(gpa, loose, .u8_type);
     try testing.expectEqual(Index.u8_type, pool.keyOf(narrowed.value).value_int.type);
+
+    // the annotation pinned the type, so only its own type takes it back
+    const wide = try pool.intern(gpa, .{ .value_int = .{ .type = .i64_type, .value = 100 } });
+    try testing.expectEqual(wide, (try pool.fit(gpa, wide, .i64_type)).value);
+    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, wide, .u8_type));
+    try testing.expectEqual(Fit.wrong_kind, try pool.fit(gpa, wide, .f64_type));
 
     const big = try pool.intern(gpa, .{
         .value_int = .{ .type = .untyped_int_type, .value = 256 },

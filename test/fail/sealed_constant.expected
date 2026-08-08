@@ -1,0 +1,24 @@
+error[E0207]: '+' mixes u32 and u64
+  --> test/fail/sealed_constant.phi:10:25
+   |
+10 |         u32 => return a + b
+   |                         ^ two different types
+   |
+   = help: nothing converts on its own, so give both sides one type
+
+error[E0206]: expected u32, found u64
+  --> test/fail/sealed_constant.phi:19:18
+   |
+19 |     let c: u32 = b
+   |                  ^ the wrong type
+   |
+   = help: nothing converts on its own
+
+error[E0206]: expected u8, found u32 | u8
+  --> test/fail/sealed_constant.phi:25:17
+   |
+25 |     let d: u8 = a
+   |                 ^ the wrong type
+   |
+   = help: narrow it first, with a guard 'is u8 or return' or inside the branch that proved it, and never through a 'var'
+

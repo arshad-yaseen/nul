@@ -166,6 +166,14 @@ than retrofitted.
   a truth value: an 'is', a comparison, 'and', or 'not'.
 - `E0258` now says what to declare: 'type true', 'type false', and
   'type bool = true | false'.
+- An annotation seals a constant. `let b: u64 = 2` is a `u64` everywhere it
+  goes, so `a + b` against a `u32` reports `E0207` where the constant used
+  to re-fit by value, which is how Zig, Rust, and Go read the same program.
+  A bare literal stays untyped and takes any type its value fits, so
+  `let b = 2` works everywhere it did.
+- A union constant gives a member back only through the branch that proves
+  it, like every other union value. `let d: u8 = a` off a `u32 | u8`
+  constant used to extract by value, even when the union held the `u32`.
 - A field or a method now reaches the member a branch proved, so
   `if shape is Circle { shape.area() }` calls Circle's method, where the
   receiver used to look up on the whole union and miss.

@@ -4,5 +4,5 @@ error[E0208]: 256 does not fit in u8
 4 |     let wide: u8 = n
   |                    ^ past the type's edge
   |
-  = help: a constant takes any type its value fits, and this value does not fit this one
+  = help: an untyped constant takes any type its value fits, and this value does not fit this one
 
