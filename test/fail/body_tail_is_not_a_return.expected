@@ -1,11 +1,3 @@
-error[E0230]: this i64 goes nowhere
- --> test/fail/body_tail_is_not_a_return.phi:2:5
-  |
-2 |     n + 1
-  |     ^^^^^ unused value
-  |
-  = help: bind it, return it, or drop it with '_ ='
-
 error[E0231]: not every path through 'drive' returns its i64
  --> test/fail/body_tail_is_not_a_return.phi:1:4
   |
@@ -13,4 +5,12 @@ error[E0231]: not every path through 'drive' returns its i64
   |    ^^^^^ a path falls off the end
   |
   = help: every path must end in 'return', or loop forever
+
+error[E0230]: this i64 goes nowhere
+ --> test/fail/body_tail_is_not_a_return.phi:2:5
+  |
+2 |     n + 1
+  |     ^^^^^ unused value
+  |
+  = help: bind it, return it, or drop it with '_ ='
 

@@ -135,6 +135,8 @@ than retrofitted.
   worklist instead of inside the call that first needed them, so `E0249` now
   reports only a real definition chain, declarations whose meaning needs the
   next one, and never call depth.
+- Diagnostics print in file order, by file and then by position, instead of
+  the order checking discovered them in.
 - `phi ir` prints functions in the order the program first needed them, so
   the output no longer depends on which body finished first.
 

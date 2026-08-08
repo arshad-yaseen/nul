@@ -842,10 +842,16 @@ pub fn didYouMean(
 
 pub fn renderAll(comp: *Compilation, writer: *Writer, color: Diagnostic.Color) !void {
     assert(comp.diagnostics.items.len > 0);
+    std.sort.insertion(Entry, comp.diagnostics.items, {}, entryBefore);
     for (comp.diagnostics.items) |entry| {
         const module = comp.moduleAt(entry.module);
         try entry.diagnostic.render(comp.gpa, &module.source, writer, color);
     }
+}
+
+fn entryBefore(_: void, entry: Entry, other: Entry) bool {
+    if (entry.module != other.module) return entry.module.int() < other.module.int();
+    return entry.diagnostic.span.start < other.diagnostic.span.start;
 }
 
 pub fn dumpIR(comp: *const Compilation, writer: *Writer) Writer.Error!void {
