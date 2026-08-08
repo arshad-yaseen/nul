@@ -56,6 +56,8 @@ reported: std.AutoHashMapUnmanaged(ReportKey, void),
 expr_types: std.AutoHashMapUnmanaged(ExprKey, Pool.Index),
 /// Every layout ever computed, so a type's is computed once.
 layouts: std.AutoHashMapUnmanaged(Pool.Index, Layout),
+/// `std.prelude`, when it loaded.
+prelude: ?Module.Index,
 
 // transient analysis state
 
@@ -244,6 +246,7 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .reported = .empty,
         .expr_types = .empty,
         .layouts = .empty,
+        .prelude = null,
         .stack = .empty,
         .arena = .init(gpa),
         .loader = options.loader,
@@ -306,6 +309,11 @@ pub fn compile(comp: *Compilation, root_source: Source) Allocator.Error!void {
     const index = try Module.register(comp, key, space, root_source);
     assert(index == .root);
     const module = comp.moduleAt(index);
+
+    comp.prelude = switch (try Module.loadModule(comp, .std, Module.prelude_name)) {
+        .module => |found| found,
+        .not_found, .no_std => null,
+    };
 
     for (module.decls.start..module.decls.end()) |raw| {
         const decl_index: Decl.Index = .from(raw);

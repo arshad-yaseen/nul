@@ -505,13 +505,26 @@ fn resolveTypeName(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     for (check.bindings) |binding| {
         if (check.comp.pool.sameText(binding.name, text)) return binding.type;
     }
-    if (Pool.preludeType(text)) |prelude| return prelude;
+    if (Pool.primitiveType(text)) |primitive| return primitive;
 
-    const decl_index = check.module.findDecl(text) orelse {
+    const decl_index = check.visibleDecl(text) orelse {
         try check.reportUndefined(node, text);
         return .poison;
     };
     return check.declAsType(decl_index, node);
+}
+
+/// The declaration a bare name reaches here, the file's own or the prelude's public.
+fn visibleDecl(check: *const Check, text: []const u8) ?Decl.Index {
+    if (check.module.findDecl(text)) |own| return own;
+
+    const comp = check.comp;
+    const prelude = comp.prelude orelse return null;
+    if (prelude == check.module_index) return null;
+
+    const found = comp.moduleAt(prelude).findDecl(text) orelse return null;
+    if (Module.declIsPub(comp, found) == false) return null;
+    return found;
 }
 
 /// Analyzed on demand. Null is poisoned, already reported.
@@ -1043,7 +1056,7 @@ fn declareLocal(check: *Check, local: Builder.Local, node: Node.Index) Allocator
                 };
             }
         }
-        if (Pool.isPreludeName(local.name)) {
+        if (Pool.isPrimitiveName(local.name)) {
             break :clash .{
                 .code = .shadows,
                 .message = try check.comp.fmt("'{s}' is the name of a type every file can see", .{
@@ -1211,7 +1224,7 @@ fn checkVarDecl(check: *Check, node: Node.Index) Allocator.Error!void {
     const view = check.tree.viewOf(node).var_decl;
     const name_text = check.tree.tokenSlice(view.name_token);
 
-    if (std.mem.eql(u8, name_text, "_")) {
+    if (std.mem.eql(u8, name_text, Module.discard_name)) {
         try check.fail(node, .{
             .code = .discard_reserved,
             .message = "'_' cannot be bound, because it is how a value is discarded",
@@ -1343,7 +1356,7 @@ fn declarePoisoned(check: *Check, name: Pool.String, node: Node.Index) Allocator
 fn checkAssign(check: *Check, assign: AST.View.Assign) Allocator.Error!void {
     if (assign.op == null and check.tree.nodeTag(assign.lhs) == .ident) {
         const text = check.mainTokenText(assign.lhs);
-        if (std.mem.eql(u8, text, "_")) return check.checkDiscard(assign.rhs);
+        if (std.mem.eql(u8, text, Module.discard_name)) return check.checkDiscard(assign.rhs);
     }
 
     const place = try check.checkPlace(assign.lhs) orelse {
@@ -2305,7 +2318,7 @@ fn boolType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
     if (check.bool_type != .poison) return check.bool_type;
 
     const shaped: Pool.Index = shaped: {
-        const decl_index = check.module.findDecl("bool") orelse break :shaped .poison;
+        const decl_index = check.visibleDecl(Module.bool_name) orelse break :shaped .poison;
         const found = try check.declAsType(decl_index, node);
         if (comp.pool.isUnion(found) == false) break :shaped .poison;
         if (comp.pool.unionMemberCount(found) != 2) break :shaped .poison;
@@ -2637,7 +2650,7 @@ fn checkIdent(check: *Check, node: Node.Index) Allocator.Error!Value {
     const comp = check.comp;
     const text = check.mainTokenText(node);
 
-    if (std.mem.eql(u8, text, "_")) {
+    if (std.mem.eql(u8, text, Module.discard_name)) {
         try check.fail(node, .{
             .code = .discard_reserved,
             .message = "'_' has no value, and only discards one",
@@ -2667,9 +2680,9 @@ fn checkIdent(check: *Check, node: Node.Index) Allocator.Error!Value {
         if (comp.pool.sameText(binding.name, text)) return .{ .named_type = binding.type };
     }
 
-    if (Pool.preludeType(text)) |prelude| return .{ .named_type = prelude };
+    if (Pool.primitiveType(text)) |primitive| return .{ .named_type = primitive };
 
-    if (check.module.findDecl(text)) |decl_index| {
+    if (check.visibleDecl(text)) |decl_index| {
         return check.declAsValue(decl_index, node);
     }
 
@@ -3123,7 +3136,7 @@ fn bindRest(
     rest: Pool.Index,
 ) Allocator.Error!void {
     const text = check.mainTokenText(binder_node);
-    if (std.mem.eql(u8, text, "_")) {
+    if (std.mem.eql(u8, text, Module.discard_name)) {
         try check.fail(binder_node, .{
             .code = .discard_reserved,
             .message = "'_' cannot be bound, because it is how a value is discarded",
@@ -4415,7 +4428,7 @@ fn checkPlace(check: *Check, node: Node.Index) Allocator.Error!?Place {
     switch (check.tree.viewOf(node)) {
         .ident => {
             const text = check.mainTokenText(node);
-            if (std.mem.eql(u8, text, "_")) {
+            if (std.mem.eql(u8, text, Module.discard_name)) {
                 try check.fail(node, .{
                     .code = .discard_reserved,
                     .message = "'_' is not a place, and only discards a whole value",
@@ -5008,7 +5021,15 @@ fn suggestName(check: *Check, text: []const u8) Allocator.Error!?[]const u8 {
         if (decl.owner != .none) continue;
         closest.consider(comp.pool.stringText(decl.name));
     }
-    for (Pool.prelude_names) |name| closest.consider(name);
+    if (comp.prelude) |prelude| {
+        if (prelude != check.module_index) {
+            for (comp.declsIn(comp.moduleAt(prelude).decls)) |decl| {
+                if (decl.owner != .none) continue;
+                closest.consider(comp.pool.stringText(decl.name));
+            }
+        }
+    }
+    for (Pool.primitive_names) |name| closest.consider(name);
 
     return comp.didYouMean(closest);
 }

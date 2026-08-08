@@ -11,6 +11,9 @@
   answer as constants, over intrinsics of the same names.
 - A union may stand in a bracket, so `Box[u32 | none]` means the union it
   spells.
+- The prelude arrives: `none`, `true`, `false`, and `bool` are declared once
+  in `std.prelude` and visible in every file, so optionals and truth share
+  one identity across modules. A file's own declaration still wins.
 
 ## [0.2.0] - 2026-08-08
 

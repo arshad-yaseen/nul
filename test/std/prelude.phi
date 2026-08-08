@@ -1,0 +1,6 @@
+pub type none
+
+pub type true
+pub type false
+
+pub type bool = true | false

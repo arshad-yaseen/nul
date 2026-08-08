@@ -1,0 +1,9 @@
+import helper
+
+fn settle(n: u32) u32 {
+    let r = helper.find(n)
+    match r {
+        u32 => return r
+        none => return 0
+    }
+}

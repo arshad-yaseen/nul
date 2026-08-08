@@ -42,6 +42,18 @@ pub const Index = enum(u32) {
 /// Which directory a module resolves against.
 pub const Space = enum { root, std };
 
+// the names the compiler knows by spelling
+
+pub const std_name = "std";
+pub const prelude_name = "prelude";
+pub const bool_name = "bool";
+pub const discard_name = "_";
+
+comptime {
+    // module keys spell the space with `{t}`, so the tag is the name
+    assert(std.mem.eql(u8, @tagName(Space.std), std_name));
+}
+
 /// The row is the identity everything else refers to.
 pub const Decl = struct {
     module: Module.Index,
@@ -264,7 +276,7 @@ fn addDecl(
     const name = try comp.pool.string(comp.gpa, text);
     const decl_index = try appendDecl(comp, index, new, name, .none);
 
-    if (std.mem.eql(u8, text, "_")) {
+    if (std.mem.eql(u8, text, discard_name)) {
         try comp.reportToken(index, new.name_token, .{
             .code = .discard_reserved,
             .message = "'_' cannot be declared, it is how a value is discarded",
@@ -275,7 +287,7 @@ fn addDecl(
         return decl_index;
     }
 
-    if (Pool.preludeType(text) != null) {
+    if (Pool.primitiveType(text) != null) {
         try comp.reportToken(index, new.name_token, .{
             .code = .shadows,
             .message = try comp.fmt("'{s}' is already the name of a type every file can see", .{
@@ -385,10 +397,10 @@ pub fn lastPathComponent(tree: *const AST, path: AST.Node.Index) ?Token.Index {
 const import_chain_max = 32;
 const path_components_max = 32;
 
-const Loaded = union(enum) { module: Module.Index, not_found, no_std };
+pub const Loaded = union(enum) { module: Module.Index, not_found, no_std };
 
 /// Once per path. `sub` is joined from identifiers, so it stays in its space.
-fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error!Loaded {
+pub fn loadModule(comp: *Compilation, space: Space, sub: []const u8) Allocator.Error!Loaded {
     assert(sub.len > 0);
 
     const key = try comp.fmt("{t}:{s}", .{ space, sub });
@@ -434,7 +446,7 @@ pub fn resolveImport(comp: *Compilation, decl_index: Decl.Index) Allocator.Error
 
     var space = module.space;
     var first: u32 = 0;
-    if (std.mem.eql(u8, names[0], "std")) {
+    if (std.mem.eql(u8, names[0], std_name)) {
         space = .std;
         first = 1;
         if (count == 1) {

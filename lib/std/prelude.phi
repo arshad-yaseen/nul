@@ -1,0 +1,8 @@
+/// The absent member of an optional, `T | none`.
+pub type none
+
+pub type true
+pub type false
+
+/// What a condition asks and a comparison answers.
+pub type bool = true | false

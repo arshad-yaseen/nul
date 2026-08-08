@@ -117,20 +117,31 @@ Refused: numeric widening, which hides cost and decides silently what the
 programmer should decide visibly. Constructors like `Some(x)`, ceremony
 that restates what the signature already says.
 
-## bool
+## bool and the prelude
 
 `bool` is a declaration, never built in:
 
 ```phi
-type true
-type false
-type bool = true | false
+pub type none
+
+pub type true
+pub type false
+pub type bool = true | false
 ```
 
-The compiler finds `bool` by name where a truth value is written, a
-comparison, an `is`, `and`, or `not`, refuses to fold without it, and asks
-for it nowhere else: a match's member tests belong to the compiler and no
-program reads them. The prelude holds only the numeric types. Because
+These four are the prelude, `std.prelude`, declared once and visible in
+every file without an import. Unit types are nominal, so two files
+declaring their own `none` declare two different types, and a `u64 | none`
+could not pass between them; one shared declaration is what lets an
+optional leave one module and be matched in another. The prelude is a
+fallback, not a wall: anything nearer wins, so a file declaring its own
+`bool` gets its own, and a program built without the standard library
+declares the names by hand.
+
+None of the four is built into the compiler. It finds `bool` by name where
+a truth value is written, a comparison, an `is`, `and`, or `not`, refuses
+to fold without one in scope, and asks for it nowhere else: a match's
+member tests belong to the compiler and no program reads them. Because
 `true` is the first member, `or` on a bool is ordinary union splitting
 that happens to be logical or, and a condition on a bool is the ordinary
 first-member question, one rule instead of two:
@@ -141,8 +152,9 @@ if truth { }                            // branches like any union
 ```
 
 Refused: a builtin bool, which makes `or` two rules and puts a name in the
-compiler the language cannot redefine. A mandatory prelude module, which
-solves nothing the declaration does not.
+compiler the language cannot redefine. Per-file declarations as the
+default, which read as simpler but make every file's optional its own
+type, unable to cross a signature.
 
 ## Representation
 

@@ -135,30 +135,30 @@ pub const SimpleType = enum(u32) {
     }
 };
 
-// the prelude scope
+// the primitive types
 
 /// The type a name means in every file, read off the static items.
-pub fn preludeType(text: []const u8) ?Index {
-    return prelude.get(text);
+pub fn primitiveType(text: []const u8) ?Index {
+    return primitives.get(text);
 }
 
 /// For a suggestion when a name is missed.
-pub const prelude_names = prelude.keys();
+pub const primitive_names = primitives.keys();
 
-/// Whether an interned string spells a prelude name, which `init` interns first.
-pub fn isPreludeName(name: String) bool {
+/// Whether an interned string spells a primitive name, which `init` interns first.
+pub fn isPrimitiveName(name: String) bool {
     if (name == .empty) return false;
-    return name.int() < prelude_bytes_end;
+    return name.int() < primitive_bytes_end;
 }
 
-/// Offset zero is the empty string, then the prelude names back to back.
-const prelude_bytes_end = blk: {
+/// Offset zero is the empty string, then the primitive names back to back.
+const primitive_bytes_end = blk: {
     var total: u32 = 1;
-    for (prelude_names) |name| total += name.len + 1;
+    for (primitive_names) |name| total += name.len + 1;
     break :blk total;
 };
 
-const prelude = build: {
+const primitives = build: {
     const simples = std.enums.values(SimpleType);
     var entries: [simples.len]struct { []const u8, Index } = undefined;
     var count: usize = 0;
@@ -298,9 +298,9 @@ pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {
     }
     assert(pool.items.len == statics);
 
-    // prelude names first, so `isPreludeName` is one offset test
-    for (prelude_names) |name| _ = try pool.string(gpa, name);
-    assert(pool.bytes.items.len == prelude_bytes_end);
+    // primitive names first, so `isPrimitiveName` is one offset test
+    for (primitive_names) |name| _ = try pool.string(gpa, name);
+    assert(pool.bytes.items.len == primitive_bytes_end);
 }
 
 pub fn deinit(pool: *Pool, gpa: Allocator) void {
@@ -1102,20 +1102,20 @@ test "one value is one item, and the statics sit where their names say" {
     }));
 }
 
-test "every prelude name is its own static item, and nothing else has one" {
-    try testing.expectEqual(Index.i8_type, preludeType("i8"));
-    try testing.expectEqual(Index.u64_type, preludeType("u64"));
-    try testing.expectEqual(Index.f64_type, preludeType("f64"));
+test "every primitive name is its own static item, and nothing else has one" {
+    try testing.expectEqual(Index.i8_type, primitiveType("i8"));
+    try testing.expectEqual(Index.u64_type, primitiveType("u64"));
+    try testing.expectEqual(Index.f64_type, primitiveType("f64"));
 
-    try testing.expectEqual(null, preludeType("nothing"));
-    try testing.expectEqual(null, preludeType("bool"));
-    try testing.expectEqual(null, preludeType("error"));
-    try testing.expectEqual(null, preludeType("true"));
-    try testing.expectEqual(null, preludeType("poison"));
-    try testing.expectEqual(null, preludeType("int"));
+    try testing.expectEqual(null, primitiveType("nothing"));
+    try testing.expectEqual(null, primitiveType("bool"));
+    try testing.expectEqual(null, primitiveType("error"));
+    try testing.expectEqual(null, primitiveType("true"));
+    try testing.expectEqual(null, primitiveType("poison"));
+    try testing.expectEqual(null, primitiveType("int"));
 
-    try testing.expectEqual(10, prelude_names.len);
-    for (prelude_names) |name| try testing.expect(preludeType(name) != null);
+    try testing.expectEqual(10, primitive_names.len);
+    for (primitive_names) |name| try testing.expect(primitiveType(name) != null);
 }
 
 test "folding is 128 bits wide and reports the edge" {
