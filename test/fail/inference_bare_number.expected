@@ -1,8 +1,8 @@
 error[E0242]: a bare number has no type to read
- --> test/fail/inference_bare_number.phi:6:18
+ --> test/fail/inference_bare_number.phi:6:25
   |
-6 |     return plant(5)
-  |                  ^ what type is 'T'?
+6 |     let planted = plant(5)
+  |                         ^ what type is 'T'?
   |
-  = help: write the type argument, 'plant[i64](...)', or type the value first
+  = help: write the type argument, 'plant[i64](...)', type the value first, or annotate what the call feeds
 

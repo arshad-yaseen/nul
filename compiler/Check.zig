@@ -2637,7 +2637,7 @@ fn checkExprInner(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.
         .or_bind => |view| return check.checkOrBind(node, view),
         .field_access => |view| return check.checkFieldAccess(node, view),
         .deref => return check.checkDeref(node),
-        .call => return check.checkCall(node),
+        .call => return check.checkCall(node, hint),
         .bracket => |view| return check.checkBracketExpr(node, view),
         .struct_literal => return check.checkStructLiteral(node),
         .err => return .poison,
@@ -3625,7 +3625,7 @@ fn emitExtra(
 }
 
 /// Every call goes through here. Reads the substituted signature, never a body.
-fn checkCall(check: *Check, node: Node.Index) Allocator.Error!Value {
+fn checkCall(check: *Check, node: Node.Index, hint: ?Pool.Index) Allocator.Error!Value {
     const view = check.tree.viewOf(node).call;
     if (view.args.len > call_args_max) {
         try check.fail(node, .{
@@ -3643,7 +3643,7 @@ fn checkCall(check: *Check, node: Node.Index) Allocator.Error!Value {
         .intrinsic => |which| {
             return check.checkIntrinsic(node, which, callee.explicit orelse &.{}, view.args);
         },
-        else => return check.checkCallResolved(node, callee, view.args),
+        else => return check.checkCallResolved(node, callee, view.args, hint),
     }
 }
 
@@ -3855,6 +3855,7 @@ fn checkCallResolved(
     node: Node.Index,
     callee: Callee,
     args: []const Node.Index,
+    hint: ?Pool.Index,
 ) Allocator.Error!Value {
     const comp = check.comp;
     const builder = check.body();
@@ -3940,6 +3941,7 @@ fn checkCallResolved(
             decl_index,
             receiver_place != null,
             args,
+            hint,
             full_args[owner_count..][0..own_count],
         );
         if (solved == false) return .poison;
@@ -4193,12 +4195,14 @@ fn checkArgument(
 }
 
 /// Omitted bracket arguments, pinned by declared parameter types, all or nothing.
+/// What the arguments leave open, the call-site hint may pin through the return.
 fn inferTypeArguments(
     check: *Check,
     node: Node.Index,
     decl_index: Decl.Index,
     has_receiver: bool,
     args: []const Node.Index,
+    hint: ?Pool.Index,
     out: []Pool.Index,
 ) Allocator.Error!bool {
     const comp = check.comp;
@@ -4218,8 +4222,13 @@ fn inferTypeArguments(
     const receiver_rows: u32 = if (has_receiver) 1 else 0;
     for (fn_view.type_params, 0..) |type_param, param_position| {
         const wanted = owner_tree.tokenSlice(owner_tree.nodeMainToken(type_param));
+        const from_hint = hintFor(owner_tree, fn_view, wanted, hint);
 
         const pin = pinFor(owner_tree, fn_view, wanted, receiver_rows) orelse {
+            if (from_hint) |pinned_type| {
+                out[param_position] = pinned_type;
+                continue;
+            }
             try check.fail(node, .{
                 .code = .inference_failed,
                 .message = try comp.fmt(
@@ -4232,6 +4241,10 @@ fn inferTypeArguments(
             return false;
         };
         if (pin.argument >= args.len) {
+            if (from_hint) |pinned_type| {
+                out[param_position] = pinned_type;
+                continue;
+            }
             try check.fail(node, .{
                 .code = .inference_failed,
                 .message = try comp.fmt("'{s}' would be pinned by an argument this call lacks", .{
@@ -4246,12 +4259,17 @@ fn inferTypeArguments(
         var found = check.typeOf(pinned);
         if (found == .poison) return false;
         if (Pool.isUntyped(found)) {
+            if (from_hint) |pinned_type| {
+                out[param_position] = pinned_type;
+                continue;
+            }
             try check.fail(args[pin.argument], .{
                 .code = .inference_failed,
                 .message = "a bare number has no type to read",
                 .label = try comp.fmt("what type is '{s}'?", .{wanted}),
                 .help = try comp.fmt(
-                    "write the type argument, '{s}[i64](...)', or type the value first",
+                    "write the type argument, '{s}[i64](...)', type the value first, " ++
+                        "or annotate what the call feeds",
                     .{fn_name},
                 ),
             });
@@ -4269,6 +4287,25 @@ fn inferTypeArguments(
         out[param_position] = found;
     }
     return true;
+}
+
+/// The hint, when the declared return type is exactly this type parameter.
+fn hintFor(
+    tree: *const AST,
+    fn_view: AST.View.FnDecl,
+    wanted: []const u8,
+    hint: ?Pool.Index,
+) ?Pool.Index {
+    const usable = hint orelse return null;
+    if (usable == .void_type) return null;
+    if (usable == .poison) return null;
+
+    const returned = fn_view.return_type.unwrap() orelse return null;
+    if (tree.nodeTag(returned) != .ident) return null;
+    if (std.mem.eql(u8, tree.tokenSlice(tree.nodeMainToken(returned)), wanted) == false) {
+        return null;
+    }
+    return usable;
 }
 
 const Pin = struct { argument: u32, through_pointer: bool };

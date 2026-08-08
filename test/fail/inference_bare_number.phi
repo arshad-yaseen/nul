@@ -3,5 +3,6 @@ fn plant[T](value: T) T {
 }
 
 fn drive() i64 {
-    return plant(5)
+    let planted = plant(5)
+    return planted
 }

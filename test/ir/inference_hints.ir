@@ -1,0 +1,48 @@
+fn annotated() u64
+b0:
+  %0 = call round[u64](11:u64, 8:u64) : u64
+  return %0
+
+fn returned() u32
+b0:
+  %0 = call round[u32](11:u32, 4:u32) : u32
+  return %0
+
+fn argument_pins(n: u16) u16
+b0:
+  %0 = param n : u16
+  %1 = call round[u16](%0, 4:u16) : u16
+  return %1
+
+fn round[u64](addr: u64, alignment: u64) u64
+b0:
+  %0 = param addr : u64
+  %1 = param alignment : u64
+  %2 = add %0, %1 : u64
+  %3 = sub %2, 1:u64 : u64
+  %4 = sub %1, 1:u64 : u64
+  %5 = bit_not %4 : u64
+  %6 = bit_and %3, %5 : u64
+  return %6
+
+fn round[u32](addr: u32, alignment: u32) u32
+b0:
+  %0 = param addr : u32
+  %1 = param alignment : u32
+  %2 = add %0, %1 : u32
+  %3 = sub %2, 1:u32 : u32
+  %4 = sub %1, 1:u32 : u32
+  %5 = bit_not %4 : u32
+  %6 = bit_and %3, %5 : u32
+  return %6
+
+fn round[u16](addr: u16, alignment: u16) u16
+b0:
+  %0 = param addr : u16
+  %1 = param alignment : u16
+  %2 = add %0, %1 : u16
+  %3 = sub %2, 1:u16 : u16
+  %4 = sub %1, 1:u16 : u16
+  %5 = bit_not %4 : u16
+  %6 = bit_and %3, %5 : u16
+  return %6

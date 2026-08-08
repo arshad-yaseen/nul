@@ -1,8 +1,7 @@
 import std.mem
 
 pub fn main() u64 {
-    let a = mem.size_of[u32]()
-    let b = mem.size_of[*u32]()
+    let a: u32 = mem.align_up(11, 8)
 
     return a
 }

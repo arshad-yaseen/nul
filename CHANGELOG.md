@@ -18,6 +18,10 @@
 - The prelude arrives: `none`, `true`, `false`, and `bool` are declared once
   in `std.prelude` and visible in every file, so optionals and truth share
   one identity across modules. A file's own declaration still wins.
+- What a call feeds may pin its type argument: in `let a: u64 =
+  mem.align_up(11, 8)`, the annotation decides `T` where the arguments
+  leave it open. Typed arguments still pin first, and a width stated
+  nowhere still refuses.
 
 ## [0.2.0] - 2026-08-08
 

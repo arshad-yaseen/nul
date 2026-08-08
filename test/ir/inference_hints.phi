@@ -1,0 +1,16 @@
+fn round[T](addr: T, alignment: T) T {
+    return (addr + alignment - 1) & ~(alignment - 1)
+}
+
+fn annotated() u64 {
+    let a: u64 = round(11, 8)
+    return a
+}
+
+fn returned() u32 {
+    return round(11, 4)
+}
+
+fn argument_pins(n: u16) u16 {
+    return round(n, 4)
+}
