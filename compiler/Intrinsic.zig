@@ -8,6 +8,10 @@ const assert = std.debug.assert;
 pub const Intrinsic = enum {
     /// `intrinsic.ptr_cast[T](pointer)`, retyping a pointer without moving it.
     ptr_cast,
+    /// `intrinsic.size_of[T]()`, the bytes a value of `T` occupies, a constant.
+    size_of,
+    /// `intrinsic.align_of[T]()`, the alignment a value of `T` requires, a constant.
+    align_of,
 
     /// Validated before typing a call. Type rules live with the case that needs them.
     pub const Shape = struct {
@@ -18,6 +22,7 @@ pub const Intrinsic = enum {
     pub fn shape(intrinsic: Intrinsic) Shape {
         return switch (intrinsic) {
             .ptr_cast => .{ .type_params = 1, .params = 1 },
+            .size_of, .align_of => .{ .type_params = 1, .params = 0 },
         };
     }
 

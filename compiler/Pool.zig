@@ -270,6 +270,8 @@ const Item = struct {
 
 comptime {
     assert(@sizeOf(Item.Tag) == 1);
+    // the stated fold width is the stored width
+    assert(fold_bits == @bitSizeOf(i128));
 }
 
 pub fn init(pool: *Pool, gpa: Allocator) Allocator.Error!void {

@@ -44,6 +44,7 @@ pub fn tokenizeAll(
     assert(tokens.len == 0);
     assert(comments.items.len == 0);
 
+    // one token per five bytes, one comment per hundred and twenty-eight
     try tokens.ensureTotalCapacity(gpa, @divFloor(source.len, 5) + 2);
     try comments.ensureTotalCapacity(gpa, @divFloor(source.len, 128) + 2);
 

@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const AST = @import("AST.zig");
 const Compilation = @import("Compilation.zig");
 const IR = @import("IR.zig");
+const Layout = @import("Layout.zig");
 const Module = @import("Module.zig");
 const Pool = @import("Pool.zig");
 const Intrinsic = @import("Intrinsic.zig").Intrinsic;
@@ -367,6 +368,16 @@ fn resolveType(check: *Check, node: Node.Index) Allocator.Error!Pool.Index {
             return check.pointerTo(child, pointer.is_mutable);
         },
         .union_type => |members| return check.resolveUnionType(node, members),
+        // `A | B` in a bracket arrives as an expression, and means the union
+        .binary => |it| {
+            if (it.op == .bit_or) return check.resolveOrType(node, it);
+            try check.fail(node, .{
+                .code = .not_a_type,
+                .message = "this is a value, and a type belongs here",
+                .label = "not a type",
+            });
+            return .poison;
+        },
         .err => return .poison,
         // a bracket item arrives as an expression until its base says otherwise
         else => {
@@ -440,6 +451,41 @@ fn failGenericBare(check: *Check, node: Node.Index, name: []const u8) Allocator.
         .label = "no arguments here",
         .help = try check.comp.fmt("write '{s}[...]' with one type per parameter", .{name}),
     });
+}
+
+/// The two sides as types, united.
+fn resolveOrType(
+    check: *Check,
+    node: Node.Index,
+    it: AST.View.Binary,
+) Allocator.Error!Pool.Index {
+    assert(it.op == .bit_or);
+    const comp = check.comp;
+
+    const lhs = try check.resolveType(it.lhs);
+    const rhs = try check.resolveType(it.rhs);
+    if (lhs == .poison) return .poison;
+    if (rhs == .poison) return .poison;
+
+    // `a | b | c` recursed on the left into a union, and the splice flattens it
+    switch (try comp.pool.unite(comp.gpa, &.{ lhs, rhs })) {
+        .index => |index| return index,
+        .duplicate => |repeat| {
+            try check.fail(node, .{
+                .code = .duplicate_member,
+                .message = try comp.fmt("'{s}' is already a member of this union", .{
+                    try comp.typeName(repeat),
+                }),
+                .label = "the same type again",
+                .help = "members are distinct types, and an alias is not a new type",
+            });
+            return .poison;
+        },
+        .too_wide => {
+            try check.failTooWide(node);
+            return .poison;
+        },
+    }
 }
 
 fn failTooWide(check: *Check, node: Node.Index) Allocator.Error!void {
@@ -831,7 +877,7 @@ fn emit(
     const builder = check.body();
     try check.reopenDead();
 
-    if (builder.insts.len >= std.math.maxInt(u32) / 2) return error.OutOfMemory;
+    if (builder.insts.len >= IR.Ref.inst_count_max) return error.OutOfMemory;
     const index: IR.Inst.Index = .from(builder.insts.len);
     try builder.insts.append(check.comp.gpa, .{
         .tag = tag,
@@ -4014,6 +4060,38 @@ fn checkIntrinsic(
 
     switch (which) {
         .ptr_cast => return check.intrinsicPtrCast(args[0], types[0], values[0]),
+        .size_of, .align_of => return check.intrinsicLayoutOf(node, which, types[0]),
+    }
+}
+
+/// A size or an alignment, an untyped constant, so it meets any integer.
+fn intrinsicLayoutOf(
+    check: *Check,
+    node: Node.Index,
+    which: Intrinsic,
+    wanted: Pool.Index,
+) Allocator.Error!Value {
+    const comp = check.comp;
+    assert(which == .size_of or which == .align_of);
+
+    switch (try Layout.of(comp, check.origin(node), wanted)) {
+        .layout => |layout| {
+            const answer: u32 = if (which == .size_of) layout.size else layout.alignment;
+            return .{ .constant = try comp.pool.intern(comp.gpa, .{
+                .value_int = .{ .type = .untyped_int_type, .value = answer },
+            }) };
+        },
+        .poison => return .poison,
+        .too_large => {
+            try check.fail(node, .{
+                .code = .type_too_large,
+                .message = try comp.fmt("'{s}' is larger than the 4 GiB a type may hold", .{
+                    try comp.typeName(wanted),
+                }),
+                .label = "too large",
+            });
+            return .poison;
+        },
     }
 }
 

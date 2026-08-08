@@ -1,0 +1,40 @@
+type true
+type false
+type bool = true | false
+
+type none
+
+type Empty = { }
+
+type Node = {
+    value: u64
+    next: *Node | none
+}
+
+fn bool_is_the_tag_alone() u64 {
+    return intrinsic.size_of[bool]()
+}
+
+fn the_zero_niche_is_one_word() u64 {
+    return intrinsic.size_of[*Node | none]()
+}
+
+fn a_node_is_two_words() u64 {
+    return intrinsic.size_of[Node]()
+}
+
+fn an_integer_leaves_no_room() u64 {
+    return intrinsic.size_of[u32 | none]()
+}
+
+fn a_wide_payload_pads_its_tag() u64 {
+    return intrinsic.size_of[u64 | none]()
+}
+
+fn an_empty_struct_is_nothing() u64 {
+    return intrinsic.size_of[Empty]()
+}
+
+fn alignments() u64 {
+    return intrinsic.align_of[u8]() + intrinsic.align_of[Node]()
+}

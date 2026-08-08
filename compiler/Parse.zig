@@ -73,6 +73,7 @@ pub fn run(gpa: Allocator, source: [:0]const u8) Allocator.Error!AST {
         parse.arena.deinit();
     }
 
+    // a node per eight bytes, an extra word per sixteen, a scratch slot per sixty-four
     try parse.nodes.ensureTotalCapacity(gpa, @divFloor(source.len, 8) + 8);
     try parse.extra.ensureTotalCapacity(gpa, @divFloor(source.len, 16) + 8);
     try parse.scratch.ensureTotalCapacity(gpa, @divFloor(source.len, 64) + 8);

@@ -81,13 +81,16 @@ pub const Ref = enum(u32) {
 
     const inst_bit: u32 = 1 << 31;
 
+    /// The indexes `fromInst` accepts. One below the bit keeps `none` its encoding.
+    pub const inst_count_max: u32 = inst_bit - 1;
+
     pub fn fromConstant(value: Pool.Index) Ref {
         assert(value.int() < inst_bit);
         return @enumFromInt(value.int());
     }
 
     pub fn fromInst(inst: Inst.Index) Ref {
-        assert(inst.int() < inst_bit - 1);
+        assert(inst.int() < inst_count_max);
         return @enumFromInt(inst.int() | inst_bit);
     }
 
@@ -224,4 +227,6 @@ comptime {
     assert(@sizeOf(Ref) == 4);
     if (std.debug.runtime_safety == false) assert(@sizeOf(Inst.Data) == 8);
     assert(@sizeOf(Block) <= 24);
+    // the largest instruction ref stays one below `none`, never colliding
+    assert(@intFromEnum(Ref.none) == Ref.inst_bit + Ref.inst_count_max);
 }

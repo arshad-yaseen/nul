@@ -1,0 +1,9 @@
+/// The bytes a value of type T occupies.
+pub fn size_of[T]() u64 {
+    return intrinsic.size_of[T]()
+}
+
+/// The alignment a value of type T requires, in bytes.
+pub fn align_of[T]() u64 {
+    return intrinsic.align_of[T]()
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Language
+
+- Every type answers its size and alignment: `bool` is one byte, and
+  `*T | none` is one word, with `none` as the zero no valid pointer holds.
+  A type past 4 GiB is refused with `E0261`.
+- `std.mem` opens the standard library: `size_of[T]()` and `align_of[T]()`
+  answer as constants, over intrinsics of the same names.
+- A union may stand in a bracket, so `Box[u32 | none]` means the union it
+  spells.
+
 ## [0.2.0] - 2026-08-08
 
 The language is now Phi: the binary is `phi`, and a source file ends in

@@ -9,6 +9,7 @@ const AST = @import("AST.zig");
 const Check = @import("Check.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const IR = @import("IR.zig");
+const Layout = @import("Layout.zig");
 const Module = @import("Module.zig");
 const Pool = @import("Pool.zig");
 const Source = @import("Source.zig");
@@ -53,6 +54,8 @@ diagnostics: std.ArrayList(Entry),
 reported: std.AutoHashMapUnmanaged(ReportKey, void),
 /// Each checked expression's type, recorded only when the host asked.
 expr_types: std.AutoHashMapUnmanaged(ExprKey, Pool.Index),
+/// Every layout ever computed, so a type's is computed once.
+layouts: std.AutoHashMapUnmanaged(Pool.Index, Layout),
 
 // transient analysis state
 
@@ -240,6 +243,7 @@ pub fn init(comp: *Compilation, gpa: Allocator, io: std.Io, options: Options) Al
         .diagnostics = .empty,
         .reported = .empty,
         .expr_types = .empty,
+        .layouts = .empty,
         .stack = .empty,
         .arena = .init(gpa),
         .loader = options.loader,
@@ -283,6 +287,7 @@ pub fn deinit(comp: *Compilation) void {
     comp.diagnostics.deinit(gpa);
     comp.reported.deinit(gpa);
     comp.expr_types.deinit(gpa);
+    comp.layouts.deinit(gpa);
     comp.stack.deinit(gpa);
     comp.arena.deinit();
     comp.* = undefined;

@@ -1,0 +1,27 @@
+fn bool_is_the_tag_alone() u64
+b0:
+  return 1:u64
+
+fn the_zero_niche_is_one_word() u64
+b0:
+  return 8:u64
+
+fn a_node_is_two_words() u64
+b0:
+  return 16:u64
+
+fn an_integer_leaves_no_room() u64
+b0:
+  return 8:u64
+
+fn a_wide_payload_pads_its_tag() u64
+b0:
+  return 16:u64
+
+fn an_empty_struct_is_nothing() u64
+b0:
+  return 0:u64
+
+fn alignments() u64
+b0:
+  return 9:u64

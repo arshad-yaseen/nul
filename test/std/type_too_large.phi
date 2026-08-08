@@ -1,0 +1,33 @@
+type B0 = { a: u64, b: u64 }
+type B1 = { a: B0, b: B0 }
+type B2 = { a: B1, b: B1 }
+type B3 = { a: B2, b: B2 }
+type B4 = { a: B3, b: B3 }
+type B5 = { a: B4, b: B4 }
+type B6 = { a: B5, b: B5 }
+type B7 = { a: B6, b: B6 }
+type B8 = { a: B7, b: B7 }
+type B9 = { a: B8, b: B8 }
+type B10 = { a: B9, b: B9 }
+type B11 = { a: B10, b: B10 }
+type B12 = { a: B11, b: B11 }
+type B13 = { a: B12, b: B12 }
+type B14 = { a: B13, b: B13 }
+type B15 = { a: B14, b: B14 }
+type B16 = { a: B15, b: B15 }
+type B17 = { a: B16, b: B16 }
+type B18 = { a: B17, b: B17 }
+type B19 = { a: B18, b: B18 }
+type B20 = { a: B19, b: B19 }
+type B21 = { a: B20, b: B20 }
+type B22 = { a: B21, b: B21 }
+type B23 = { a: B22, b: B22 }
+type B24 = { a: B23, b: B23 }
+type B25 = { a: B24, b: B24 }
+type B26 = { a: B25, b: B25 }
+type B27 = { a: B26, b: B26 }
+type B28 = { a: B27, b: B27 }
+
+fn probe() u64 {
+    return intrinsic.size_of[B28]()
+}

@@ -1,0 +1,21 @@
+type none
+
+type Box[T] = {
+    item: T
+}
+
+type Held = Box[u32 | none]
+
+fn wrap(value: u32 | none) Held {
+    return Held.{ item: value }
+}
+
+fn read(box: Held) u32 | none {
+    return box.item
+}
+
+fn drive(n: u32) u32 {
+    let box = wrap(n)
+    let held = read(box)
+    return held or 0
+}
